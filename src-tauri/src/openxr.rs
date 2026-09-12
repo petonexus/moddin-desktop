@@ -182,7 +182,10 @@ fn runtime_manifest(path: &Path, enabled: bool, active: bool) -> OpenXrRuntimeIn
 
     let name = manifest_json
         .as_ref()
-        .and_then(|json| json.get("name"))
+        .and_then(|json| {
+            json.pointer("/runtime/name")
+                .or_else(|| json.get("name"))
+        })
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned)
@@ -395,7 +398,7 @@ fn write_game_preference(game_id: &str, manifest_path: Option<&str>) -> Result<(
 }
 
 fn escape_powershell_single_quote(value: &str) -> String {
-    value.replace(''', "''")
+    value.replace("'", "''")
 }
 
 fn set_system_runtime_elevated(manifest_path: &Path) -> Result<(), String> {
