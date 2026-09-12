@@ -59,6 +59,15 @@ button { color: inherit; }
 
 .sidebar-footer { margin-top: auto; display: grid; gap: 4px; padding: 12px 8px; color: #7f8b9b; font-size: 12px; }
 .sidebar-footer small { color: #596473; }
+.language-control { display: grid; gap: 6px; margin-bottom: 8px; color: #7f8b9b; font-size: 11px; }
+.language-control select {
+  width: 100%;
+  border: 1px solid #25303d;
+  border-radius: 7px;
+  padding: 7px 8px;
+  color: #dfe6ee;
+  background: #10161d;
+}
 
 .main-content { min-width: 0; padding: 34px 38px 38px; overflow: hidden; }
 .topbar { display: flex; justify-content: space-between; align-items: end; gap: 20px; }

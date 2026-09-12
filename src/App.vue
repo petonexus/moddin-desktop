@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
+import { localeOptions } from './i18n'
 import type { InstalledGame, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
@@ -25,6 +27,8 @@ const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
 const rollbackBusyId = ref<string | null>(null)
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
+
+const { t, locale } = useI18n()
 
 const supportedInstalledGames = computed(() =>
   installedGames.value.filter((game) => findCatalogGameBySteamAppId(game.appId)),
@@ -51,6 +55,30 @@ const selectedGame = computed(() => {
     catalog: findCatalogGameBySteamAppId(installed.appId),
   }
 })
+
+function moduleName(module: ToolModuleDefinition) {
+  if (module.id === 'obs-vr') return t('moduleObsVr')
+  if (module.id === 'optiscaler') return t('moduleOptiScaler')
+  if (module.id === 'openxr') return t('moduleOpenXr')
+  return module.name
+}
+
+function moduleDescription(module: ToolModuleDefinition) {
+  if (module.id === 'obs-vr') return t('moduleObsVrDescription')
+  if (module.id === 'optiscaler') return t('moduleOptiScalerDescription')
+  if (module.id === 'openxr') return t('moduleOpenXrDescription')
+  return module.description
+}
+
+function categoryLabel(category: ToolModuleDefinition['category']) {
+  return t(`category${category.charAt(0).toUpperCase()}${category.slice(1)}`)
+}
+
+function statusLabel(status: TransactionRecord['status']) {
+  if (status === 'applied') return t('statusApplied')
+  if (status === 'rolled_back') return t('statusRolledBack')
+  return status
+}
 
 async function refreshGames() {
   loading.value = true
@@ -110,7 +138,7 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
   return {
     gameId: selectedGame.value.catalog.id,
     gameName: selectedGame.value.catalog.name,
-    collectionName: config.collectionName || 'Sem nome',
+    collectionName: config.collectionName || t('unnamedCollection'),
     sceneName: config.sceneName || 'vr',
     sourceName: config.sourceName || `${selectedGame.value.catalog.name} VR`,
     executableName,
@@ -123,7 +151,7 @@ async function configureModule(module: ToolModuleDefinition) {
 
   const request = buildObsRequest(module)
   if (!request) {
-    actionError.value = `Module '${module.id}' does not have an executable action yet.`
+    actionError.value = t('moduleNoAction', { module: module.id })
     return
   }
 
@@ -145,11 +173,15 @@ async function applyObsConfiguration() {
   success.value = null
   moduleBusy.value = true
   try {
+    const configuredSource = obsDialog.value.request.sourceName
     const transaction = await invoke<TransactionRecord>('configure_obs_vr', {
       request: obsDialog.value.request,
     })
-    success.value = `${obsDialog.value.request.sourceName} configured. Backup transaction ${transaction.id.slice(0, 13)}… created.`
     obsDialog.value = null
+    success.value = t('configuredSuccess', {
+      source: configuredSource,
+      id: `${transaction.id.slice(0, 13)}…`,
+    })
     await refreshTransactions()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
@@ -164,7 +196,7 @@ async function rollback(transaction: TransactionRecord) {
   rollbackBusyId.value = transaction.id
   try {
     await invoke<TransactionRecord>('rollback_transaction', { id: transaction.id })
-    success.value = `Rolled back: ${transaction.label}`
+    success.value = t('rolledBack', { label: transaction.label })
     await refreshTransactions()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
@@ -174,7 +206,7 @@ async function rollback(transaction: TransactionRecord) {
 }
 
 function formatTransactionDate(timestamp: number) {
-  return new Intl.DateTimeFormat('pt-BR', {
+  return new Intl.DateTimeFormat(locale.value, {
     dateStyle: 'short',
     timeStyle: 'medium',
   }).format(new Date(timestamp))
@@ -197,73 +229,89 @@ watch(selectedAppId, () => {
   void inspectSelectedGame()
 })
 
+watch(locale, (value) => {
+  try {
+    window.localStorage.setItem('moddin-locale', value)
+  } catch {
+    // Ignore unavailable storage, such as privacy-restricted browser contexts.
+  }
+})
+
 onMounted(async () => {
   await Promise.all([refreshGames(), refreshTransactions()])
 })
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :lang="locale">
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">M</div>
         <div>
           <strong>Moddin</strong>
-          <span>Game tooling manager</span>
+          <span>{{ t('brandTagline') }}</span>
         </div>
       </div>
 
       <nav class="nav-list">
-        <button class="nav-item" :class="{ active: activeView === 'library' }" @click="switchView('library')">Library</button>
-        <button class="nav-item" :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')">
-          Transactions
+        <button class="nav-item" :class="{ active: activeView === 'library' }" @click="switchView('library')">
+          {{ t('library') }}
         </button>
-        <button class="nav-item" disabled>Settings</button>
+        <button class="nav-item" :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')">
+          {{ t('transactions') }}
+        </button>
+        <button class="nav-item" disabled>{{ t('settings') }}</button>
       </nav>
 
       <div class="sidebar-footer">
-        <span>v0.1.0 bootstrap</span>
-        <small>{{ gameCatalog.length }} catalog games</small>
+        <label class="language-control">
+          <span>{{ t('language') }}</span>
+          <select v-model="locale">
+            <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <span>{{ t('bootstrap') }}</span>
+        <small>{{ t('catalogGames', { count: gameCatalog.length }) }}</small>
       </div>
     </aside>
 
     <main class="main-content">
       <div v-if="success" class="success-banner">
-        <strong>Done.</strong>
+        <strong>{{ t('done') }}</strong>
         <span>{{ success }}</span>
       </div>
       <div v-if="actionError" class="error-banner">
-        <strong>Action failed.</strong>
+        <strong>{{ t('actionFailed') }}</strong>
         <span>{{ actionError }}</span>
       </div>
 
       <template v-if="activeView === 'library'">
         <header class="topbar">
           <div>
-            <p class="eyebrow">LOCAL LIBRARY</p>
-            <h1>Installed games</h1>
+            <p class="eyebrow">{{ t('localLibrary') }}</p>
+            <h1>{{ t('installedGames') }}</h1>
             <p class="subtle">
-              {{ installedGames.length }} detected · {{ supportedInstalledGames.length }} supported by Moddin
+              {{ t('detectedSupported', { detected: installedGames.length, supported: supportedInstalledGames.length }) }}
             </p>
           </div>
           <button class="secondary-button" :disabled="loading" @click="refreshGames">
-            {{ loading ? 'Scanning…' : 'Rescan Steam' }}
+            {{ loading ? t('scanning') : t('rescanSteam') }}
           </button>
         </header>
 
         <div class="search-row">
-          <input v-model="search" type="search" placeholder="Search installed games…" />
+          <input v-model="search" type="search" :placeholder="t('searchPlaceholder')" />
         </div>
 
         <div v-if="error" class="error-banner">
-          <strong>Steam scan failed.</strong>
+          <strong>{{ t('steamScanFailed') }}</strong>
           <span>{{ error }}</span>
         </div>
 
         <section class="workspace">
           <div class="game-list-panel">
-            <div v-if="loading" class="empty-state">Scanning Steam libraries…</div>
-            <div v-else-if="filteredGames.length === 0" class="empty-state">No games found.</div>
+            <div v-if="loading" class="empty-state">{{ t('scanningLibraries') }}</div>
+            <div v-else-if="filteredGames.length === 0" class="empty-state">{{ t('noGamesFound') }}</div>
 
             <button
               v-for="game in filteredGames"
@@ -277,60 +325,60 @@ onMounted(async () => {
                 <strong>{{ game.name }}</strong>
                 <span>{{ game.installDir }}</span>
               </div>
-              <span v-if="findCatalogGameBySteamAppId(game.appId)" class="status supported">Supported</span>
-              <span v-else class="status unsupported">Detected</span>
+              <span v-if="findCatalogGameBySteamAppId(game.appId)" class="status supported">{{ t('supported') }}</span>
+              <span v-else class="status unsupported">{{ t('detected') }}</span>
             </button>
           </div>
 
           <div class="details-panel">
             <div v-if="!selectedGame" class="empty-state details-empty">
-              Select a game to inspect available recipes.
+              {{ t('selectGame') }}
             </div>
 
             <template v-else>
               <div class="details-header">
                 <div>
-                  <p class="eyebrow">STEAM APP {{ selectedGame.installed.appId }}</p>
+                  <p class="eyebrow">{{ t('steamApp', { id: selectedGame.installed.appId }) }}</p>
                   <h2>{{ selectedGame.installed.name }}</h2>
                   <p class="path">{{ selectedGame.installed.installDir }}</p>
                 </div>
-                <span v-if="selectedGame.catalog" class="status supported">Catalog match</span>
-                <span v-else class="status unsupported">No recipes yet</span>
+                <span v-if="selectedGame.catalog" class="status supported">{{ t('catalogMatch') }}</span>
+                <span v-else class="status unsupported">{{ t('noRecipes') }}</span>
               </div>
 
               <template v-if="selectedGame.catalog">
                 <div class="section-title">
                   <div>
-                    <h3>Tools & recipes</h3>
-                    <p>Preview changes first. Moddin creates a rollback transaction before touching files.</p>
+                    <h3>{{ t('toolsRecipes') }}</h3>
+                    <p>{{ t('previewChanges') }}</p>
                   </div>
                 </div>
 
                 <div class="module-grid">
                   <article v-for="module in selectedGame.catalog.modules" :key="module.id" class="module-card">
                     <div class="module-topline">
-                      <span class="category">{{ module.category }}</span>
-                      <span class="module-state" :class="module.status">{{ module.status }}</span>
+                      <span class="category">{{ categoryLabel(module.category) }}</span>
+                      <span class="module-state" :class="module.status">{{ t(module.status) }}</span>
                     </div>
-                    <h4>{{ module.name }}</h4>
-                    <p>{{ module.description }}</p>
+                    <h4>{{ moduleName(module) }}</h4>
+                    <p>{{ moduleDescription(module) }}</p>
                     <button
                       class="module-button"
                       :disabled="module.status !== 'available' || moduleBusy"
                       @click="configureModule(module)"
                     >
-                      {{ module.status === 'available' ? (moduleBusy ? 'Checking…' : 'Configure') : 'Coming next' }}
+                      {{ module.status === 'available' ? (moduleBusy ? t('checking') : t('configure')) : t('comingNext') }}
                     </button>
                   </article>
                 </div>
 
                 <div class="metadata-card">
                   <div>
-                    <span>Executable</span>
+                    <span>{{ t('executable') }}</span>
                     <strong>{{ selectedGame.catalog.executable }}</strong>
                   </div>
                   <div>
-                    <span>Steam library</span>
+                    <span>{{ t('steamLibrary') }}</span>
                     <strong>{{ selectedGame.installed.libraryPath }}</strong>
                   </div>
                 </div>
@@ -338,29 +386,29 @@ onMounted(async () => {
                 <div class="environment-card">
                   <div class="environment-heading">
                     <div>
-                      <span class="environment-label">GAME ENVIRONMENT</span>
-                      <h3>Injection readiness</h3>
+                      <span class="environment-label">{{ t('gameEnvironment') }}</span>
+                      <h3>{{ t('injectionReadiness') }}</h3>
                     </div>
                     <button class="secondary-button compact" :disabled="inspectionLoading" @click="inspectSelectedGame">
-                      {{ inspectionLoading ? 'Inspecting…' : 'Rescan' }}
+                      {{ inspectionLoading ? t('inspecting') : t('rescan') }}
                     </button>
                   </div>
 
-                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">Inspecting executable directory…</div>
+                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">{{ t('inspectingDirectory') }}</div>
                   <div v-else-if="inspectionError" class="environment-message danger">{{ inspectionError }}</div>
                   <template v-else-if="gameInspection">
                     <div class="environment-row">
-                      <span>Executable</span>
+                      <span>{{ t('executable') }}</span>
                       <strong :class="gameInspection.executableExists ? 'ok-text' : 'danger-text'">
-                        {{ gameInspection.executableExists ? 'Found' : 'Missing' }}
+                        {{ gameInspection.executableExists ? t('found') : t('missing') }}
                       </strong>
                     </div>
                     <code class="environment-path">{{ gameInspection.executablePath }}</code>
 
                     <div class="environment-row proxy-row">
-                      <span>Proxy DLLs in executable directory</span>
+                      <span>{{ t('proxyDlls') }}</span>
                       <strong :class="gameInspection.proxyDlls.length ? 'warning-text' : 'ok-text'">
-                        {{ gameInspection.proxyDlls.length ? `${gameInspection.proxyDlls.length} detected` : 'None detected' }}
+                        {{ gameInspection.proxyDlls.length ? t('detectedCount', { count: gameInspection.proxyDlls.length }) : t('noneDetected') }}
                       </strong>
                     </div>
 
@@ -371,19 +419,14 @@ onMounted(async () => {
                         <code>{{ dll.path }}</code>
                       </div>
                     </div>
-                    <p v-else class="environment-note">
-                      No common proxy DLL was found. This does not guarantee compatibility, but it removes one common source of OptiScaler/ReShade/loader conflicts.
-                    </p>
+                    <p v-else class="environment-note">{{ t('noCommonProxy') }}</p>
                   </template>
                 </div>
               </template>
 
               <div v-else class="unsupported-copy">
-                <h3>Game detected, but not cataloged yet.</h3>
-                <p>
-                  Moddin already knows where this game lives. Adding support later should only require a catalog recipe,
-                  not hard-coded UI logic.
-                </p>
+                <h3>{{ t('gameDetectedNotCataloged') }}</h3>
+                <p>{{ t('gameDetectedDescription') }}</p>
               </div>
             </template>
           </div>
@@ -393,18 +436,18 @@ onMounted(async () => {
       <template v-else>
         <header class="topbar transactions-topbar">
           <div>
-            <p class="eyebrow">ROLLBACK HISTORY</p>
-            <h1>Transactions</h1>
-            <p class="subtle">Every destructive configuration starts with a backup transaction.</p>
+            <p class="eyebrow">{{ t('rollbackHistory') }}</p>
+            <h1>{{ t('transactions') }}</h1>
+            <p class="subtle">{{ t('everyDestructive') }}</p>
           </div>
           <button class="secondary-button" :disabled="transactionsLoading" @click="refreshTransactions">
-            {{ transactionsLoading ? 'Refreshing…' : 'Refresh' }}
+            {{ transactionsLoading ? t('refreshing') : t('refresh') }}
           </button>
         </header>
 
         <section class="transactions-panel">
-          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">Loading transactions…</div>
-          <div v-else-if="transactions.length === 0" class="empty-state">No transactions yet.</div>
+          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">{{ t('loadingTransactions') }}</div>
+          <div v-else-if="transactions.length === 0" class="empty-state">{{ t('noTransactions') }}</div>
 
           <article v-for="transaction in transactions" :key="transaction.id" class="transaction-row">
             <div class="transaction-state" :class="transaction.status"></div>
@@ -412,7 +455,7 @@ onMounted(async () => {
               <div class="transaction-title-row">
                 <strong>{{ transaction.label }}</strong>
                 <span class="status" :class="transaction.status === 'applied' ? 'supported' : 'unsupported'">
-                  {{ transaction.status }}
+                  {{ statusLabel(transaction.status) }}
                 </span>
               </div>
               <span>{{ formatTransactionDate(transaction.createdAt) }} · {{ transaction.kind }} · {{ transaction.gameId }}</span>
@@ -423,7 +466,7 @@ onMounted(async () => {
               :disabled="transaction.status !== 'applied' || rollbackBusyId === transaction.id"
               @click="rollback(transaction)"
             >
-              {{ rollbackBusyId === transaction.id ? 'Restoring…' : 'Undo' }}
+              {{ rollbackBusyId === transaction.id ? t('restoring') : t('undo') }}
             </button>
           </article>
         </section>
@@ -434,37 +477,37 @@ onMounted(async () => {
       <section class="modal-card">
         <div class="modal-heading">
           <div>
-            <p class="eyebrow">PREVIEW</p>
+            <p class="eyebrow">{{ t('preview') }}</p>
             <h2>{{ obsDialog.request.sourceName }}</h2>
           </div>
-          <button class="icon-button" @click="obsDialog = null">×</button>
+          <button class="icon-button" :aria-label="t('close')" @click="obsDialog = null">×</button>
         </div>
 
         <div class="preview-summary">
           <div>
-            <span>Collection</span>
-            <strong>{{ obsDialog.preview.collectionName ?? 'Not found' }}</strong>
+            <span>{{ t('collection') }}</span>
+            <strong>{{ obsDialog.preview.collectionName ?? t('notFound') }}</strong>
           </div>
           <div>
-            <span>Scene</span>
+            <span>{{ t('scene') }}</span>
             <strong>{{ obsDialog.request.sceneName }}</strong>
           </div>
           <div>
-            <span>Executable</span>
+            <span>{{ t('executable') }}</span>
             <strong>{{ obsDialog.request.executableName }}</strong>
           </div>
         </div>
 
         <div class="preview-block">
-          <h3>Changes</h3>
+          <h3>{{ t('changes') }}</h3>
           <ul v-if="obsDialog.preview.changes.length">
             <li v-for="change in obsDialog.preview.changes" :key="change">{{ change }}</li>
           </ul>
-          <p v-else>No safe configuration plan could be created.</p>
+          <p v-else>{{ t('noSafePlan') }}</p>
         </div>
 
         <div v-if="obsDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>Notes</h3>
+          <h3>{{ t('notes') }}</h3>
           <ul>
             <li v-for="warning in obsDialog.preview.warnings" :key="warning">{{ warning }}</li>
           </ul>
@@ -473,13 +516,13 @@ onMounted(async () => {
         <p v-if="obsDialog.preview.collectionFile" class="path modal-path">{{ obsDialog.preview.collectionFile }}</p>
 
         <div class="modal-actions">
-          <button class="secondary-button" @click="obsDialog = null">Cancel</button>
+          <button class="secondary-button" @click="obsDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
             :disabled="!obsDialog.preview.canApply || moduleBusy"
             @click="applyObsConfiguration"
           >
-            {{ moduleBusy ? 'Applying…' : 'Apply with backup' }}
+            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
           </button>
         </div>
       </section>

@@ -12,6 +12,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "vue": "^3.5.0",
+    "vue-i18n": "^11.4.10",
     "yaml": "^2.8.0",
     "zod": "^4.0.0"
   },
