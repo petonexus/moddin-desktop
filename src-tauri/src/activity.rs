@@ -1,0 +1,189 @@
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const DEFAULT_LIST_LIMIT: usize = 200;
+const MAX_LIST_LIMIT: usize = 1_000;
+
+static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionLogEntry {
+    pub id: String,
+    pub timestamp: u64,
+    pub level: String,
+    pub action: String,
+    pub game_id: Option<String>,
+    pub transaction_id: Option<String>,
+    pub message: String,
+    #[serde(default)]
+    pub details: BTreeMap<String, String>,
+}
+
+fn now_millis() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .map_err(|error| format!("System clock error while writing action log: {error}"))
+}
+
+fn logs_root() -> PathBuf {
+    env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("Moddin")
+        .join("logs")
+}
+
+fn current_log_path() -> PathBuf {
+    logs_root().join("actions.jsonl")
+}
+
+fn rotated_log_path() -> PathBuf {
+    logs_root().join("actions.1.jsonl")
+}
+
+fn rotate_if_needed(path: &PathBuf) -> Result<(), String> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(());
+    };
+    if metadata.len() < MAX_LOG_FILE_BYTES {
+        return Ok(());
+    }
+
+    let rotated = rotated_log_path();
+    if rotated.exists() {
+        fs::remove_file(&rotated)
+            .map_err(|error| format!("Could not remove previous rotated action log: {error}"))?;
+    }
+    fs::rename(path, &rotated)
+        .map_err(|error| format!("Could not rotate action log: {error}"))
+}
+
+pub fn record(
+    level: &str,
+    action: &str,
+    game_id: Option<&str>,
+    transaction_id: Option<&str>,
+    message: impl Into<String>,
+    details: BTreeMap<String, String>,
+) -> Result<ActionLogEntry, String> {
+    let _guard = LOG_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Action log lock is poisoned.".to_owned())?;
+
+    let root = logs_root();
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Could not create Moddin action log directory: {error}"))?;
+
+    let path = current_log_path();
+    rotate_if_needed(&path)?;
+
+    let entry = ActionLogEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        timestamp: now_millis()?,
+        level: level.to_owned(),
+        action: action.to_owned(),
+        game_id: game_id.map(str::to_owned),
+        transaction_id: transaction_id.map(str::to_owned),
+        message: message.into(),
+        details,
+    };
+
+    let serialized = serde_json::to_string(&entry)
+        .map_err(|error| format!("Could not serialize action log entry: {error}"))?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("Could not open Moddin action log: {error}"))?;
+    writeln!(file, "{serialized}")
+        .map_err(|error| format!("Could not append Moddin action log: {error}"))?;
+
+    Ok(entry)
+}
+
+fn read_log_file(path: PathBuf, entries: &mut Vec<ActionLogEntry>) {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+
+    for line in contents.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<ActionLogEntry>(line) {
+            entries.push(entry);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn list_action_logs(limit: Option<usize>) -> Result<Vec<ActionLogEntry>, String> {
+    let _guard = LOG_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Action log lock is poisoned.".to_owned())?;
+
+    let requested_limit = limit
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    let mut entries = Vec::new();
+    read_log_file(rotated_log_path(), &mut entries);
+    read_log_file(current_log_path(), &mut entries);
+    entries.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    entries.truncate(requested_limit);
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn clear_action_logs() -> Result<(), String> {
+    let _guard = LOG_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Action log lock is poisoned.".to_owned())?;
+
+    for path in [current_log_path(), rotated_log_path()] {
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Could not remove action log '{}': {error}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_entry_round_trips_as_json() {
+        let mut details = BTreeMap::new();
+        details.insert("proxy".to_owned(), "dxgi.dll".to_owned());
+        let entry = ActionLogEntry {
+            id: "test-id".to_owned(),
+            timestamp: 42,
+            level: "success".to_owned(),
+            action: "optiscaler".to_owned(),
+            game_id: Some("cyberpunk-2077".to_owned()),
+            transaction_id: Some("tx".to_owned()),
+            message: "Installed".to_owned(),
+            details,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: ActionLogEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.action, "optiscaler");
+        assert_eq!(decoded.details.get("proxy").map(String::as_str), Some("dxgi.dll"));
+    }
+}
