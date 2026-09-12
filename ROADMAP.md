@@ -24,7 +24,7 @@
 - [x] per-game OpenXR runtime override without changing the Windows global runtime
 - [x] module verification checklist and post-action validation
 - [x] reapply/reinstall and transaction-backed removal flows
-- [ ] structured per-action logs
+- [x] structured per-action logs
 - [ ] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
