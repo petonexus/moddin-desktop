@@ -1,0 +1,20 @@
+id: elden-ring
+name: Elden Ring
+steamAppId: "1245620"
+executable: Game/eldenring.exe
+modules:
+  - id: obs-vr
+    name: OBS VR Capture
+    description: Create or update a dedicated OBS Game Capture source for the VR scene.
+    category: vr
+    status: planned
+  - id: optiscaler
+    name: OptiScaler
+    description: Install and configure OptiScaler with a game-specific injection strategy.
+    category: graphics
+    status: planned
+  - id: openxr
+    name: OpenXR tools
+    description: Manage OpenXR-related helpers and per-game VR configuration.
+    category: vr
+    status: planned
