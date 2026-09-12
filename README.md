@@ -25,6 +25,8 @@ The first vertical slice already includes:
 - automatic backup transaction before mutation
 - transaction history and Undo
 - graceful OBS close/reopen when needed
+- read-only verification checklist for each available module
+- idempotent reapply and transaction-backed removal for OBS VR, OptiScaler, and VR profiles
 - VR-ready launch profiles for Elden Ring and Cyberpunk 2077
 - one-click Windows development bootstrap
 - Windows CI for frontend build and Rust tests
@@ -45,6 +47,10 @@ The defaults currently target the OBS collection `Sem nome` and scene `vr`; the 
 The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring updates `ERVR.ini` to the conservative full-stereo `GameResScale=0.75` / `FpsTarget=60` starting point.
 
 The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
+
+### Module lifecycle
+
+Available modules are checked automatically when a game is selected and can be checked again manually at any time. The checklist distinguishes a module that is ready to apply from one that is already configured, reports individual failed prerequisites, and is refreshed after every apply, reinstall, launch, or removal. Removal is transaction-backed: OBS removes only the Moddin-created source, OptiScaler restores its managed files, and VR profiles restore the last declared INI changes.
 
 ## Development
 

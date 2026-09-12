@@ -30,6 +30,9 @@ pub struct ObsVrPreview {
     pub scene_found: bool,
     pub template_source_name: Option<String>,
     pub source_exists: bool,
+    pub source_target_matches: bool,
+    pub source_in_scene: bool,
+    pub installed: bool,
     pub changes: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -186,6 +189,50 @@ fn inspect_document(document: &Value, request: &ObsVrRequest) -> Result<(bool, O
     });
 
     Ok((true, template_name, source_exists))
+}
+
+fn configured_source_state(document: &Value, request: &ObsVrRequest) -> (bool, bool) {
+    let Some(sources) = document.get("sources").and_then(Value::as_array) else {
+        return (false, false);
+    };
+
+    let Some(source) = sources.iter().find(|source| {
+        source.get("name").and_then(Value::as_str) == Some(request.source_name.as_str())
+    }) else {
+        return (false, false);
+    };
+
+    let expected_window = format!("::{}", encode_obs_window_part(&request.executable_name));
+    let target_matches = source
+        .get("settings")
+        .and_then(Value::as_object)
+        .is_some_and(|settings| {
+            settings.get("capture_mode").and_then(Value::as_str) == Some("window")
+                && settings.get("window").and_then(Value::as_str) == Some(expected_window.as_str())
+        });
+
+    let source_uuid = source.get("uuid").and_then(Value::as_str);
+    let in_scene = sources.iter().any(|scene| {
+        scene.get("id").and_then(Value::as_str) == Some("scene")
+            && scene
+                .get("name")
+                .and_then(Value::as_str)
+                == Some(request.scene_name.as_str())
+            && scene
+                .get("settings")
+                .and_then(Value::as_object)
+                .and_then(|settings| settings.get("items"))
+                .and_then(Value::as_array)
+                .is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item.get("source_uuid").and_then(Value::as_str) == source_uuid
+                            || item.get("name").and_then(Value::as_str)
+                                == Some(request.source_name.as_str())
+                    })
+                })
+    });
+
+    (target_matches, in_scene)
 }
 
 fn is_process_running(image_name: &str) -> bool {
@@ -375,6 +422,57 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
     Ok(())
 }
 
+fn remove_document(document: &mut Value, request: &ObsVrRequest) -> Result<(), String> {
+    let sources = document
+        .get("sources")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "OBS collection does not contain a sources array.".to_owned())?;
+
+    let target_uuid = sources
+        .iter()
+        .find(|source| {
+            source.get("name").and_then(Value::as_str) == Some(request.source_name.as_str())
+        })
+        .and_then(|source| source.get("uuid").and_then(Value::as_str))
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            format!(
+                "OBS source '{}' is not currently configured.",
+                request.source_name
+            )
+        })?;
+
+    let sources = document
+        .get_mut("sources")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "OBS collection sources became invalid.".to_owned())?;
+    sources.retain(|source| {
+        source.get("name").and_then(Value::as_str) != Some(request.source_name.as_str())
+    });
+
+    for scene in sources.iter_mut().filter(|source| {
+        source.get("id").and_then(Value::as_str) == Some("scene")
+            && source.get("name").and_then(Value::as_str) == Some(request.scene_name.as_str())
+    }) {
+        let Some(items) = scene
+            .get_mut("settings")
+            .and_then(Value::as_object_mut)
+            .and_then(|settings| settings.get_mut("items"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+
+        items.retain(|item| {
+            item.get("source_uuid").and_then(Value::as_str) != Some(target_uuid.as_str())
+                && item.get("name").and_then(Value::as_str)
+                    != Some(request.source_name.as_str())
+        });
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     let obs_running = is_process_running("obs64.exe");
@@ -387,6 +485,9 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
             scene_found: false,
             template_source_name: None,
             source_exists: false,
+            source_target_matches: false,
+            source_in_scene: false,
+            installed: false,
             changes: Vec::new(),
             warnings: vec![format!(
                 "No OBS collection containing scene '{}' was found.",
@@ -396,6 +497,8 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     };
 
     let (scene_found, template_source_name, source_exists) = inspect_document(&document.value, &request)?;
+    let (source_target_matches, source_in_scene) =
+        configured_source_state(&document.value, &request);
     let collection_name = document
         .value
         .get("name")
@@ -439,6 +542,9 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
         scene_found,
         template_source_name,
         source_exists,
+        source_target_matches,
+        source_in_scene,
+        installed: source_exists && source_target_matches && source_in_scene,
         changes,
         warnings,
     })
@@ -455,12 +561,20 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
     });
     let obs_was_open = close_obs_gracefully()?;
 
-    let transaction = transaction::backup_file(
+    let transaction = match transaction::backup_file(
         &document.path,
         "obs-vr",
         &format!("Configure OBS VR for {}", request.game_name),
         &request.game_id,
-    )?;
+    ) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            if obs_was_open {
+                reopen_obs(obs_path.as_deref());
+            }
+            return Err(error);
+        }
+    };
 
     let result = (|| -> Result<(), String> {
         configure_document(&mut document.value, &request)?;
@@ -474,8 +588,85 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
         let verify: Value = serde_json::from_str(&verify)
             .map_err(|error| format!("OBS collection failed JSON validation after write: {error}"))?;
         let (_, _, source_exists) = inspect_document(&verify, &request)?;
-        if !source_exists {
+        let (target_matches, source_in_scene) = configured_source_state(&verify, &request);
+        if !source_exists || !target_matches || !source_in_scene {
             return Err(format!("OBS source '{}' was not present after saving.", request.source_name));
+        }
+
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        let restore_result = transaction::restore_record(transaction.clone());
+        if obs_was_open {
+            reopen_obs(obs_path.as_deref());
+        }
+        return match restore_result {
+            Ok(_) => Err(format!("{error} The OBS backup was restored automatically.")),
+            Err(restore_error) => Err(format!(
+                "{error} Automatic restore also failed: {restore_error}"
+            )),
+        };
+    }
+
+    if obs_was_open {
+        reopen_obs(obs_path.as_deref());
+    }
+
+    Ok(transaction)
+}
+
+#[tauri::command]
+pub fn uninstall_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, String> {
+    let mut document = locate_collection(&request)?.ok_or_else(|| {
+        format!(
+            "No OBS collection containing scene '{}' was found.",
+            request.scene_name
+        )
+    })?;
+
+    let obs_path = running_obs_executable().or_else(|| {
+        let default = PathBuf::from(r"C:\Program Files\obs-studio\bin\64bit\obs64.exe");
+        default.is_file().then_some(default)
+    });
+    let obs_was_open = close_obs_gracefully()?;
+    let transaction = match transaction::backup_file(
+        &document.path,
+        "obs-vr",
+        &format!("Remove OBS VR for {}", request.game_name),
+        &request.game_id,
+    ) {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            if obs_was_open {
+                reopen_obs(obs_path.as_deref());
+            }
+            return Err(error);
+        }
+    };
+
+    let result = (|| -> Result<(), String> {
+        remove_document(&mut document.value, &request)?;
+        let json = serde_json::to_string_pretty(&document.value)
+            .map_err(|error| format!("Could not serialize OBS collection: {error}"))?;
+        fs::write(&document.path, json).map_err(|error| {
+            format!(
+                "Could not write OBS collection '{}': {error}",
+                document.path.display()
+            )
+        })?;
+
+        let verify = fs::read_to_string(&document.path)
+            .map_err(|error| format!("Could not verify OBS collection: {error}"))?;
+        let verify: Value = serde_json::from_str(&verify).map_err(|error| {
+            format!("OBS collection failed JSON validation after removal: {error}")
+        })?;
+        let (_, _, source_exists) = inspect_document(&verify, &request)?;
+        if source_exists {
+            return Err(format!(
+                "OBS source '{}' was still present after removal.",
+                request.source_name
+            ));
         }
 
         Ok(())
@@ -569,6 +760,33 @@ mod tests {
             .expect("scene item");
         assert_eq!(item["pos"]["x"], 12.0);
         assert_eq!(item["pos"]["y"], 8.0);
+    }
+
+    #[test]
+    fn removes_configured_source_and_scene_item() {
+        let mut collection = sample_collection();
+        let request = ObsVrRequest {
+            game_id: "elden-ring".to_owned(),
+            game_name: "Elden Ring".to_owned(),
+            collection_name: "Sem nome".to_owned(),
+            scene_name: "vr".to_owned(),
+            source_name: "Elden Ring VR".to_owned(),
+            executable_name: "eldenring.exe".to_owned(),
+        };
+
+        configure_document(&mut collection, &request).expect("configure");
+        remove_document(&mut collection, &request).expect("remove");
+        let sources = collection["sources"].as_array().expect("sources");
+        assert!(!sources.iter().any(|source| source["name"] == "Elden Ring VR"));
+        let scene = sources
+            .iter()
+            .find(|source| source["name"] == "vr")
+            .expect("scene");
+        assert!(!scene["settings"]["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .any(|item| item["name"] == "Elden Ring VR"));
     }
 
     #[test]

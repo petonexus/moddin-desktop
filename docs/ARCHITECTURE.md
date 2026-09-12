@@ -91,7 +91,9 @@ A transaction currently records:
 
 The first consumer is the OBS module, which backs up the complete scene collection before editing it. The UI exposes transaction history and Undo. OBS-aware rollback closes OBS gracefully before restoring and reopens it afterwards so OBS cannot overwrite the restored collection on exit.
 
-Future action-engine transactions will extend this model to multiple files, files created by a module, hashes, commands, and structured per-step results.
+Available modules also expose a read-only verification pass. It reports the concrete prerequisites and current state separately from whether the action is merely available. Every mutating path refreshes this verification after applying, reinstalling, launching, or removing a module.
+
+The OptiScaler action already uses the multi-file form: it records replaced and created files, created directories, process safety metadata, and source metadata. OBS removal and VR profile changes use the same transaction store so the module lifecycle remains reversible.
 
 ## Implemented vertical slices
 

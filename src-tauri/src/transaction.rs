@@ -386,6 +386,19 @@ pub fn list_transactions() -> Result<Vec<TransactionRecord>, String> {
 }
 
 #[tauri::command]
+pub fn rollback_latest_module_transaction(
+    game_id: String,
+    kind: String,
+) -> Result<TransactionRecord, String> {
+    let record = list_transactions()?
+        .into_iter()
+        .find(|record| record.status == "applied" && record.game_id == game_id && record.kind == kind)
+        .ok_or_else(|| format!("No active transaction was found for module '{kind}' in game '{game_id}'."))?;
+
+    rollback_transaction(record.id)
+}
+
+#[tauri::command]
 pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
     let record = read_record(&id)?;
     if record.status == "rolled_back" {

@@ -21,12 +21,14 @@
 - [x] dry-run / preview screen
 - [x] inspect executable directory for common proxy DLLs
 - [x] VR-ready launch profiles with OpenXR preflight and recommended graphics settings
+- [x] module verification checklist and post-action validation
+- [x] reapply/reinstall and transaction-backed removal flows
 - [ ] structured per-action logs
 - [ ] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
 
-- [ ] OptiScaler
+- [x] OptiScaler
 - [ ] OpenXR helpers
 - [ ] ReShade
 - [ ] per-game VR / flat profiles

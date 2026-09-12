@@ -19,6 +19,7 @@ export interface ProxyConflict {
 export interface OptiScalerPreview {
   canApply: boolean
   gameRunning: boolean
+  executableExists: boolean
   executablePath: string
   executableDirectory: string
   selectedProxy: string | null

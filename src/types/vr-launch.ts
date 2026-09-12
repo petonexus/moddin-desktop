@@ -32,6 +32,7 @@ export interface VrSettingStatus extends VrIniPatch {
 export interface VrLaunchPreview {
   canLaunch: boolean
   gameRunning: boolean
+  executableExists: boolean
   executablePath: string
   executableDirectory: string
   activeOpenXrRuntime: string | null

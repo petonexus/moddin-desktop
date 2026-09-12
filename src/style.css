@@ -188,10 +188,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .module-card { display: flex; flex-direction: column; min-height: 190px; border: 1px solid #27313e; border-radius: 12px; padding: 16px; background: #111821; }
 .module-card p { color: #8490a0; font-size: 12px; line-height: 1.55; }
 .module-topline { display: flex; justify-content: space-between; margin-bottom: 15px; }
+.module-states { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .category { color: #9f91ec; background: #24203d; }
 .module-state.planned { color: #d0a76e; background: #342819; }
 .module-state.available { color: #9fe1b9; background: #173022; }
-.module-button { margin-top: auto; align-self: flex-start; font-size: 12px; }
+.module-check-state { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.module-check-state.unknown { color: #aab4c0; background: #202731; }
+.module-check-state.ready { color: #b8d7ff; background: #1e3152; }
+.module-check-state.installed { color: #a8edc4; background: #173022; }
+.module-check-state.attention { color: #f0cbd0; background: #3c1d25; }
+.module-verification { margin: 4px 0 14px; border: 1px solid #222d39; border-radius: 9px; padding: 10px; background: #0d131a; }
+.verification-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.verification-heading strong { font-size: 11px; }
+.verification-heading small { color: #657181; font-size: 9px; text-align: right; }
+.verification-checklist { display: grid; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
+.verification-checklist li { display: flex; align-items: start; gap: 7px; color: #aab4c0; font-size: 10px; }
+.verification-checklist li > span { display: inline-grid; flex: 0 0 auto; place-items: center; width: 15px; height: 15px; border-radius: 50%; font-size: 10px; font-weight: 900; }
+.verification-checklist li.passed > span { color: #a8edc4; background: #173022; }
+.verification-checklist li.failed > span { color: #f0cbd0; background: #3c1d25; }
+.verification-checklist strong, .verification-checklist small { display: block; }
+.verification-checklist small { margin-top: 2px; color: #6f7b8b; font-size: 9px; }
+.module-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.module-actions .module-button { margin-top: 0; font-size: 12px; }
+.text-button { border: 0; padding: 7px 0 0; background: transparent; color: #8f9aaa; font-size: 10px; cursor: pointer; text-align: left; }
+.text-button:hover:not(:disabled) { color: #d3a4ac; }
+.text-button:disabled { cursor: not-allowed; }
+.danger-action { color: #c98d97; }
 
 .metadata-card {
   display: grid;

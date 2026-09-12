@@ -15,6 +15,9 @@ export interface ObsVrPreview {
   sceneFound: boolean
   templateSourceName: string | null
   sourceExists: boolean
+  sourceTargetMatches: boolean
+  sourceInScene: boolean
+  installed: boolean
   changes: string[]
   warnings: string[]
 }

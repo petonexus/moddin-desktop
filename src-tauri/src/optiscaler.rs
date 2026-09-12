@@ -42,6 +42,7 @@ pub struct ProxyConflict {
 pub struct OptiScalerPreview {
     pub can_apply: bool,
     pub game_running: bool,
+    pub executable_exists: bool,
     pub executable_path: String,
     pub executable_directory: String,
     pub selected_proxy: Option<String>,
@@ -211,7 +212,12 @@ pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPrevie
     let (selected_proxy, conflicts) =
         choose_proxy(&executable_directory, &request.proxy_candidates, marker.as_ref());
 
-    let installed = marker.is_some();
+    let installed = marker.as_ref().is_some_and(|value| {
+        value.installed_files.iter().all(|relative| {
+            safe_join_relative(&executable_directory, relative)
+                .is_ok_and(|path| path.is_file())
+        })
+    });
     let installed_version = marker.as_ref().map(|value| value.version.clone());
     let current_proxy = marker.as_ref().map(|value| value.proxy_dll.clone());
 
@@ -262,6 +268,7 @@ pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPrevie
             && !manual_install_detected
             && selected_proxy.is_some(),
         game_running,
+        executable_exists: executable_path.is_file(),
         executable_path: executable_path.to_string_lossy().into_owned(),
         executable_directory: executable_directory.to_string_lossy().into_owned(),
         selected_proxy,
@@ -523,6 +530,40 @@ pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<Transactio
     tauri::async_runtime::spawn_blocking(move || install_from_archive(request, bytes))
         .await
         .map_err(|error| format!("OptiScaler installer task failed: {error}"))?
+}
+
+#[tauri::command]
+pub fn uninstall_optiscaler(request: OptiScalerRequest) -> Result<TransactionRecord, String> {
+    validate_request(&request)?;
+    let (_, executable_directory, _) = executable_context(&request)?;
+    if !marker_path(&executable_directory).is_file() {
+        return Err("No Moddin-managed OptiScaler installation was found.".to_owned());
+    }
+
+    let executable_directory_string = executable_directory.to_string_lossy().into_owned();
+    let mut last_rollback = None;
+    loop {
+        if read_marker(&executable_directory).is_none() {
+            break;
+        }
+
+        let record = transaction::list_transactions()?
+            .into_iter()
+            .find(|record| {
+                record.status == "applied"
+                    && record.kind == "optiscaler"
+                    && record.game_id == request.game_id
+                    && record.target_path == executable_directory_string
+            })
+            .ok_or_else(|| {
+                "The managed OptiScaler marker exists, but its rollback transaction could not be found."
+                    .to_owned()
+            })?;
+
+        last_rollback = Some(transaction::rollback_transaction(record.id)?);
+    }
+
+    last_rollback.ok_or_else(|| "No active OptiScaler installation transaction was found.".to_owned())
 }
 
 #[cfg(test)]

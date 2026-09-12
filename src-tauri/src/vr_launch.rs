@@ -47,6 +47,7 @@ pub struct VrSettingStatus {
 pub struct VrLaunchPreview {
     pub can_launch: bool,
     pub game_running: bool,
+    pub executable_exists: bool,
     pub executable_path: String,
     pub executable_directory: String,
     pub active_openxr_runtime: Option<String>,
@@ -403,6 +404,7 @@ fn preview_inner(request: &VrLaunchRequest) -> Result<VrLaunchPreview, String> {
             && missing_files.is_empty()
             && active_runtime.is_some(),
         game_running,
+        executable_exists: executable_path.is_file(),
         executable_path: executable_path.to_string_lossy().into_owned(),
         executable_directory: executable_directory.to_string_lossy().into_owned(),
         active_openxr_runtime: active_runtime,
@@ -475,6 +477,32 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
                 "Could not apply VR configuration '{}': {error}",
                 path.display()
             ));
+        } else {
+            let verify_contents = match fs::read_to_string(path) {
+                Ok(contents) => contents,
+                Err(error) => {
+                    if let Some(record) = transaction.take() {
+                        let _ = transaction::restore_record(record);
+                    }
+                    return Err(format!(
+                        "Could not verify VR configuration '{}': {error}",
+                        path.display()
+                    ));
+                }
+            };
+            let invalid = request.config_patches.iter().any(|patch| {
+                ini_value(&verify_contents, &patch.section, &patch.key).as_deref()
+                    != Some(patch.value.as_str())
+            });
+            if invalid {
+                if let Some(record) = transaction.take() {
+                    let _ = transaction::restore_record(record);
+                }
+                return Err(format!(
+                    "VR configuration '{}' failed post-write verification.",
+                    path.display()
+                ));
+            }
         }
     }
 

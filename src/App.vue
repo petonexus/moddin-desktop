@@ -10,6 +10,7 @@ import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
 import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
+import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 
 type ViewName = 'library' | 'transactions'
 
@@ -27,7 +28,9 @@ const search = ref('')
 const selectedAppId = ref<string | null>(null)
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
+const verificationBusyKey = ref<string | null>(null)
 const rollbackBusyId = ref<string | null>(null)
+const moduleVerifications = ref<Record<string, ModuleVerification>>({})
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
@@ -84,6 +87,60 @@ function statusLabel(status: TransactionRecord['status']) {
   if (status === 'applied') return t('statusApplied')
   if (status === 'rolled_back') return t('statusRolledBack')
   return status
+}
+
+function moduleKey(module: ToolModuleDefinition) {
+  return `${selectedGame.value?.catalog?.id ?? selectedAppId.value ?? 'unknown'}:${module.id}`
+}
+
+function moduleVerification(module: ToolModuleDefinition) {
+  return moduleVerifications.value[moduleKey(module)]
+}
+
+function verificationStatusLabel(status: ModuleVerification['status']) {
+  if (status === 'installed') return t('verificationInstalled')
+  if (status === 'ready') return t('verificationReady')
+  if (status === 'attention') return t('verificationAttention')
+  return t('verificationNotChecked')
+}
+
+function moduleActionLabel(module: ToolModuleDefinition) {
+  const verification = moduleVerification(module)
+  if (module.id === 'vr-launch') return t('reviewAndLaunch')
+  if (verification?.status === 'installed') {
+    return module.id === 'optiscaler' ? t('reinstall') : t('applyAgain')
+  }
+  return t('configure')
+}
+
+function moduleTransactionKind(module: ToolModuleDefinition) {
+  if (module.id === 'obs-vr') return 'obs-vr'
+  if (module.id === 'optiscaler') return 'optiscaler'
+  if (module.id === 'vr-launch') return 'vr-launch'
+  return null
+}
+
+function activeModuleTransaction(module: ToolModuleDefinition) {
+  const gameId = selectedGame.value?.catalog?.id
+  const kind = moduleTransactionKind(module)
+  if (!gameId || !kind) return null
+  return transactions.value.find((transaction) =>
+    transaction.status === 'applied' && transaction.gameId === gameId && transaction.kind === kind,
+  ) ?? null
+}
+
+function check(label: string, passed: boolean, detail?: string): ModuleVerificationCheck {
+  return { label, passed, detail }
+}
+
+function saveModuleVerification(module: ToolModuleDefinition, status: ModuleVerification['status'], summary: string, checks: ModuleVerificationCheck[]) {
+  moduleVerifications.value[moduleKey(module)] = {
+    status,
+    summary,
+    checks,
+    checkedAt: Date.now(),
+    activeTransactionId: activeModuleTransaction(module)?.id ?? null,
+  }
 }
 
 async function refreshGames() {
@@ -261,8 +318,9 @@ async function launchVrGame() {
     success.value = t('vrLaunchSuccess', { game: request.gameName, pid: result.processId })
     if (result.transaction) {
       success.value += ` ${t('vrConfigBackupCreated', { id: `${result.transaction.id.slice(0, 13)}…` })}`
-      await refreshTransactions()
     }
+    await refreshTransactions()
+    await verifyAvailableModules()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -287,6 +345,7 @@ async function applyObsConfiguration() {
       id: `${transaction.id.slice(0, 13)}…`,
     })
     await refreshTransactions()
+    await verifyAvailableModules()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -308,7 +367,9 @@ async function applyOptiScaler() {
       source: `OptiScaler ${request.version}`,
       id: `${transaction.id.slice(0, 13)}…`,
     })
-    await Promise.all([refreshTransactions(), inspectSelectedGame()])
+    await refreshTransactions()
+    await inspectSelectedGame()
+    await verifyAvailableModules()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -323,7 +384,9 @@ async function rollback(transaction: TransactionRecord) {
   try {
     await invoke<TransactionRecord>('rollback_transaction', { id: transaction.id })
     success.value = t('rolledBack', { label: transaction.label })
-    await Promise.all([refreshTransactions(), inspectSelectedGame()])
+    await refreshTransactions()
+    await inspectSelectedGame()
+    await verifyAvailableModules()
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -381,6 +444,118 @@ function buildVrLaunchRequest(module: ToolModuleDefinition): VrLaunchRequest | n
   }
 }
 
+function verificationSummary(status: ModuleVerification['status']) {
+  if (status === 'installed') return t('verificationSummaryInstalled')
+  if (status === 'ready') return t('verificationSummaryReady')
+  if (status === 'attention') return t('verificationSummaryAttention')
+  return t('verificationSummaryUnknown')
+}
+
+async function verifyModule(module: ToolModuleDefinition, silent = false) {
+  if (module.status !== 'available') return
+
+  const key = moduleKey(module)
+  verificationBusyKey.value = key
+  if (!silent) actionError.value = null
+
+  try {
+    if (module.id === 'obs-vr') {
+      const request = buildObsRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
+      const installed = preview.installed
+      saveModuleVerification(module, installed ? 'installed' : preview.canApply ? 'ready' : 'attention', verificationSummary(installed ? 'installed' : preview.canApply ? 'ready' : 'attention'), [
+        check(t('checkObsCollection'), Boolean(preview.collectionFile)),
+        check(t('checkObsScene'), preview.sceneFound),
+        check(t('checkObsSource'), preview.sourceExists),
+        check(t('checkObsTarget'), preview.sourceTargetMatches),
+        check(t('checkObsSceneLink'), preview.sourceInScene),
+      ])
+    } else if (module.id === 'optiscaler') {
+      const request = buildOptiScalerRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+      const installed = preview.installed && preview.installedVersion === request.version
+      const status: ModuleVerification['status'] = installed
+        ? 'installed'
+        : preview.canApply
+          ? 'ready'
+          : 'attention'
+      saveModuleVerification(module, status, verificationSummary(status), [
+        check(t('checkExecutable'), preview.executableExists),
+        check(t('checkGameClosed'), !preview.gameRunning),
+        check(t('checkManagedInstall'), !preview.manualInstallDetected),
+        check(t('checkProxyAvailable'), Boolean(preview.selectedProxy)),
+        check(t('checkVersion'), installed, preview.installed ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+      ])
+    } else if (module.id === 'vr-launch') {
+      const request = buildVrLaunchRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<VrLaunchPreview>('preview_vr_launch', { request })
+      const filesPresent = preview.missingFiles.length === 0
+      const configMatches = !request.configPath
+        || (preview.configExists && preview.settings.every((setting) => !setting.willChange))
+      const status: ModuleVerification['status'] = filesPresent && configMatches
+        ? 'installed'
+        : preview.canLaunch
+          ? 'ready'
+          : 'attention'
+      saveModuleVerification(module, status, verificationSummary(status), [
+        check(t('checkExecutable'), preview.executableExists),
+        check(t('checkVrFiles'), filesPresent),
+        check(t('checkVrConfig'), configMatches),
+        check(t('checkOpenXrRuntime'), Boolean(preview.activeOpenXrRuntime)),
+        check(t('checkGameClosed'), !preview.gameRunning),
+      ])
+    }
+
+    if (!silent) success.value = t('verificationCompleted', { module: moduleName(module) })
+  } catch (err) {
+    if (!silent) actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    if (verificationBusyKey.value === key) verificationBusyKey.value = null
+  }
+}
+
+async function verifyAvailableModules() {
+  const modules = selectedGame.value?.catalog?.modules.filter((module) => module.status === 'available') ?? []
+  await Promise.all(modules.map((module) => verifyModule(module, true)))
+}
+
+async function removeModule(module: ToolModuleDefinition) {
+  const gameId = selectedGame.value?.catalog?.id
+  const kind = moduleTransactionKind(module)
+  if (!gameId || !kind || !activeModuleTransaction(module)) {
+    actionError.value = t('noModuleTransaction')
+    return
+  }
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    if (module.id === 'obs-vr') {
+      const request = buildObsRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      await invoke<TransactionRecord>('uninstall_obs_vr', { request })
+    } else if (module.id === 'optiscaler') {
+      const request = buildOptiScalerRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      await invoke<TransactionRecord>('uninstall_optiscaler', { request })
+    } else {
+      await invoke<TransactionRecord>('rollback_latest_module_transaction', { gameId, kind })
+    }
+    success.value = t('moduleRemoved', { module: moduleName(module) })
+    await refreshTransactions()
+    await inspectSelectedGame()
+    await verifyModule(module, true)
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
 async function switchView(view: ViewName) {
   activeView.value = view
   actionError.value = null
@@ -390,6 +565,7 @@ async function switchView(view: ViewName) {
 
 watch(selectedAppId, () => {
   void inspectSelectedGame()
+  void verifyAvailableModules()
 })
 
 watch(locale, (value) => {
@@ -521,16 +697,63 @@ onMounted(async () => {
                   <article v-for="module in selectedGame.catalog.modules" :key="module.id" class="module-card">
                     <div class="module-topline">
                       <span class="category">{{ categoryLabel(module.category) }}</span>
-                      <span class="module-state" :class="module.status">{{ t(module.status) }}</span>
+                      <div class="module-states">
+                        <span class="module-state" :class="module.status">{{ t(module.status) }}</span>
+                        <span
+                          v-if="moduleVerification(module)"
+                          class="module-check-state"
+                          :class="moduleVerification(module)?.status"
+                        >
+                          {{ verificationStatusLabel(moduleVerification(module)!.status) }}
+                        </span>
+                      </div>
                     </div>
                     <h4>{{ moduleName(module) }}</h4>
                     <p>{{ moduleDescription(module) }}</p>
+
+                    <div v-if="moduleVerification(module)" class="module-verification">
+                      <div class="verification-heading">
+                        <strong>{{ moduleVerification(module)?.summary }}</strong>
+                        <small>{{ t('verifiedAt', { date: formatTransactionDate(moduleVerification(module)!.checkedAt) }) }}</small>
+                      </div>
+                      <ul class="verification-checklist">
+                        <li
+                          v-for="item in moduleVerification(module)?.checks"
+                          :key="item.label"
+                          :class="item.passed ? 'passed' : 'failed'"
+                        >
+                          <span aria-hidden="true">{{ item.passed ? '✓' : '!' }}</span>
+                          <div>
+                            <strong>{{ item.label }}</strong>
+                            <small v-if="item.detail">{{ item.detail }}</small>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div class="module-actions">
+                      <button
+                        class="secondary-button compact"
+                        :disabled="module.status !== 'available' || verificationBusyKey === moduleKey(module)"
+                        @click="verifyModule(module)"
+                      >
+                        {{ verificationBusyKey === moduleKey(module) ? t('verifying') : t('verify') }}
+                      </button>
+                      <button
+                        class="module-button"
+                        :disabled="module.status !== 'available' || moduleBusy"
+                        @click="configureModule(module)"
+                      >
+                        {{ module.status === 'available' ? (moduleBusy ? t('checking') : moduleActionLabel(module)) : t('comingNext') }}
+                      </button>
+                    </div>
                     <button
-                      class="module-button"
-                      :disabled="module.status !== 'available' || moduleBusy"
-                      @click="configureModule(module)"
+                      v-if="module.status === 'available' && activeModuleTransaction(module)"
+                      class="text-button danger-action"
+                      :disabled="moduleBusy"
+                      @click="removeModule(module)"
                     >
-                      {{ module.status === 'available' ? (moduleBusy ? t('checking') : t('configure')) : t('comingNext') }}
+                      {{ module.id === 'optiscaler' ? t('uninstallOptiScaler') : t('removeConfiguration') }}
                     </button>
                   </article>
                 </div>
