@@ -125,7 +125,7 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 
 fn normalized_path_key(path: &Path) -> String {
     path_to_string(path)
-        .trim_end_matches(['\\', '/'])
+        .trim_end_matches(|c| c == '\\' || c == '/')
         .to_lowercase()
 }
 
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn extracts_vdf_pairs() {
-        let line = r#"\t\t\"path\"\t\t\"D:\\\\SteamLibrary\""#;
+        let line = "\"path\"\t\t\"D:\\\\SteamLibrary\"";
         let pair = quoted_pair(line).expect("pair");
         assert_eq!(pair.0, "path");
         assert_eq!(unescape_vdf_path(&pair.1), r"D:\SteamLibrary");
