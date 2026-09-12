@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
 import type { InstalledGame, ToolModuleDefinition } from './types/game'
+import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { TransactionRecord } from './types/transaction'
 
@@ -10,9 +11,12 @@ type ViewName = 'library' | 'transactions'
 
 const installedGames = ref<InstalledGame[]>([])
 const transactions = ref<TransactionRecord[]>([])
+const gameInspection = ref<GameEnvironmentInspection | null>(null)
 const loading = ref(true)
 const transactionsLoading = ref(false)
+const inspectionLoading = ref(false)
 const error = ref<string | null>(null)
+const inspectionError = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const success = ref<string | null>(null)
 const search = ref('')
@@ -53,13 +57,35 @@ async function refreshGames() {
   error.value = null
   try {
     installedGames.value = await invoke<InstalledGame[]>('detect_steam_games')
-    if (!selectedAppId.value) {
+    if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
       selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
+    } else {
+      await inspectSelectedGame()
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     loading.value = false
+  }
+}
+
+async function inspectSelectedGame() {
+  gameInspection.value = null
+  inspectionError.value = null
+
+  const game = selectedGame.value
+  if (!game?.catalog) return
+
+  inspectionLoading.value = true
+  try {
+    gameInspection.value = await invoke<GameEnvironmentInspection>('inspect_game_environment', {
+      installDir: game.installed.installDir,
+      executable: game.catalog.executable,
+    })
+  } catch (err) {
+    inspectionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    inspectionLoading.value = false
   }
 }
 
@@ -154,12 +180,22 @@ function formatTransactionDate(timestamp: number) {
   }).format(new Date(timestamp))
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
 async function switchView(view: ViewName) {
   activeView.value = view
   actionError.value = null
   success.value = null
   if (view === 'transactions') await refreshTransactions()
 }
+
+watch(selectedAppId, () => {
+  void inspectSelectedGame()
+})
 
 onMounted(async () => {
   await Promise.all([refreshGames(), refreshTransactions()])
@@ -297,6 +333,48 @@ onMounted(async () => {
                     <span>Steam library</span>
                     <strong>{{ selectedGame.installed.libraryPath }}</strong>
                   </div>
+                </div>
+
+                <div class="environment-card">
+                  <div class="environment-heading">
+                    <div>
+                      <span class="environment-label">GAME ENVIRONMENT</span>
+                      <h3>Injection readiness</h3>
+                    </div>
+                    <button class="secondary-button compact" :disabled="inspectionLoading" @click="inspectSelectedGame">
+                      {{ inspectionLoading ? 'Inspecting…' : 'Rescan' }}
+                    </button>
+                  </div>
+
+                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">Inspecting executable directory…</div>
+                  <div v-else-if="inspectionError" class="environment-message danger">{{ inspectionError }}</div>
+                  <template v-else-if="gameInspection">
+                    <div class="environment-row">
+                      <span>Executable</span>
+                      <strong :class="gameInspection.executableExists ? 'ok-text' : 'danger-text'">
+                        {{ gameInspection.executableExists ? 'Found' : 'Missing' }}
+                      </strong>
+                    </div>
+                    <code class="environment-path">{{ gameInspection.executablePath }}</code>
+
+                    <div class="environment-row proxy-row">
+                      <span>Proxy DLLs in executable directory</span>
+                      <strong :class="gameInspection.proxyDlls.length ? 'warning-text' : 'ok-text'">
+                        {{ gameInspection.proxyDlls.length ? `${gameInspection.proxyDlls.length} detected` : 'None detected' }}
+                      </strong>
+                    </div>
+
+                    <div v-if="gameInspection.proxyDlls.length" class="dll-list">
+                      <div v-for="dll in gameInspection.proxyDlls" :key="dll.path" class="dll-row">
+                        <strong>{{ dll.name }}</strong>
+                        <span>{{ formatFileSize(dll.sizeBytes) }}</span>
+                        <code>{{ dll.path }}</code>
+                      </div>
+                    </div>
+                    <p v-else class="environment-note">
+                      No common proxy DLL was found. This does not guarantee compatibility, but it removes one common source of OptiScaler/ReShade/loader conflicts.
+                    </p>
+                  </template>
                 </div>
               </template>
 
