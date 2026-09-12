@@ -15,9 +15,14 @@ modules:
       executableName: eldenring.exe
   - id: optiscaler
     name: OptiScaler
-    description: Install and configure OptiScaler with a game-specific injection strategy.
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
     category: graphics
-    status: planned
+    status: available
+    config:
+      version: 0.9.4
+      downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z
+      sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxyCandidates: dxgi.dll,version.dll
   - id: openxr
     name: OpenXR tools
     description: Manage OpenXR-related helpers and per-game VR configuration.
