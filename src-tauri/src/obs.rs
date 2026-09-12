@@ -154,8 +154,12 @@ fn find_template(sources: &[Value], scene_index: usize) -> Option<(Value, Value)
         .as_array()?;
 
     for item in items {
-        let source_index = find_source_index_by_item(sources, item)?;
-        let source = sources.get(source_index)?;
+        let Some(source_index) = find_source_index_by_item(sources, item) else {
+            continue;
+        };
+        let Some(source) = sources.get(source_index) else {
+            continue;
+        };
         if is_game_capture(source) {
             return Some((item.clone(), source.clone()));
         }
@@ -565,5 +569,25 @@ mod tests {
             .expect("scene item");
         assert_eq!(item["pos"]["x"], 12.0);
         assert_eq!(item["pos"]["y"], 8.0);
+    }
+
+    #[test]
+    fn skips_non_resolvable_scene_items_when_searching_for_template() {
+        let mut collection = sample_collection();
+        let scene = collection["sources"]
+            .as_array_mut()
+            .expect("sources")
+            .iter_mut()
+            .find(|source| source["name"] == "vr")
+            .expect("scene");
+        scene["settings"]["items"]
+            .as_array_mut()
+            .expect("items")
+            .insert(0, json!({ "id": 99, "name": "Missing source", "source_uuid": "missing-uuid" }));
+
+        let sources = collection["sources"].as_array().expect("sources");
+        let scene_index = find_scene_index(sources, "vr").expect("scene index");
+        let (_, source) = find_template(sources, scene_index).expect("game capture template");
+        assert_eq!(source["name"], "Captura de jogo");
     }
 }
