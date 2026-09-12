@@ -55,6 +55,7 @@ Rust is intentionally kept narrow. It owns operations that benefit from native/l
 - downloads and hash verification;
 - backup/restore transactions;
 - OpenXR runtime discovery and launch-time overrides;
+- persistent structured action history;
 - integration with OBS and external tooling.
 
 The majority of product/UI logic remains TypeScript.
@@ -95,6 +96,22 @@ The first consumer is the OBS module, which backs up the complete scene collecti
 Available modules also expose a read-only verification pass. It reports the concrete prerequisites and current state separately from whether the action is merely available. Every mutating path refreshes this verification after applying, reinstalling, launching, or removing a module.
 
 The OptiScaler action already uses the multi-file form: it records replaced and created files, created directories, process safety metadata, and source metadata. OBS removal and VR profile changes use the same transaction store so the module lifecycle remains reversible.
+
+### 6. Persistent action history
+
+Developer diagnostics and user-visible action history are intentionally separate systems.
+
+`src/debug.ts` keeps a bounded in-memory diagnostic stream for frontend/Tauri troubleshooting. The persistent activity store is reserved for actions that change state or launch a configured game. The `invokeDebug` wrapper records the outcome of those mutating commands without making logging part of the success criteria for the action itself.
+
+Persistent entries are JSON Lines records under `%LOCALAPPDATA%/Moddin/logs/actions.jsonl`. The store:
+
+- records success or failure, action name, timestamp, game id, transaction id and compact structured details;
+- rotates the current file at 5 MB, keeping one previous generation;
+- validates payload size before accepting frontend-originated records;
+- exposes read and clear commands to the desktop UI;
+- never fails a game/mod mutation merely because the diagnostic write failed.
+
+The Activity panel can search/filter this history independently from the transaction screen. Transactions remain the source of truth for rollback; action logs explain **what Moddin attempted and how it ended**.
 
 ## Implemented vertical slices
 
