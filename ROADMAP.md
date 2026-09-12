@@ -19,8 +19,9 @@
 - [x] backup before mutation
 - [x] rollback / undo
 - [x] dry-run / preview screen
+- [x] inspect executable directory for common proxy DLLs
 - [ ] structured per-action logs
-- [ ] conflict detection for common proxy DLL names
+- [ ] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
 
