@@ -60,6 +60,8 @@ modules:
       updateUrl: https://api.github.com/repos/ClarkCheekyKent/CheekyFoveatedDLSS/releases/latest
       sha256: ad959b083b261172168c908791438cbb21eb183572ee50ec77de278580720df3
       addonFile: CheekyFoveatedDLSS.addon64
+      compatibilityStatus: experimental
+      compatibilityEvidence: upstream-not-confirmed
   - id: ofxr-framegen
     name: OFXR FrameGen
     description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.

@@ -14,6 +14,7 @@ import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
+import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
 
 type ViewName = 'library' | 'transactions'
 
@@ -36,12 +37,24 @@ const rollbackBusyId = ref<string | null>(null)
 const moduleVerifications = ref<Record<string, ModuleVerification>>({})
 const updateBusyKeys = ref(new Set<string>())
 const moduleUpdates = ref<Record<string, ModuleUpdate>>({})
+const compatibilityReports = ref<Record<string, CompatibilityReport>>({})
 let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(null)
 const cheekyDialog = ref<{ request: CheekyFoveatedDlssRequest; preview: CheekyFoveatedDlssPreview } | null>(null)
+const compatibilityDialog = ref<{ module: ToolModuleDefinition; gameName: string; version: string } | null>(null)
+const compatibilityDraftStatus = ref<CompatibilityStatus>('unverified')
+const compatibilityDraftNote = ref('')
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
+
+const compatibilityStatuses: CompatibilityStatus[] = [
+  'unverified',
+  'experimental',
+  'proven',
+  'risky',
+  'not_working',
+]
 
 const { t, locale } = useI18n()
 
@@ -128,6 +141,125 @@ function moduleKey(module: ToolModuleDefinition) {
 
 function moduleVerification(module: ToolModuleDefinition) {
   return moduleVerifications.value[moduleKey(module)]
+}
+
+function isCompatibilityStatus(value: unknown): value is CompatibilityStatus {
+  return typeof value === 'string' && compatibilityStatuses.includes(value as CompatibilityStatus)
+}
+
+function defaultCompatibilityStatus(module: ToolModuleDefinition): CompatibilityStatus {
+  const configured = module.config?.compatibilityStatus
+  return isCompatibilityStatus(configured) ? configured : 'unverified'
+}
+
+function moduleVersion(module: ToolModuleDefinition) {
+  return typeof module.config?.version === 'string' ? module.config.version : '?'
+}
+
+function compatibilityReport(module: ToolModuleDefinition) {
+  const report = compatibilityReports.value[moduleKey(module)]
+  return report?.testedVersion === moduleVersion(module) ? report : undefined
+}
+
+function compatibilityStatus(module: ToolModuleDefinition): CompatibilityStatus {
+  return compatibilityReport(module)?.status ?? defaultCompatibilityStatus(module)
+}
+
+function compatibilityStatusLabel(status: CompatibilityStatus) {
+  if (status === 'experimental') return t('compatibilityExperimental')
+  if (status === 'proven') return t('compatibilityProven')
+  if (status === 'risky') return t('compatibilityRisky')
+  if (status === 'not_working') return t('compatibilityNotWorking')
+  return t('compatibilityUnverified')
+}
+
+function compatibilityStatusSummary(module: ToolModuleDefinition) {
+  const report = compatibilityReport(module)
+  if (report) {
+    const recordedAt = t('compatibilityRecordedAt', {
+      date: formatTransactionDate(report.updatedAt),
+      version: report.testedVersion,
+    })
+    return report.note ? `${report.note} · ${recordedAt}` : recordedAt
+  }
+
+  return `${t('compatibilityUpstreamEvidence')} ${cheekyGameCompatibilityNote(module)}`
+}
+
+function cheekyCompatibilityEvidence() {
+  return `${t('compatibilityKnownWorking')} ${t('compatibilityKnownIssues')}`
+}
+
+function cheekyGameCompatibilityNote(module: ToolModuleDefinition) {
+  if (module.id !== 'cheeky-foveated-dlss') return ''
+  const gameId = selectedGame.value?.catalog?.id
+  if (locale.value === 'pt-BR') {
+    if (gameId === 'cyberpunk-2077') return 'Cyberpunk 2077 foi citado pelo autor como não testado.'
+    if (gameId === 'elden-ring') return 'Elden Ring não aparece na lista oficial de jogos testados.'
+  } else if (locale.value === 'es') {
+    if (gameId === 'cyberpunk-2077') return 'El autor indicó que Cyberpunk 2077 no había sido probado.'
+    if (gameId === 'elden-ring') return 'Elden Ring no aparece en la lista oficial de juegos probados.'
+  } else {
+    if (gameId === 'cyberpunk-2077') return 'The author described Cyberpunk 2077 as untested.'
+    if (gameId === 'elden-ring') return 'Elden Ring is not on the official tested-games list.'
+  }
+  return ''
+}
+
+function openCompatibilityReport(module: ToolModuleDefinition) {
+  const version = moduleVersion(module)
+  const report = compatibilityReport(module)
+  compatibilityDraftStatus.value = report?.status ?? defaultCompatibilityStatus(module)
+  compatibilityDraftNote.value = report?.note ?? ''
+  compatibilityDialog.value = {
+    module,
+    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? '',
+    version,
+  }
+}
+
+function saveCompatibilityReport() {
+  const dialog = compatibilityDialog.value
+  if (!dialog) return
+
+  const key = moduleKey(dialog.module)
+  const nextReports = { ...compatibilityReports.value }
+  if (compatibilityDraftStatus.value === 'unverified') {
+    delete nextReports[key]
+  } else {
+    nextReports[key] = {
+      status: compatibilityDraftStatus.value,
+      note: compatibilityDraftNote.value.trim(),
+      testedVersion: dialog.version,
+      updatedAt: Date.now(),
+    }
+  }
+  compatibilityReports.value = nextReports
+  compatibilityDialog.value = null
+  success.value = t('compatibilityTestSaved')
+}
+
+function loadCompatibilityReports() {
+  try {
+    const raw = window.localStorage.getItem('moddin-compatibility-reports')
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const validReports: Record<string, CompatibilityReport> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object') continue
+      const report = value as Partial<CompatibilityReport>
+      if (!isCompatibilityStatus(report.status) || typeof report.note !== 'string' || typeof report.testedVersion !== 'string' || typeof report.updatedAt !== 'number') continue
+      validReports[key] = {
+        status: report.status,
+        note: report.note,
+        testedVersion: report.testedVersion,
+        updatedAt: report.updatedAt,
+      }
+    }
+    compatibilityReports.value = validReports
+  } catch {
+    // Ignore unavailable or malformed local storage.
+  }
 }
 
 function moduleUpdate(module: ToolModuleDefinition) {
@@ -399,7 +531,7 @@ function buildCheekyRequest(module: ToolModuleDefinition): CheekyFoveatedDlssReq
     downloadUrl,
     sha256,
     addonFile,
-    safetyNotes: cheekySafetyNotes(),
+    safetyNotes: [...cheekySafetyNotes(), cheekyGameCompatibilityNote(module)].filter(Boolean),
   }
 }
 
@@ -972,7 +1104,16 @@ watch(locale, (value) => {
   }
 })
 
+watch(compatibilityReports, (value) => {
+  try {
+    window.localStorage.setItem('moddin-compatibility-reports', JSON.stringify(value))
+  } catch {
+    // Ignore unavailable storage, such as privacy-restricted browser contexts.
+  }
+}, { deep: true })
+
 onMounted(async () => {
+  loadCompatibilityReports()
   await Promise.all([refreshGames(), refreshTransactions()])
   gameStatePoll = window.setInterval(() => {
     if (activeView.value === 'library' && selectedGame.value?.catalog) {
@@ -1121,10 +1262,30 @@ onUnmounted(() => {
                         >
                           {{ verificationStatusLabel(moduleVerification(module)!.status) }}
                         </span>
+                        <span
+                          v-if="module.id === 'cheeky-foveated-dlss'"
+                          class="compatibility-state"
+                          :class="compatibilityStatus(module)"
+                        >
+                          {{ compatibilityStatusLabel(compatibilityStatus(module)) }}
+                        </span>
                       </div>
                     </div>
                     <h4>{{ moduleName(module) }}</h4>
                     <p>{{ moduleDescription(module) }}</p>
+
+                    <div v-if="module.id === 'cheeky-foveated-dlss'" class="compatibility-panel">
+                      <div class="compatibility-heading">
+                        <div>
+                          <strong>{{ t('compatibilityStatus') }}</strong>
+                          <small>{{ compatibilityStatusSummary(module) }}</small>
+                        </div>
+                        <button class="secondary-button compact" @click="openCompatibilityReport(module)">
+                          {{ t('recordTest') }}
+                        </button>
+                      </div>
+                      <small class="compatibility-evidence">{{ cheekyCompatibilityEvidence() }}</small>
+                    </div>
 
                     <div v-if="moduleVerification(module)" class="module-verification">
                       <div class="verification-heading">
@@ -1474,6 +1635,56 @@ onUnmounted(() => {
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
           </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="compatibilityDialog" class="modal-backdrop" @click.self="compatibilityDialog = null">
+      <section class="modal-card">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('compatibilityTestTitle') }} · CHEEKY FOVEATED DLSS</p>
+            <h2>{{ compatibilityDialog.gameName }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="compatibilityDialog = null">×</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>{{ t('cheekyVersion') }}</span>
+            <strong>{{ compatibilityDialog.version }}</strong>
+          </div>
+          <div>
+            <span>{{ t('compatibilityTestStatus') }}</span>
+            <strong>{{ compatibilityStatusLabel(compatibilityDraftStatus) }}</strong>
+          </div>
+        </div>
+
+        <div class="compatibility-form">
+          <label>
+            <span>{{ t('compatibilityTestStatus') }}</span>
+            <select v-model="compatibilityDraftStatus">
+              <option value="unverified">{{ t('compatibilityUnverified') }}</option>
+              <option value="experimental">{{ t('compatibilityExperimental') }}</option>
+              <option value="proven">{{ t('compatibilityProven') }}</option>
+              <option value="risky">{{ t('compatibilityRisky') }}</option>
+              <option value="not_working">{{ t('compatibilityNotWorking') }}</option>
+            </select>
+          </label>
+          <label>
+            <span>{{ t('compatibilityTestNotes') }}</span>
+            <textarea v-model="compatibilityDraftNote" rows="4" :placeholder="t('compatibilityTestNotesPlaceholder')" />
+          </label>
+        </div>
+
+        <div class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <p>{{ cheekyCompatibilityEvidence() }}</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="compatibilityDialog = null">{{ t('cancel') }}</button>
+          <button class="primary-button" @click="saveCompatibilityReport">{{ t('saveTestResult') }}</button>
         </div>
       </section>
     </div>
