@@ -3,6 +3,7 @@ mod obs;
 mod optiscaler;
 mod steam;
 mod transaction;
+mod updates;
 mod vr_launch;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,6 +21,7 @@ pub fn run() {
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
+            updates::check_module_update,
             vr_launch::preview_vr_launch,
             vr_launch::launch_vr_game,
         ])

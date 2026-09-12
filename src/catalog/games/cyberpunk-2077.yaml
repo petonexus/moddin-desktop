@@ -10,6 +10,7 @@ modules:
     status: available
     config:
       runtime: openxr
+      updateUrl: https://api.github.com/repos/dariulone/cyberpunk-vr-port/releases/latest
       arguments:
         - -borderless
       requiredFiles:
@@ -45,6 +46,7 @@ modules:
     config:
       version: 0.9.4
       downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z
+      updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
       sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
       proxyCandidates: dxgi.dll,wininet.dll
   - id: openxr

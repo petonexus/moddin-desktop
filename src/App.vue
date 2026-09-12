@@ -11,6 +11,7 @@ import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
 import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
+import type { ModuleUpdate } from './types/module-update'
 
 type ViewName = 'library' | 'transactions'
 
@@ -31,6 +32,8 @@ const moduleBusy = ref(false)
 const verificationBusyKey = ref<string | null>(null)
 const rollbackBusyId = ref<string | null>(null)
 const moduleVerifications = ref<Record<string, ModuleVerification>>({})
+const updateBusyKey = ref<string | null>(null)
+const moduleUpdates = ref<Record<string, ModuleUpdate>>({})
 let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
@@ -103,6 +106,35 @@ function moduleKey(module: ToolModuleDefinition) {
 
 function moduleVerification(module: ToolModuleDefinition) {
   return moduleVerifications.value[moduleKey(module)]
+}
+
+function moduleUpdate(module: ToolModuleDefinition) {
+  return moduleUpdates.value[moduleKey(module)]
+}
+
+function moduleUpdateLabel(status: ModuleUpdate['status']) {
+  if (status === 'available') return t('updateAvailable')
+  if (status === 'current') return t('updateCurrent')
+  if (status === 'unavailable') return t('updatesNotConfigured')
+  if (status === 'error') return t('updateCheckFailed')
+  return t('updatesNotChecked')
+}
+
+function moduleUpdateSummary(module: ToolModuleDefinition) {
+  const update = moduleUpdate(module)
+  if (!update) return t('updatesNotChecked')
+  if (update.status === 'available') {
+    return t('updateAvailableSummary', { version: update.latestVersion ?? '?' })
+  }
+  if (update.status === 'current') {
+    return t('updateCurrentSummary', { version: update.latestVersion ?? update.currentVersion ?? '?' })
+  }
+  if (update.status === 'unavailable') return t('updatesNotConfigured')
+  if (update.status === 'error') return t('updateCheckFailed')
+  if (update.status === 'unknown' && update.latestVersion) {
+    return t('updateVersionUnknownSummary', { version: update.latestVersion })
+  }
+  return t('updateVersionUnknown')
 }
 
 function moduleActionsBlocked(module: ToolModuleDefinition) {
@@ -577,6 +609,48 @@ async function verifyAvailableModules() {
   await Promise.all(modules.map((module) => verifyModule(module, true)))
 }
 
+async function checkModuleUpdate(module: ToolModuleDefinition, silent = false) {
+  if (module.status !== 'available') return
+
+  const key = moduleKey(module)
+  updateBusyKey.value = key
+  const config = module.config ?? {}
+  const updateUrl = typeof config.updateUrl === 'string' ? config.updateUrl : null
+  let currentVersion = typeof config.version === 'string' ? config.version : null
+
+  try {
+    if (module.id === 'optiscaler' && updateUrl) {
+      const request = buildOptiScalerRequest(module)
+      if (request) {
+        const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+        currentVersion = preview.installedVersion ?? request.version
+      }
+    }
+
+    const result = await invoke<ModuleUpdate>('check_module_update', {
+      request: { currentVersion, updateUrl },
+    })
+    moduleUpdates.value[key] = { ...result, checkedAt: Date.now() }
+  } catch (err) {
+    moduleUpdates.value[key] = {
+      status: 'error',
+      currentVersion,
+      latestVersion: null,
+      releaseUrl: null,
+      checkedAt: Date.now(),
+      detail: err instanceof Error ? err.message : String(err),
+    }
+    if (!silent) actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    if (updateBusyKey.value === key) updateBusyKey.value = null
+  }
+}
+
+async function checkAvailableModuleUpdates() {
+  const modules = selectedGame.value?.catalog?.modules.filter((module) => module.status === 'available') ?? []
+  await Promise.all(modules.map((module) => checkModuleUpdate(module, true)))
+}
+
 async function removeModule(module: ToolModuleDefinition) {
   if (selectedGameRunning.value) {
     actionError.value = t('gameRunningActionBlocked')
@@ -626,6 +700,7 @@ async function switchView(view: ViewName) {
 watch(selectedAppId, () => {
   void inspectSelectedGame()
   void verifyAvailableModules()
+  void checkAvailableModuleUpdates()
 })
 
 watch(locale, (value) => {
@@ -771,7 +846,13 @@ onUnmounted(() => {
                     <div class="module-topline">
                       <span class="category">{{ categoryLabel(module.category) }}</span>
                       <div class="module-states">
-                        <span class="module-state" :class="module.status">{{ t(module.status) }}</span>
+                        <span
+                          v-if="moduleVerification(module)?.status !== 'installed'"
+                          class="module-state"
+                          :class="module.status"
+                        >
+                          {{ t(module.status) }}
+                        </span>
                         <span
                           v-if="moduleVerification(module)"
                           class="module-check-state"
@@ -802,6 +883,26 @@ onUnmounted(() => {
                           </div>
                         </li>
                       </ul>
+                    </div>
+
+                    <div v-if="module.status === 'available'" class="module-update-row">
+                      <div class="module-update-copy">
+                        <strong>{{ t('updates') }}</strong>
+                        <small>{{ moduleUpdateSummary(module) }}</small>
+                      </div>
+                      <span
+                        v-if="moduleUpdate(module)?.status === 'available'"
+                        class="module-update-state available"
+                      >
+                        {{ moduleUpdateLabel(moduleUpdate(module)!.status) }}
+                      </span>
+                      <button
+                        class="secondary-button compact"
+                        :disabled="updateBusyKey === moduleKey(module)"
+                        @click="checkModuleUpdate(module)"
+                      >
+                        {{ updateBusyKey === moduleKey(module) ? t('checkingUpdates') : t('checkUpdates') }}
+                      </button>
                     </div>
 
                     <div class="module-actions">

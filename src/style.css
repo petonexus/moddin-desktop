@@ -209,6 +209,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .verification-checklist li.failed > span { color: #f0cbd0; background: #3c1d25; }
 .verification-checklist strong, .verification-checklist small { display: block; }
 .verification-checklist small { margin-top: 2px; color: #6f7b8b; font-size: 9px; }
+.module-update-row { display: flex; align-items: center; gap: 8px; margin: -3px 0 12px; }
+.module-update-copy { min-width: 0; flex: 1; }
+.module-update-copy strong, .module-update-copy small { display: block; }
+.module-update-copy strong { font-size: 10px; }
+.module-update-copy small { margin-top: 2px; overflow: hidden; color: #6f7b8b; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.module-update-state { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 999px; padding: 4px 8px; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.module-update-state.available { color: #f2d49d; background: #3a2d18; }
 .module-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .module-actions .module-button { margin-top: 0; font-size: 12px; }
 .text-button { border: 0; padding: 7px 0 0; background: transparent; color: #8f9aaa; font-size: 10px; cursor: pointer; text-align: left; }
