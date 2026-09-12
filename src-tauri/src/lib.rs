@@ -1,5 +1,6 @@
 mod inspection;
 mod obs;
+mod optiscaler;
 mod steam;
 mod transaction;
 
@@ -11,6 +12,8 @@ pub fn run() {
             inspection::inspect_game_environment,
             obs::preview_obs_vr,
             obs::configure_obs_vr,
+            optiscaler::preview_optiscaler,
+            optiscaler::install_optiscaler,
             transaction::list_transactions,
             transaction::rollback_transaction,
         ])

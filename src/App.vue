@@ -7,6 +7,7 @@ import { localeOptions } from './i18n'
 import type { InstalledGame, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
+import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
 import type { TransactionRecord } from './types/transaction'
 
 type ViewName = 'library' | 'transactions'
@@ -27,6 +28,7 @@ const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
 const rollbackBusyId = ref<string | null>(null)
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
+const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 
 const { t, locale } = useI18n()
 
@@ -145,20 +147,80 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
   }
 }
 
+function optiScalerSafetyNotes(gameId: string): string[] {
+  if (locale.value === 'pt-BR') {
+    const notes = ['Não use OptiScaler em sessões online com anti-cheat. Feche o jogo antes de instalar ou reverter arquivos.']
+    if (gameId === 'elden-ring') {
+      notes.push('No Elden Ring, o OptiScaler requer um mod que forneça entradas de upscaling/FG, como o ERSS-FG; o jogo vanilla não fornece essas entradas.')
+    }
+    return notes
+  }
+
+  if (locale.value === 'es') {
+    const notes = ['No uses OptiScaler en sesiones online con anti-cheat. Cierra el juego antes de instalar o revertir archivos.']
+    if (gameId === 'elden-ring') {
+      notes.push('En Elden Ring, OptiScaler requiere un mod que proporcione entradas de escalado/FG, como ERSS-FG; el juego vanilla no ofrece esas entradas.')
+    }
+    return notes
+  }
+
+  const notes = ['Do not use OptiScaler in online sessions with anti-cheat. Close the game before installing or rolling files back.']
+  if (gameId === 'elden-ring') {
+    notes.push('On Elden Ring, OptiScaler requires a mod that provides upscaler/FG inputs, such as ERSS-FG; the vanilla game does not provide those inputs.')
+  }
+  return notes
+}
+
+function buildOptiScalerRequest(module: ToolModuleDefinition): OptiScalerRequest | null {
+  const game = selectedGame.value
+  if (module.id !== 'optiscaler' || !game?.catalog) return null
+
+  const config = module.config ?? {}
+  if (!config.version || !config.downloadUrl || !config.sha256 || !config.proxyCandidates) return null
+
+  const proxyCandidates = config.proxyCandidates
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (!proxyCandidates.length) return null
+
+  return {
+    gameId: game.catalog.id,
+    gameName: game.catalog.name,
+    installDir: game.installed.installDir,
+    executable: game.catalog.executable,
+    version: config.version,
+    downloadUrl: config.downloadUrl,
+    sha256: config.sha256,
+    proxyCandidates,
+    safetyNotes: optiScalerSafetyNotes(game.catalog.id),
+  }
+}
+
 async function configureModule(module: ToolModuleDefinition) {
   actionError.value = null
   success.value = null
-
-  const request = buildObsRequest(module)
-  if (!request) {
-    actionError.value = t('moduleNoAction', { module: module.id })
-    return
-  }
-
   moduleBusy.value = true
+
   try {
-    const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
-    obsDialog.value = { request, preview }
+    if (module.id === 'obs-vr') {
+      const request = buildObsRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
+      obsDialog.value = { request, preview }
+      return
+    }
+
+    if (module.id === 'optiscaler') {
+      const request = buildOptiScalerRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+      optiScalerDialog.value = { request, preview }
+      return
+    }
+
+    throw new Error(t('moduleNoAction', { module: module.id }))
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -190,6 +252,28 @@ async function applyObsConfiguration() {
   }
 }
 
+async function applyOptiScaler() {
+  if (!optiScalerDialog.value) return
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const request = optiScalerDialog.value.request
+    const transaction = await invoke<TransactionRecord>('install_optiscaler', { request })
+    optiScalerDialog.value = null
+    success.value = t('configuredSuccess', {
+      source: `OptiScaler ${request.version}`,
+      id: `${transaction.id.slice(0, 13)}…`,
+    })
+    await Promise.all([refreshTransactions(), inspectSelectedGame()])
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
 async function rollback(transaction: TransactionRecord) {
   actionError.value = null
   success.value = null
@@ -197,7 +281,7 @@ async function rollback(transaction: TransactionRecord) {
   try {
     await invoke<TransactionRecord>('rollback_transaction', { id: transaction.id })
     success.value = t('rolledBack', { label: transaction.label })
-    await refreshTransactions()
+    await Promise.all([refreshTransactions(), inspectSelectedGame()])
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -521,6 +605,70 @@ onMounted(async () => {
             class="primary-button"
             :disabled="!obsDialog.preview.canApply || moduleBusy"
             @click="applyObsConfiguration"
+          >
+            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="optiScalerDialog" class="modal-backdrop" @click.self="optiScalerDialog = null">
+      <section class="modal-card optiscaler-modal">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('preview') }} · OPTISCALER</p>
+            <h2>OptiScaler {{ optiScalerDialog.request.version }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="optiScalerDialog = null">×</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>Version</span>
+            <strong>{{ optiScalerDialog.request.version }}</strong>
+          </div>
+          <div>
+            <span>Proxy DLL</span>
+            <strong>{{ optiScalerDialog.preview.selectedProxy ?? t('notFound') }}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{{ optiScalerDialog.preview.installed ? `Installed ${optiScalerDialog.preview.installedVersion ?? ''}` : 'Not installed' }}</strong>
+          </div>
+        </div>
+
+        <div v-if="optiScalerDialog.preview.conflicts.length" class="preview-block warnings">
+          <h3>Proxy DLL conflicts</h3>
+          <ul>
+            <li v-for="conflict in optiScalerDialog.preview.conflicts" :key="conflict.path">
+              {{ conflict.name }} · {{ formatFileSize(conflict.sizeBytes) }} · {{ conflict.path }}
+            </li>
+          </ul>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('changes') }}</h3>
+          <ul v-if="optiScalerDialog.preview.changes.length">
+            <li v-for="change in optiScalerDialog.preview.changes" :key="change">{{ change }}</li>
+          </ul>
+          <p v-else>{{ t('noSafePlan') }}</p>
+        </div>
+
+        <div v-if="optiScalerDialog.preview.warnings.length" class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <ul>
+            <li v-for="warning in optiScalerDialog.preview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <p class="path modal-path">{{ optiScalerDialog.preview.executableDirectory }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
+          <button
+            class="primary-button"
+            :disabled="!optiScalerDialog.preview.canApply || moduleBusy"
+            @click="applyOptiScaler"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
           </button>
