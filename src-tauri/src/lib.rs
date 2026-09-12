@@ -1,4 +1,5 @@
 mod activity;
+mod cheeky;
 mod inspection;
 mod obs;
 mod ofxr;
@@ -16,6 +17,9 @@ pub fn run() {
             activity::record_ui_action_log,
             activity::list_action_logs,
             activity::clear_action_logs,
+            cheeky::preview_cheeky_foveated_dlss,
+            cheeky::install_cheeky_foveated_dlss,
+            cheeky::uninstall_cheeky_foveated_dlss,
             steam::detect_steam_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,

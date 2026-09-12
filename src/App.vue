@@ -9,6 +9,7 @@ import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
 import type { OfxrPreview, OfxrRequest, OfxrResult } from './types/ofxr'
+import type { CheekyFoveatedDlssPreview, CheekyFoveatedDlssRequest, CheekyFoveatedDlssResult } from './types/cheeky'
 import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
@@ -39,6 +40,7 @@ let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(null)
+const cheekyDialog = ref<{ request: CheekyFoveatedDlssRequest; preview: CheekyFoveatedDlssPreview } | null>(null)
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
 
 const { t, locale } = useI18n()
@@ -95,6 +97,7 @@ function moduleName(module: ToolModuleDefinition) {
   if (module.id === 'obs-vr') return t('moduleObsVr')
   if (module.id === 'optiscaler') return t('moduleOptiScaler')
   if (module.id === 'ofxr-framegen') return t('moduleOfxr')
+  if (module.id === 'cheeky-foveated-dlss') return t('moduleCheeky')
   if (module.id === 'openxr') return t('moduleOpenXr')
   return module.name
 }
@@ -104,6 +107,7 @@ function moduleDescription(module: ToolModuleDefinition) {
   if (module.id === 'obs-vr') return t('moduleObsVrDescription')
   if (module.id === 'optiscaler') return t('moduleOptiScalerDescription')
   if (module.id === 'ofxr-framegen') return t('moduleOfxrDescription')
+  if (module.id === 'cheeky-foveated-dlss') return t('moduleCheekyDescription')
   if (module.id === 'openxr') return t('moduleOpenXrDescription')
   return module.description
 }
@@ -186,6 +190,7 @@ function moduleTransactionKind(module: ToolModuleDefinition) {
   if (module.id === 'obs-vr') return 'obs-vr'
   if (module.id === 'optiscaler') return 'optiscaler'
   if (module.id === 'ofxr-framegen') return 'ofxr-framegen'
+  if (module.id === 'cheeky-foveated-dlss') return 'cheeky-foveated-dlss'
   if (module.id === 'vr-launch') return 'vr-launch'
   return null
 }
@@ -345,6 +350,59 @@ function buildOptiScalerRequest(module: ToolModuleDefinition): OptiScalerRequest
   }
 }
 
+function cheekySafetyNotes(): string[] {
+  if (locale.value === 'pt-BR') {
+    return [
+      'Requer ReShade 64-bit com suporte completo a add-ons instalado no mesmo jogo.',
+      'Para VR em OpenXR, execute o CheekyOpenXRSetup.exe da mesma release uma vez; o Moddin não executa instaladores de terceiros automaticamente.',
+      'Não use o add-on do ReShade junto com o plugin UEVR do Cheeky no mesmo jogo.',
+      'Ative DLSS no jogo e ajuste a foveação pelo painel do ReShade depois da instalação.',
+    ]
+  }
+
+  if (locale.value === 'es') {
+    return [
+      'Requiere ReShade de 64 bits con soporte completo de add-ons instalado en el mismo juego.',
+      'Para VR en OpenXR, ejecuta una vez CheekyOpenXRSetup.exe de la misma release; Moddin no ejecuta instaladores de terceros automáticamente.',
+      'No uses el add-on de ReShade junto con el plugin UEVR de Cheeky en el mismo juego.',
+      'Activa DLSS en el juego y ajusta la foveación desde el panel de ReShade después de instalarlo.',
+    ]
+  }
+
+  return [
+    'Requires 64-bit ReShade with full add-on support installed for the same game.',
+    'For OpenXR VR, run CheekyOpenXRSetup.exe from the matching release once; Moddin does not run third-party installers automatically.',
+    'Do not use the Cheeky ReShade add-on together with the Cheeky UEVR plugin in the same game.',
+    'Enable DLSS in the game and tune foveation through the ReShade panel after installation.',
+  ]
+}
+
+function buildCheekyRequest(module: ToolModuleDefinition): CheekyFoveatedDlssRequest | null {
+  const game = selectedGame.value
+  if (module.id !== 'cheeky-foveated-dlss' || !game?.catalog) return null
+
+  const config = module.config ?? {}
+  const version = typeof config.version === 'string' ? config.version : null
+  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
+  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
+  const addonFile = typeof config.addonFile === 'string'
+    ? config.addonFile
+    : 'CheekyFoveatedDLSS.addon64'
+  if (!version || !downloadUrl || !sha256 || !addonFile) return null
+
+  return {
+    gameId: game.catalog.id,
+    gameName: game.catalog.name,
+    installDir: game.installed.installDir,
+    executable: game.catalog.executable,
+    version,
+    downloadUrl,
+    sha256,
+    addonFile,
+    safetyNotes: cheekySafetyNotes(),
+  }
+}
+
 async function configureModule(module: ToolModuleDefinition) {
   actionError.value = null
   success.value = null
@@ -391,6 +449,14 @@ async function configureModule(module: ToolModuleDefinition) {
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
       const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
       ofxrDialog.value = { request, preview }
+      return
+    }
+
+    if (module.id === 'cheeky-foveated-dlss') {
+      const request = buildCheekyRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
+      cheekyDialog.value = { request, preview }
       return
     }
 
@@ -515,6 +581,34 @@ async function applyOfxr() {
           id: `${result.transaction.id.slice(0, 13)}â€¦`,
         })
       : t('ofxrConfiguredState')
+    await refreshTransactions()
+    await verifyAvailableModules()
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
+async function applyCheeky() {
+  if (!cheekyDialog.value) return
+
+  if (selectedGameRunning.value || cheekyDialog.value.preview.gameRunning) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const request = cheekyDialog.value.request
+    const transaction = await invoke<CheekyFoveatedDlssResult>('install_cheeky_foveated_dlss', { request })
+    cheekyDialog.value = null
+    success.value = t('configuredSuccess', {
+      source: `Cheeky Foveated DLSS ${request.version}`,
+      id: `${transaction.id.slice(0, 13)}…`,
+    })
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -717,6 +811,23 @@ async function verifyModule(module: ToolModuleDefinition, silent = false) {
         check(t('checkOfxrTray'), preview.trayRunning),
         check(t('checkOfxrArmed'), preview.armed),
         check(t('checkGameClosed'), !preview.gameRunning),
+        ], preview.gameRunning)
+    } else if (module.id === 'cheeky-foveated-dlss') {
+      const request = buildCheekyRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
+      const installed = preview.installed && preview.installedVersion === request.version
+      const status: ModuleVerification['status'] = installed
+        ? 'installed'
+        : preview.canApply
+          ? 'ready'
+          : 'attention'
+      saveModuleVerification(module, status, verificationSummary(status), [
+        check(t('checkExecutable'), preview.executableExists),
+        check(t('checkGameClosed'), !preview.gameRunning),
+        check(t('checkManagedInstall'), !preview.manualInstallDetected),
+        check(t('checkCheekyAddon'), preview.installed),
+        check(t('checkVersion'), installed, preview.installed ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
       ], preview.gameRunning)
     }
 
@@ -756,6 +867,13 @@ async function checkModuleUpdate(module: ToolModuleDefinition, silent = false) {
       const request = buildOfxrRequest(module)
       if (request) {
         const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
+        currentVersion = preview.installedVersion ?? request.version
+      }
+    }
+    if (module.id === 'cheeky-foveated-dlss' && updateUrl) {
+      const request = buildCheekyRequest(module)
+      if (request) {
+        const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
         currentVersion = preview.installedVersion ?? request.version
       }
     }
@@ -815,6 +933,10 @@ async function removeModule(module: ToolModuleDefinition) {
       const request = buildOfxrRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
       await invoke<TransactionRecord>('uninstall_ofxr', { request })
+    } else if (module.id === 'cheeky-foveated-dlss') {
+      const request = buildCheekyRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      await invoke<TransactionRecord>('uninstall_cheeky_foveated_dlss', { request })
     } else {
       await invoke<TransactionRecord>('rollback_latest_module_transaction', { gameId, kind })
     }
@@ -1068,7 +1190,11 @@ onUnmounted(() => {
                       :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
                       @click="removeModule(module)"
                     >
-                      {{ module.id === 'optiscaler' ? t('uninstallOptiScaler') : t('removeConfiguration') }}
+                      {{ module.id === 'optiscaler'
+                        ? t('uninstallOptiScaler')
+                        : module.id === 'cheeky-foveated-dlss'
+                          ? t('uninstallCheeky')
+                          : t('removeConfiguration') }}
                     </button>
                   </article>
                 </div>
@@ -1290,6 +1416,61 @@ onUnmounted(() => {
             class="primary-button"
             :disabled="!optiScalerDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyOptiScaler"
+          >
+            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="cheekyDialog" class="modal-backdrop" @click.self="cheekyDialog = null">
+      <section class="modal-card">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('preview') }} · CHEEKY FOVEATED DLSS</p>
+            <h2>Cheeky Foveated DLSS {{ cheekyDialog.request.version }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="cheekyDialog = null">×</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>{{ t('cheekyVersion') }}</span>
+            <strong>{{ cheekyDialog.request.version }}</strong>
+          </div>
+          <div>
+            <span>{{ t('cheekyIntegration') }}</span>
+            <strong>{{ t('cheekyReshadeAddon') }}</strong>
+          </div>
+          <div>
+            <span>{{ t('cheekyAddon') }}</span>
+            <strong>{{ cheekyDialog.request.addonFile }}</strong>
+          </div>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('changes') }}</h3>
+          <ul v-if="cheekyDialog.preview.changes.length">
+            <li v-for="change in cheekyDialog.preview.changes" :key="change">{{ change }}</li>
+          </ul>
+          <p v-else>{{ t('noSafePlan') }}</p>
+        </div>
+
+        <div v-if="cheekyDialog.preview.warnings.length" class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <ul>
+            <li v-for="warning in cheekyDialog.preview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <p class="path modal-path">{{ cheekyDialog.preview.addonPath }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="cheekyDialog = null">{{ t('cancel') }}</button>
+          <button
+            class="primary-button"
+            :disabled="!cheekyDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
+            @click="applyCheeky"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
           </button>

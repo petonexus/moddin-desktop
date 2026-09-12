@@ -32,6 +32,7 @@
 
 - [x] OptiScaler
 - [x] OFXR Bridge FrameGen
+- [x] Cheeky Foveated DLSS ReShade add-on
 - [x] OpenXR helpers
 - [ ] ReShade
 - [ ] per-game VR / flat profiles

@@ -49,6 +49,17 @@ modules:
       updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
       sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
       proxyCandidates: dxgi.dll,wininet.dll
+  - id: cheeky-foveated-dlss
+    name: Cheeky Foveated DLSS
+    description: Install the ReShade add-on that concentrates DLSS quality in the center of the image for lower GPU cost.
+    category: graphics
+    status: available
+    config:
+      version: 0.3.4
+      downloadUrl: https://github.com/ClarkCheekyKent/CheekyFoveatedDLSS/releases/download/v0.3.4/CheekyFoveatedDLSS.addon64
+      updateUrl: https://api.github.com/repos/ClarkCheekyKent/CheekyFoveatedDLSS/releases/latest
+      sha256: ad959b083b261172168c908791438cbb21eb183572ee50ec77de278580720df3
+      addonFile: CheekyFoveatedDLSS.addon64
   - id: ofxr-framegen
     name: OFXR FrameGen
     description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
