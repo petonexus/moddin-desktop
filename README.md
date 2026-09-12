@@ -25,6 +25,7 @@ The first vertical slice already includes:
 - automatic backup transaction before mutation
 - transaction history and Undo
 - graceful OBS close/reopen when needed
+- VR-ready launch profiles for Elden Ring and Cyberpunk 2077
 - one-click Windows development bootstrap
 - Windows CI for frontend build and Rust tests
 
@@ -38,6 +39,12 @@ The initial catalog recipes are:
 - **Cyberpunk 2077** → `Cyberpunk 2077 VR` / `Cyberpunk2077.exe`
 
 The defaults currently target the OBS collection `Sem nome` and scene `vr`; the backend falls back to a unique collection containing that scene when possible. These values will become user-editable presets later.
+
+### VR-ready launch workflow
+
+The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring updates `ERVR.ini` to the conservative full-stereo `GameResScale=0.75` / `FpsTarget=60` starting point.
+
+The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
 
 ## Development
 
@@ -58,6 +65,21 @@ or:
 ```bash
 npm run tauri dev
 ```
+
+### Debugging
+
+During development, Moddin logs lifecycle events and every Tauri `invoke` call to the WebView console. Runtime errors and rejected promises are also captured in an on-screen diagnostic panel instead of leaving a blank window.
+
+The diagnostic API is available from the WebView console:
+
+```js
+window.__MODDIN_DEBUG__.logs()
+window.__MODDIN_DEBUG__.enable()
+window.__MODDIN_DEBUG__.disable()
+window.__MODDIN_DEBUG__.clear()
+```
+
+`enable()` persists verbose logging in the current WebView profile. Each log entry includes an ISO timestamp, scope, duration for native calls, and the related error or payload.
 
 ## Project direction
 

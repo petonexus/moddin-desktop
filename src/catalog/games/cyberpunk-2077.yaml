@@ -3,6 +3,30 @@ name: Cyberpunk 2077
 steamAppId: "1091500"
 executable: bin/x64/Cyberpunk2077.exe
 modules:
+  - id: vr-launch
+    name: VR launch profile
+    description: Validate the Cyberpunk VR Port installation, use the active OpenXR runtime, and start the game with a conservative graphics profile.
+    category: vr
+    status: available
+    config:
+      runtime: openxr
+      arguments:
+        - -borderless
+      requiredFiles:
+        - red4ext/plugins/CyberpunkVR_Stereo/CyberpunkVR_Stereo.dll
+      recommendations:
+        - Graphics preset=Low
+        - Film grain=Off
+        - Chromatic aberration=Off
+        - Motion blur=Off
+        - Lens flare=Off
+        - Depth of field=Off
+        - Frame generation=Off
+        - Display mode=Borderless
+        - VR runtime=OpenXR (start it before the game)
+      safetyNotes:
+        - The Cyberpunk VR Port applies its tuned UserSettings profile on its first launch and backs up the player's file; Moddin does not overwrite that file.
+        - Disable OpenXR Toolkit, RivaTuner and GPU overlays before starting the VR Port.
   - id: obs-vr
     name: OBS VR Capture
     description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.

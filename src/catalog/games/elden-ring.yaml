@@ -3,6 +3,33 @@ name: Elden Ring
 steamAppId: "1245620"
 executable: Game/eldenring.exe
 modules:
+  - id: vr-launch
+    name: VR launch profile
+    description: Validate ERVR, apply the recommended full-stereo performance settings with backup, and start Elden Ring through OpenXR.
+    category: vr
+    status: available
+    config:
+      runtime: openxr
+      requiredFiles:
+        - Game/ERVR/ERVR.dll
+      configPath: Game/ERVR/ERVR.ini
+      configPatches:
+        - VR|StereoMode|full
+        - VR|GameRes|auto
+        - VR|GameResScale|0.75
+        - VR|RenderScale|1.0
+        - Patches|FpsTarget|60
+      recommendations:
+        - Stereo mode=full
+        - Game resolution=auto
+        - Game resolution scale=0.75
+        - OpenXR render scale=1.0
+        - FPS target=60
+        - Steam=Offline mode
+        - Easy Anti-Cheat=Disabled by the existing offline mod setup
+      safetyNotes:
+        - ERVR does not disable Easy Anti-Cheat. Moddin will not bypass EAC; use the existing offline launch method and never load an online character with the mod active.
+        - Start SteamVR, Meta Quest Link, Virtual Desktop VDXR, or another OpenXR runtime before launching.
   - id: obs-vr
     name: OBS VR Capture
     description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.

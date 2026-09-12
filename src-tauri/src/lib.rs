@@ -3,6 +3,7 @@ mod obs;
 mod optiscaler;
 mod steam;
 mod transaction;
+mod vr_launch;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +17,8 @@ pub fn run() {
             optiscaler::install_optiscaler,
             transaction::list_transactions,
             transaction::rollback_transaction,
+            vr_launch::preview_vr_launch,
+            vr_launch::launch_vr_game,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moddin");

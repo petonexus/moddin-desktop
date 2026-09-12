@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b0f14" />
     <title>Moddin</title>
+    <script>
+      window.__MODDIN_BOOT_ERRORS__ = []
+      window.addEventListener('error', (event) => {
+        window.__MODDIN_BOOT_ERRORS__.push({
+          title: event.message || 'Unhandled boot error',
+          details: event.error?.stack || event.message || String(event.error),
+        })
+      })
+      window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason
+        window.__MODDIN_BOOT_ERRORS__.push({
+          title: 'Unhandled boot promise rejection',
+          details: reason?.stack || reason?.message || String(reason),
+        })
+      })
+    </script>
   </head>
   <body>
     <div id="app"></div>

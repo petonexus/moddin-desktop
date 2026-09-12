@@ -99,6 +99,14 @@ Future action-engine transactions will extend this model to multiple files, file
 
 `Windows Registry / Steam roots -> Steam libraries -> installed games -> catalog match -> game detail UI`
 
+### VR-ready launch profiles
+
+`Elden Ring/Cyberpunk -> launch recipe -> executable/VR files/OpenXR preflight -> declared graphics settings -> backup -> launch -> transaction history`
+
+Launch recipes are declarative. They define required VR markers, launch arguments, optional INI patches, and safety notes. The native layer never accepts an arbitrary absolute config path: relative paths are resolved below the game installation and only existing keys named by the recipe are changed. A missing OpenXR runtime, missing VR integration, or running game blocks launch.
+
+Cyberpunk's current VR Port owns its first-launch `UserSettings.json` migration, so Moddin intentionally does not compete with it. Elden Ring's ERVR recipe applies the documented conservative starting values when the existing `Game/ERVR/ERVR.ini` contains those keys.
+
 ### First safe mutation: OBS VR
 
 `Elden Ring/Cyberpunk -> OBS VR recipe -> preview -> graceful OBS close -> full collection backup -> apply -> validate -> reopen -> transaction history -> Undo`
