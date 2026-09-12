@@ -4,23 +4,24 @@
 
 - [x] Tauri + Vue + TypeScript skeleton
 - [x] Steam library discovery
+- [x] Windows Registry fallback for non-standard Steam installs
 - [x] installed-game scan
 - [x] YAML catalog validation
 - [x] Elden Ring catalog entry
 - [x] Cyberpunk 2077 catalog entry
 - [x] installed-games UI
-- [ ] Windows Registry fallback for non-standard Steam installs
-- [ ] transaction model and local transaction store
-- [ ] first reusable module: OBS VR capture
+- [x] transaction model and local transaction store
+- [x] first reusable module: OBS VR capture
 
 ## v0.2 — Safe actions
 
-- [ ] action engine primitives
-- [ ] backup before mutation
-- [ ] rollback / undo
-- [ ] dry-run / preview screen
-- [ ] structured logs
-- [ ] conflict detection for common proxy DLL names
+- [ ] generic action engine primitives
+- [x] backup before mutation
+- [x] rollback / undo
+- [x] dry-run / preview screen
+- [x] inspect executable directory for common proxy DLLs
+- [ ] structured per-action logs
+- [ ] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
 

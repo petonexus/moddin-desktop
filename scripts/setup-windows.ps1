@@ -1,59 +1,319 @@
 #requires -version 5.1
+<#
+.SYNOPSIS
+  Prepara automaticamente o Windows para desenvolver/rodar o Moddin com Tauri.
+
+.DESCRIPTION
+  O script:
+    - valida winget;
+    - instala Node.js LTS se necessario;
+    - instala Rustup se necessario;
+    - configura o toolchain stable-msvc;
+    - instala Visual Studio Build Tools 2022 com Desktop development with C++;
+    - atualiza o PATH da sessao atual;
+    - executa npm install;
+    - inicia npm run tauri dev.
+
+  Pode ser executado varias vezes. As etapas ja instaladas sao ignoradas.
+
+.PARAMETER SkipNpmInstall
+  Nao executa npm install.
+
+.PARAMETER SkipRun
+  Faz apenas o setup e nao inicia o Tauri ao final.
+#>
+
+[CmdletBinding()]
+param(
+    [switch]$SkipNpmInstall,
+    [switch]$SkipRun
+)
+
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$LogDir = Join-Path $RepoRoot 'logs'
+New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+$LogFile = Join-Path $LogDir ("setup-windows-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+
+$script:TranscriptStarted = $false
+
+function Start-SetupTranscript {
+    try {
+        Start-Transcript -Path $LogFile -Force | Out-Null
+        $script:TranscriptStarted = $true
+    } catch {
+        Write-Host "[!] Nao consegui iniciar transcript: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+function Stop-SetupTranscript {
+    if ($script:TranscriptStarted) {
+        try { Stop-Transcript | Out-Null } catch {}
+    }
+}
+
+function Write-Section([string]$Text) {
+    Write-Host ''
+    Write-Host ('=' * 72) -ForegroundColor DarkGray
+    Write-Host $Text -ForegroundColor Cyan
+    Write-Host ('=' * 72) -ForegroundColor DarkGray
+}
+
+function Write-Ok([string]$Text) {
+    Write-Host "[OK] $Text" -ForegroundColor Green
+}
+
+function Write-Info([string]$Text) {
+    Write-Host "[i]  $Text" -ForegroundColor Gray
+}
+
+function Write-Warn([string]$Text) {
+    Write-Host "[!]  $Text" -ForegroundColor Yellow
+}
 
 function Has-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-Write-Host ''
-Write-Host 'Moddin - Windows development setup' -ForegroundColor Cyan
-Write-Host 'This installs/checks the native prerequisites required by Tauri.' -ForegroundColor Gray
-Write-Host ''
+function Refresh-ProcessPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 
-if (-not (Has-Command 'winget')) {
-    throw 'winget was not found. Install/update App Installer from Microsoft Store and run this script again.'
+    $parts = @()
+    if ($machinePath) { $parts += $machinePath }
+    if ($userPath) { $parts += $userPath }
+
+    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    if (Test-Path -LiteralPath $cargoBin) {
+        $parts += $cargoBin
+    }
+
+    $nodePath = Join-Path $env:ProgramFiles 'nodejs'
+    if (Test-Path -LiteralPath $nodePath) {
+        $parts += $nodePath
+    }
+
+    $env:Path = ($parts -join ';')
 }
 
-if (-not (Has-Command 'rustup')) {
-    Write-Host '[1/3] Installing Rustup...' -ForegroundColor Yellow
-    winget install --id Rustlang.Rustup --exact --accept-package-agreements --accept-source-agreements
+function Assert-LastExitCode([string]$What) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "$What falhou com codigo $LASTEXITCODE."
+    }
+}
+
+function Invoke-WingetInstall {
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [string]$Override
+    )
+
+    $args = @(
+        'install',
+        '--id', $Id,
+        '--exact',
+        '--accept-package-agreements',
+        '--accept-source-agreements'
+    )
+
+    if ($Override) {
+        $args += @('--override', $Override)
+    }
+
+    Write-Info "winget $($args -join ' ')"
+    & winget @args
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget nao conseguiu instalar '$Id' (codigo $LASTEXITCODE)."
+    }
+}
+
+function Get-VsWherePath {
+    $candidate = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+    }
+    return $null
+}
+
+function Test-VCTools {
+    $vswhere = Get-VsWherePath
+    if (-not $vswhere) {
+        return $false
+    }
+
+    $installation = & $vswhere `
+        -latest `
+        -products '*' `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath 2>$null
+
+    return -not [string]::IsNullOrWhiteSpace(($installation | Out-String).Trim())
+}
+
+function Show-Version([string]$Command, [string[]]$Arguments = @('--version')) {
+    try {
+        & $Command @Arguments
+    } catch {
+        Write-Warn "Nao consegui consultar versao de $Command."
+    }
+}
+
+Start-SetupTranscript
+
+try {
+    Set-Location -LiteralPath $RepoRoot
+
     Write-Host ''
-    Write-Host 'Rustup was installed. Close this terminal, open a new one, and run SETUP-WINDOWS.bat again.' -ForegroundColor Green
+    Write-Host 'Moddin - Windows development bootstrap' -ForegroundColor Cyan
+    Write-Host "Repositorio: $RepoRoot" -ForegroundColor DarkGray
+    Write-Host "Log: $LogFile" -ForegroundColor DarkGray
+
+    Write-Section '1/6 - Windows Package Manager'
+
+    if (-not (Has-Command 'winget')) {
+        throw @"
+winget nao foi encontrado.
+
+Instale/atualize o 'App Installer' da Microsoft Store e execute
+SETUP-WINDOWS.bat novamente.
+"@
+    }
+
+    Write-Ok 'winget encontrado.'
+
+    Write-Section '2/6 - Node.js / npm'
+
+    if (-not (Has-Command 'node') -or -not (Has-Command 'npm')) {
+        Write-Info 'Node.js LTS nao encontrado. Instalando...'
+        Invoke-WingetInstall -Id 'OpenJS.NodeJS.LTS'
+        Refresh-ProcessPath
+    }
+
+    if (-not (Has-Command 'node') -or -not (Has-Command 'npm')) {
+        throw 'Node/npm foram instalados, mas ainda nao apareceram no PATH desta sessao.'
+    }
+
+    Write-Ok 'Node.js e npm encontrados.'
+    Show-Version 'node'
+    Show-Version 'npm'
+
+    Write-Section '3/6 - Rust / Cargo'
+
+    if (-not (Has-Command 'rustup')) {
+        Write-Info 'Rustup nao encontrado. Instalando...'
+        Invoke-WingetInstall -Id 'Rustlang.Rustup'
+        Refresh-ProcessPath
+    }
+
+    if (-not (Has-Command 'rustup')) {
+        $rustupCandidate = Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe'
+        if (Test-Path -LiteralPath $rustupCandidate) {
+            $env:Path = "$(Split-Path $rustupCandidate -Parent);$env:Path"
+        }
+    }
+
+    if (-not (Has-Command 'rustup')) {
+        throw 'Rustup foi instalado, mas o executavel ainda nao esta acessivel.'
+    }
+
+    Write-Info 'Configurando Rust stable-msvc...'
+    & rustup default stable-msvc
+    Assert-LastExitCode 'rustup default stable-msvc'
+
+    Refresh-ProcessPath
+
+    if (-not (Has-Command 'cargo')) {
+        throw 'Cargo nao ficou disponivel depois da configuracao do Rust.'
+    }
+
+    Write-Ok 'Rust/Cargo prontos.'
+    Show-Version 'rustc'
+    Show-Version 'cargo'
+
+    Write-Section '4/6 - Microsoft C++ Build Tools'
+
+    if (Test-VCTools) {
+        Write-Ok 'Visual Studio C++ Build Tools ja estao instalados.'
+    } else {
+        Write-Info 'C++ Build Tools nao encontrados.'
+        Write-Info 'Instalando Visual Studio Build Tools 2022 + workload VCTools...'
+        Write-Warn 'O instalador pode pedir permissao do Windows e baixar alguns GB.'
+
+        $vsOverride = '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+        Invoke-WingetInstall `
+            -Id 'Microsoft.VisualStudio.2022.BuildTools' `
+            -Override $vsOverride
+
+        Refresh-ProcessPath
+
+        if (-not (Test-VCTools)) {
+            throw @"
+O Visual Studio Build Tools terminou a instalacao, mas o workload C++ nao foi detectado.
+
+Abra 'Visual Studio Installer', escolha 'Build Tools 2022' > Modificar
+e confirme 'Desktop development with C++'. Depois execute este setup novamente.
+"@
+        }
+
+        Write-Ok 'Visual Studio C++ Build Tools instalados.'
+    }
+
+    Write-Section '5/6 - Dependencias do Moddin'
+
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'package.json'))) {
+        throw "package.json nao encontrado em '$RepoRoot'. Rode este setup a partir da raiz do repositorio Moddin."
+    }
+
+    if (-not $SkipNpmInstall) {
+        Write-Info 'Executando npm install...'
+        & npm install
+        Assert-LastExitCode 'npm install'
+        Write-Ok 'Dependencias npm instaladas.'
+    } else {
+        Write-Info 'npm install ignorado por -SkipNpmInstall.'
+    }
+
+    Write-Section '6/6 - Validacao do Tauri'
+
+    Write-Info 'Validando Cargo no projeto Tauri...'
+    & cargo metadata --manifest-path (Join-Path $RepoRoot 'src-tauri\Cargo.toml') --no-deps --format-version 1 | Out-Null
+    Assert-LastExitCode 'cargo metadata'
+    Write-Ok 'Cargo/Tauri conseguem ler o projeto.'
+
+    Write-Host ''
+    Write-Host '==============================================================' -ForegroundColor Green
+    Write-Host ' Ambiente do Moddin pronto.' -ForegroundColor Green
+    Write-Host '==============================================================' -ForegroundColor Green
+    Write-Host ''
+
+    if (-not $SkipRun) {
+        Write-Info 'Iniciando Moddin em modo desenvolvimento...'
+        Write-Host ''
+        & npm run tauri dev
+        $tauriExit = $LASTEXITCODE
+
+        if ($tauriExit -ne 0) {
+            throw "npm run tauri dev terminou com codigo $tauriExit."
+        }
+    } else {
+        Write-Info 'Execucao do app ignorada por -SkipRun.'
+        Write-Host 'Para iniciar depois: npm run tauri dev' -ForegroundColor White
+    }
+
     exit 0
 }
-
-Write-Host '[1/3] Rustup found.' -ForegroundColor Green
-& rustup default stable-msvc
-
-if (-not (Has-Command 'cargo')) {
-    Write-Host 'Cargo is not available in the current PATH yet.' -ForegroundColor Yellow
-    Write-Host 'Close this terminal, open a new one, and run SETUP-WINDOWS.bat again.' -ForegroundColor Yellow
-    exit 0
-}
-
-Write-Host '[2/3] Cargo found.' -ForegroundColor Green
-& cargo --version
-
-# Tauri requires the MSVC C++ toolchain. vswhere is a reliable signal that
-# Visual Studio / Build Tools is installed. The script does not silently install
-# several GB of Build Tools; it opens the official installer page when missing.
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vswhere)) {
+catch {
     Write-Host ''
-    Write-Host '[3/3] Microsoft C++ Build Tools were not detected.' -ForegroundColor Yellow
-    Write-Host 'Install Visual Studio Build Tools 2022 and select:' -ForegroundColor White
-    Write-Host '  Desktop development with C++' -ForegroundColor Cyan
-    Write-Host 'Include the recommended MSVC toolset and Windows SDK.' -ForegroundColor Gray
+    Write-Host 'ERRO NO SETUP' -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host ''
-    Start-Process 'https://visualstudio.microsoft.com/visual-cpp-build-tools/'
-    Write-Host 'After installation, restart the terminal and run SETUP-WINDOWS.bat again.' -ForegroundColor Yellow
-    exit 0
+    Write-Host "Log: $LogFile" -ForegroundColor Yellow
+    exit 1
 }
-
-Write-Host '[3/3] Visual Studio / C++ Build Tools detected.' -ForegroundColor Green
-Write-Host ''
-Write-Host 'Native prerequisites look ready.' -ForegroundColor Green
-Write-Host 'Next:' -ForegroundColor White
-Write-Host '  npm install'
-Write-Host '  npm run tauri dev'
-Write-Host ''
+finally {
+    Stop-SetupTranscript
+}

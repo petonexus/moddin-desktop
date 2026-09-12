@@ -1,50 +1,66 @@
 # Moddin
 
-**Moddin** is a Windows-first desktop manager for PC game mods and tooling.
+**Moddin** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
 
-The goal is to replace one-off installers with a reusable, declarative system: Moddin detects installed games, shows supported recipes for each title, applies changes safely, and can roll them back later.
+Instead of keeping one-off PowerShell installers per game, Moddin detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
 
 ## Stack
 
 - Tauri 2
 - Vue 3
 - TypeScript
-- Rust only for native desktop operations
-- YAML game/tool catalog
+- Rust only for native Windows/filesystem/process integration
+- YAML game catalog validated with Zod
 
-## MVP
+## Current MVP
 
-The first milestone focuses on:
+The first vertical slice already includes:
 
-- detecting Steam libraries and installed games;
-- matching installed games against Moddin's catalog;
-- Elden Ring and Cyberpunk 2077 as the first supported titles;
-- reusable modules, starting with OBS VR capture;
-- transaction-based backup/rollback as the foundation for future installers.
+- Steam install discovery, including Windows Registry fallback
+- multiple Steam libraries
+- installed-game scanning
+- Elden Ring and Cyberpunk 2077 catalog entries
+- reusable OBS VR Capture module
+- preview before applying OBS changes
+- automatic backup transaction before mutation
+- transaction history and Undo
+- graceful OBS close/reopen when needed
+- one-click Windows development bootstrap
+- Windows CI for frontend build and Rust tests
+
+### OBS VR workflow
+
+For the first supported module, Moddin looks for the configured OBS scene (`vr` by default), clones an existing Game Capture source to preserve its transform/settings, targets the game executable, and stores a full backup of the scene collection before writing anything.
+
+The initial catalog recipes are:
+
+- **Elden Ring** → `Elden Ring VR` / `eldenring.exe`
+- **Cyberpunk 2077** → `Cyberpunk 2077 VR` / `Cyberpunk2077.exe`
+
+The defaults currently target the OBS collection `Sem nome` and scene `vr`; the backend falls back to a unique collection containing that scene when possible. These values will become user-editable presets later.
 
 ## Development
 
-Requirements on Windows:
+On Windows, after cloning the repository, run:
 
-- Node.js 22+
-- Rust stable
-- Tauri prerequisites / WebView2
+```bat
+SETUP-WINDOWS.bat
+```
 
-Then:
+The bootstrap checks or installs Node.js, Rust/Cargo using the MSVC toolchain, Microsoft C++ Build Tools, npm dependencies, and validates the Tauri project. After the environment is ready, use:
+
+```bat
+RODAR-MODDIN.bat
+```
+
+or:
 
 ```bash
-npm install
 npm run tauri dev
 ```
 
-The current bootstrap work lives in `feat/bootstrap-mvp` until the first usable slice is ready to merge.
+## Project direction
 
-## Architecture principle
+Game-specific support should live in catalog recipes rather than hard-coded UI branches. Reusable modules such as OBS, OptiScaler, OpenXR, ReShade, UE4SS, BepInEx, and REFramework will be shared across games and composed from declarative configuration.
 
-Game support should be data-driven whenever possible. Adding a game should mostly mean adding a catalog entry instead of adding hard-coded `if (game === ...)` branches throughout the app.
-
-Native code is reserved for things that actually need native access: Steam discovery, filesystem/process operations, backups, Windows integration, and later OBS/tool configuration.
-
-## License
-
-GPL-3.0.
+See [`ROADMAP.md`](ROADMAP.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current plan.
