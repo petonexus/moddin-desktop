@@ -22,16 +22,17 @@
 - [x] inspect executable directory for common proxy DLLs
 - [x] VR-ready launch profiles with OpenXR preflight and recommended graphics settings
 - [x] OFXR Bridge FrameGen install/start/configure/arm flow before VR launch
+- [x] per-game OpenXR runtime override without changing the Windows global runtime
 - [x] module verification checklist and post-action validation
 - [x] reapply/reinstall and transaction-backed removal flows
-- [ ] structured per-action logs
+- [x] structured per-action logs
 - [ ] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
 
 - [x] OptiScaler
 - [x] OFXR Bridge FrameGen
-- [ ] OpenXR helpers
+- [x] OpenXR helpers
 - [ ] ReShade
 - [ ] per-game VR / flat profiles
 - [x] module state detection and version reporting

@@ -1,6 +1,8 @@
+mod activity;
 mod inspection;
 mod obs;
 mod ofxr;
+mod openxr;
 mod optiscaler;
 mod steam;
 mod transaction;
@@ -11,6 +13,9 @@ mod vr_launch;
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            activity::record_ui_action_log,
+            activity::list_action_logs,
+            activity::clear_action_logs,
             steam::detect_steam_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,
@@ -19,6 +24,9 @@ pub fn run() {
             obs::preview_obs_vr,
             obs::configure_obs_vr,
             obs::uninstall_obs_vr,
+            openxr::inspect_openxr,
+            openxr::set_game_openxr_runtime,
+            openxr::set_system_openxr_runtime,
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
