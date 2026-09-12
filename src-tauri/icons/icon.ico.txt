@@ -1,1 +1,0 @@
-The binary icon.ico is added through the Git data API because the repository connector's normal contents writer is UTF-8 text only.
