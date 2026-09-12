@@ -52,6 +52,8 @@ The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the
 
 Available modules are checked automatically when a game is selected and can be checked again manually at any time. The checklist distinguishes a module that is ready to apply from one that is already configured, reports individual failed prerequisites, and is refreshed after every apply, reinstall, launch, or removal. Removal is transaction-backed: OBS removes only the Moddin-created source, OptiScaler restores its managed files, and VR profiles restore the last declared INI changes.
 
+The module cards also check configured update sources. Versioned tools such as OptiScaler are compared with the latest official GitHub release, while recipes without a trustworthy local version signal remain explicitly marked as unable to identify the installed version instead of claiming they are current.
+
 ## Development
 
 On Windows, after cloning the repository, run:

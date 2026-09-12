@@ -32,7 +32,7 @@ const moduleBusy = ref(false)
 const verificationBusyKey = ref<string | null>(null)
 const rollbackBusyId = ref<string | null>(null)
 const moduleVerifications = ref<Record<string, ModuleVerification>>({})
-const updateBusyKey = ref<string | null>(null)
+const updateBusyKeys = ref(new Set<string>())
 const moduleUpdates = ref<Record<string, ModuleUpdate>>({})
 let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
@@ -110,6 +110,10 @@ function moduleVerification(module: ToolModuleDefinition) {
 
 function moduleUpdate(module: ToolModuleDefinition) {
   return moduleUpdates.value[moduleKey(module)]
+}
+
+function moduleUpdateBusy(module: ToolModuleDefinition) {
+  return updateBusyKeys.value.has(moduleKey(module))
 }
 
 function moduleUpdateLabel(status: ModuleUpdate['status']) {
@@ -613,7 +617,9 @@ async function checkModuleUpdate(module: ToolModuleDefinition, silent = false) {
   if (module.status !== 'available') return
 
   const key = moduleKey(module)
-  updateBusyKey.value = key
+  const busyKeys = new Set(updateBusyKeys.value)
+  busyKeys.add(key)
+  updateBusyKeys.value = busyKeys
   const config = module.config ?? {}
   const updateUrl = typeof config.updateUrl === 'string' ? config.updateUrl : null
   let currentVersion = typeof config.version === 'string' ? config.version : null
@@ -642,7 +648,9 @@ async function checkModuleUpdate(module: ToolModuleDefinition, silent = false) {
     }
     if (!silent) actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
-    if (updateBusyKey.value === key) updateBusyKey.value = null
+    const nextBusyKeys = new Set(updateBusyKeys.value)
+    nextBusyKeys.delete(key)
+    updateBusyKeys.value = nextBusyKeys
   }
 }
 
@@ -898,10 +906,10 @@ onUnmounted(() => {
                       </span>
                       <button
                         class="secondary-button compact"
-                        :disabled="updateBusyKey === moduleKey(module)"
+                        :disabled="moduleUpdateBusy(module)"
                         @click="checkModuleUpdate(module)"
                       >
-                        {{ updateBusyKey === moduleKey(module) ? t('checkingUpdates') : t('checkUpdates') }}
+                        {{ moduleUpdateBusy(module) ? t('checkingUpdates') : t('checkUpdates') }}
                       </button>
                     </div>
 

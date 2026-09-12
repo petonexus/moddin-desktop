@@ -32,7 +32,7 @@
 - [ ] OpenXR helpers
 - [ ] ReShade
 - [ ] per-game VR / flat profiles
-- [ ] module state detection and version reporting
+- [x] module state detection and version reporting
 
 ## v0.4 — Mod frameworks
 
@@ -44,7 +44,7 @@
 
 ## Later
 
-- [ ] GitHub Releases updater
+- [x] GitHub Releases updater
 - [ ] signed/versioned remote catalog
 - [ ] Nexus integration where permitted
 - [ ] Epic / GOG detection
