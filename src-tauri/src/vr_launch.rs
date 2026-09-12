@@ -1,4 +1,7 @@
-use crate::transaction::{self, TransactionRecord};
+use crate::{
+    openxr,
+    transaction::{self, TransactionRecord},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -173,45 +176,6 @@ fn is_process_running(image_name: &str) -> bool {
         .contains(&image_name.to_ascii_lowercase())
 }
 
-fn registry_openxr_runtime(key: &str) -> Option<String> {
-    let output = Command::new("reg.exe")
-        .args(["query", key, "/v", "ActiveRuntime"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if !line.to_ascii_lowercase().contains("activeruntime") {
-            continue;
-        }
-
-        let mut parts = line.split_whitespace();
-        let _ = parts.next();
-        let _ = parts.next();
-        let value = parts.collect::<Vec<_>>().join(" ");
-        if !value.is_empty() {
-            return Some(value);
-        }
-    }
-
-    None
-}
-
-fn active_openxr_runtime() -> Option<String> {
-    [
-        r"HKCU\Software\Khronos\OpenXR\1",
-        r"HKLM\SOFTWARE\Khronos\OpenXR\1",
-        r"HKLM\SOFTWARE\WOW6432Node\Khronos\OpenXR\1",
-    ]
-    .iter()
-    .find_map(|key| registry_openxr_runtime(key))
-}
-
 fn ini_value(contents: &str, section: &str, key: &str) -> Option<String> {
     let mut current_section = String::new();
 
@@ -317,6 +281,16 @@ fn config_context(
     Ok((Some(path), contents))
 }
 
+fn effective_openxr_runtime(game_id: &str) -> (Option<String>, bool) {
+    if let Some(runtime) = openxr::game_runtime_override(game_id) {
+        return (Some(runtime), true);
+    }
+
+    let system = openxr::system_active_runtime()
+        .filter(|runtime| Path::new(runtime).is_file());
+    (system, false)
+}
+
 fn preview_inner(request: &VrLaunchRequest) -> Result<VrLaunchPreview, String> {
     validate_request(request)?;
     let install_root = PathBuf::from(&request.install_dir);
@@ -338,12 +312,18 @@ fn preview_inner(request: &VrLaunchRequest) -> Result<VrLaunchPreview, String> {
         .map(|patch| read_setting_status(config_contents.as_deref(), patch))
         .collect::<Vec<_>>();
     let game_running = is_process_running(&process_name);
-    let active_runtime = active_openxr_runtime();
+    let system_runtime = openxr::system_active_runtime();
+    let (active_runtime, using_game_override) = effective_openxr_runtime(&request.game_id);
     let config_exists = config_path.as_ref().is_some_and(|path| path.is_file());
 
     let mut changes = vec![
-        "Use the active Windows OpenXR runtime and start the VR headset before the game."
-            .to_owned(),
+        if using_game_override {
+            "Use the saved per-game OpenXR runtime override through XR_RUNTIME_JSON without changing the Windows global runtime."
+                .to_owned()
+        } else {
+            "Use the active Windows OpenXR runtime and start the VR headset before the game."
+                .to_owned()
+        },
         format!(
             "Start {} with the VR recipe from its executable directory.",
             process_name
@@ -377,10 +357,20 @@ fn preview_inner(request: &VrLaunchRequest) -> Result<VrLaunchPreview, String> {
         ));
     }
     if active_runtime.is_none() {
-        warnings.push(
-            "No active OpenXR runtime was found in Windows. Select SteamVR, Meta Quest Link, Virtual Desktop VDXR, or another runtime first."
-                .to_owned(),
-        );
+        if system_runtime
+            .as_deref()
+            .is_some_and(|runtime| !Path::new(runtime).is_file())
+        {
+            warnings.push(
+                "The Windows OpenXR ActiveRuntime registry value points to a missing manifest. Open the Moddin OpenXR manager and select a valid runtime."
+                    .to_owned(),
+            );
+        } else {
+            warnings.push(
+                "No usable OpenXR runtime was found. Open the Moddin OpenXR manager and select SteamVR, Meta Quest Link, Virtual Desktop VDXR, or another runtime first."
+                    .to_owned(),
+            );
+        }
     }
     if request.config_path.is_some() && !config_exists {
         warnings.push(
@@ -457,6 +447,9 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
             .ok_or_else(|| "VR configuration path could not be resolved.".to_owned())?;
         let mut metadata = BTreeMap::new();
         metadata.insert("processName".to_owned(), process_name.clone());
+        if let Some(runtime) = openxr::game_runtime_override(&request.game_id) {
+            metadata.insert("openXrRuntimeJson".to_owned(), runtime);
+        }
         transaction = Some(transaction::backup_file_with_metadata(
             path,
             "vr-launch",
@@ -517,6 +510,10 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
         .current_dir(&executable_directory)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+
+    if let Some(runtime_override) = openxr::game_runtime_override(&request.game_id) {
+        command.env("XR_RUNTIME_JSON", runtime_override);
+    }
 
     let child = match command.spawn() {
         Ok(child) => child,
