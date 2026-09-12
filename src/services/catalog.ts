@@ -10,7 +10,7 @@ const moduleSchema = z.object({
   description: z.string().min(1),
   category: z.enum(['vr', 'graphics', 'qol', 'system']),
   status: z.enum(['available', 'planned']),
-  config: z.record(z.string(), z.string()).optional(),
+  config: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
 })
 
 const gameSchema = z.object({

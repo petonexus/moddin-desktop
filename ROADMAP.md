@@ -20,6 +20,7 @@
 - [x] rollback / undo
 - [x] dry-run / preview screen
 - [x] inspect executable directory for common proxy DLLs
+- [x] VR-ready launch profiles with OpenXR preflight and recommended graphics settings
 - [ ] structured per-action logs
 - [ ] conflict resolution for common proxy DLL names
 

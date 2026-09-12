@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { invoke } from '@tauri-apps/api/core'
+import { invokeDebug as invoke } from './debug'
 import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
 import { localeOptions } from './i18n'
 import type { InstalledGame, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
+import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
 import type { TransactionRecord } from './types/transaction'
+import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 
 type ViewName = 'library' | 'transactions'
 
@@ -27,6 +29,8 @@ const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
 const rollbackBusyId = ref<string | null>(null)
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
+const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
+const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
 
 const { t, locale } = useI18n()
 
@@ -57,6 +61,7 @@ const selectedGame = computed(() => {
 })
 
 function moduleName(module: ToolModuleDefinition) {
+  if (module.id === 'vr-launch') return t('moduleVrLaunch')
   if (module.id === 'obs-vr') return t('moduleObsVr')
   if (module.id === 'optiscaler') return t('moduleOptiScaler')
   if (module.id === 'openxr') return t('moduleOpenXr')
@@ -64,6 +69,7 @@ function moduleName(module: ToolModuleDefinition) {
 }
 
 function moduleDescription(module: ToolModuleDefinition) {
+  if (module.id === 'vr-launch') return t('moduleVrLaunchDescription')
   if (module.id === 'obs-vr') return t('moduleObsVrDescription')
   if (module.id === 'optiscaler') return t('moduleOptiScalerDescription')
   if (module.id === 'openxr') return t('moduleOpenXrDescription')
@@ -132,16 +138,69 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
   if (module.id !== 'obs-vr' || !selectedGame.value?.catalog) return null
 
   const config = module.config ?? {}
-  const executableName = config.executableName || selectedGame.value.catalog.executable.split(/[\\/]/).pop()
+  const executableName = typeof config.executableName === 'string'
+    ? config.executableName
+    : selectedGame.value.catalog.executable.split(/[\\/]/).pop()
   if (!executableName) return null
 
   return {
     gameId: selectedGame.value.catalog.id,
     gameName: selectedGame.value.catalog.name,
-    collectionName: config.collectionName || t('unnamedCollection'),
-    sceneName: config.sceneName || 'vr',
-    sourceName: config.sourceName || `${selectedGame.value.catalog.name} VR`,
+    collectionName: typeof config.collectionName === 'string' ? config.collectionName : t('unnamedCollection'),
+    sceneName: typeof config.sceneName === 'string' ? config.sceneName : 'vr',
+    sourceName: typeof config.sourceName === 'string' ? config.sourceName : `${selectedGame.value.catalog.name} VR`,
     executableName,
+  }
+}
+
+function optiScalerSafetyNotes(gameId: string): string[] {
+  if (locale.value === 'pt-BR') {
+    const notes = ['Não use OptiScaler em sessões online com anti-cheat. Feche o jogo antes de instalar ou reverter arquivos.']
+    if (gameId === 'elden-ring') {
+      notes.push('No Elden Ring, o OptiScaler requer um mod que forneça entradas de upscaling/FG, como o ERSS-FG; o jogo vanilla não fornece essas entradas.')
+    }
+    return notes
+  }
+
+  if (locale.value === 'es') {
+    const notes = ['No uses OptiScaler en sesiones online con anti-cheat. Cierra el juego antes de instalar o revertir archivos.']
+    if (gameId === 'elden-ring') {
+      notes.push('En Elden Ring, OptiScaler requiere un mod que proporcione entradas de escalado/FG, como ERSS-FG; el juego vanilla no ofrece esas entradas.')
+    }
+    return notes
+  }
+
+  const notes = ['Do not use OptiScaler in online sessions with anti-cheat. Close the game before installing or rolling files back.']
+  if (gameId === 'elden-ring') {
+    notes.push('On Elden Ring, OptiScaler requires a mod that provides upscaler/FG inputs, such as ERSS-FG; the vanilla game does not provide those inputs.')
+  }
+  return notes
+}
+
+function buildOptiScalerRequest(module: ToolModuleDefinition): OptiScalerRequest | null {
+  const game = selectedGame.value
+  if (module.id !== 'optiscaler' || !game?.catalog) return null
+
+  const config = module.config ?? {}
+  const version = typeof config.version === 'string' ? config.version : null
+  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
+  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
+  if (!version || !downloadUrl || !sha256) return null
+
+  const proxyCandidates = configList(config, 'proxyCandidates')
+
+  if (!proxyCandidates.length) return null
+
+  return {
+    gameId: game.catalog.id,
+    gameName: game.catalog.name,
+    installDir: game.installed.installDir,
+    executable: game.catalog.executable,
+    version,
+    downloadUrl,
+    sha256,
+    proxyCandidates,
+    safetyNotes: optiScalerSafetyNotes(game.catalog.id),
   }
 }
 
@@ -149,16 +208,61 @@ async function configureModule(module: ToolModuleDefinition) {
   actionError.value = null
   success.value = null
 
-  const request = buildObsRequest(module)
-  if (!request) {
-    actionError.value = t('moduleNoAction', { module: module.id })
+  const vrRequest = buildVrLaunchRequest(module)
+  if (vrRequest) {
+    moduleBusy.value = true
+    try {
+      const preview = await invoke<VrLaunchPreview>('preview_vr_launch', { request: vrRequest })
+      vrLaunchDialog.value = { request: vrRequest, preview }
+    } catch (err) {
+      actionError.value = err instanceof Error ? err.message : String(err)
+    } finally {
+      moduleBusy.value = false
+    }
     return
   }
 
   moduleBusy.value = true
   try {
-    const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
-    obsDialog.value = { request, preview }
+    if (module.id === 'obs-vr') {
+      const request = buildObsRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
+      obsDialog.value = { request, preview }
+      return
+    }
+
+    if (module.id === 'optiscaler') {
+      const request = buildOptiScalerRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+      optiScalerDialog.value = { request, preview }
+      return
+    }
+
+    throw new Error(t('moduleNoAction', { module: module.id }))
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
+async function launchVrGame() {
+  if (!vrLaunchDialog.value) return
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const request = vrLaunchDialog.value.request
+    const result = await invoke<VrLaunchResult>('launch_vr_game', { request })
+    vrLaunchDialog.value = null
+    success.value = t('vrLaunchSuccess', { game: request.gameName, pid: result.processId })
+    if (result.transaction) {
+      success.value += ` ${t('vrConfigBackupCreated', { id: `${result.transaction.id.slice(0, 13)}…` })}`
+      await refreshTransactions()
+    }
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -190,6 +294,28 @@ async function applyObsConfiguration() {
   }
 }
 
+async function applyOptiScaler() {
+  if (!optiScalerDialog.value) return
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const request = optiScalerDialog.value.request
+    const transaction = await invoke<TransactionRecord>('install_optiscaler', { request })
+    optiScalerDialog.value = null
+    success.value = t('configuredSuccess', {
+      source: `OptiScaler ${request.version}`,
+      id: `${transaction.id.slice(0, 13)}…`,
+    })
+    await Promise.all([refreshTransactions(), inspectSelectedGame()])
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
 async function rollback(transaction: TransactionRecord) {
   actionError.value = null
   success.value = null
@@ -197,7 +323,7 @@ async function rollback(transaction: TransactionRecord) {
   try {
     await invoke<TransactionRecord>('rollback_transaction', { id: transaction.id })
     success.value = t('rolledBack', { label: transaction.label })
-    await refreshTransactions()
+    await Promise.all([refreshTransactions(), inspectSelectedGame()])
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -216,6 +342,43 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function configList(config: ToolModuleDefinition['config'], key: string): string[] {
+  const value = config?.[key]
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return []
+  return value.split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function buildVrLaunchRequest(module: ToolModuleDefinition): VrLaunchRequest | null {
+  if (module.id !== 'vr-launch' || !selectedGame.value?.catalog) return null
+
+  const config = module.config ?? {}
+  const configPath = typeof config.configPath === 'string' ? config.configPath : null
+  const configPatches: VrIniPatch[] = configList(config, 'configPatches').flatMap((value) => {
+    const [section, key, ...parts] = value.split('|')
+    if (!section || !key || !parts.length) return []
+    return [{ section, key, value: parts.join('|') }]
+  })
+  const recommendations: VrRecommendation[] = configList(config, 'recommendations').map((value) => {
+    const separator = value.indexOf('=')
+    if (separator < 0) return { label: value, value: '' }
+    return { label: value.slice(0, separator), value: value.slice(separator + 1) }
+  })
+
+  return {
+    gameId: selectedGame.value.catalog.id,
+    gameName: selectedGame.value.catalog.name,
+    installDir: selectedGame.value.installed.installDir,
+    executable: selectedGame.value.catalog.executable,
+    arguments: configList(config, 'arguments'),
+    requiredFiles: configList(config, 'requiredFiles'),
+    configPath,
+    configPatches,
+    recommendations,
+    safetyNotes: configList(config, 'safetyNotes'),
+  }
 }
 
 async function switchView(view: ViewName) {
@@ -523,6 +686,139 @@ onMounted(async () => {
             @click="applyObsConfiguration"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="optiScalerDialog" class="modal-backdrop" @click.self="optiScalerDialog = null">
+      <section class="modal-card optiscaler-modal">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('preview') }} · OPTISCALER</p>
+            <h2>OptiScaler {{ optiScalerDialog.request.version }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="optiScalerDialog = null">×</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>Version</span>
+            <strong>{{ optiScalerDialog.request.version }}</strong>
+          </div>
+          <div>
+            <span>Proxy DLL</span>
+            <strong>{{ optiScalerDialog.preview.selectedProxy ?? t('notFound') }}</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{{ optiScalerDialog.preview.installed ? `Installed ${optiScalerDialog.preview.installedVersion ?? ''}` : 'Not installed' }}</strong>
+          </div>
+        </div>
+
+        <div v-if="optiScalerDialog.preview.conflicts.length" class="preview-block warnings">
+          <h3>Proxy DLL conflicts</h3>
+          <ul>
+            <li v-for="conflict in optiScalerDialog.preview.conflicts" :key="conflict.path">
+              {{ conflict.name }} · {{ formatFileSize(conflict.sizeBytes) }} · {{ conflict.path }}
+            </li>
+          </ul>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('changes') }}</h3>
+          <ul v-if="optiScalerDialog.preview.changes.length">
+            <li v-for="change in optiScalerDialog.preview.changes" :key="change">{{ change }}</li>
+          </ul>
+          <p v-else>{{ t('noSafePlan') }}</p>
+        </div>
+
+        <div v-if="optiScalerDialog.preview.warnings.length" class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <ul>
+            <li v-for="warning in optiScalerDialog.preview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <p class="path modal-path">{{ optiScalerDialog.preview.executableDirectory }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
+          <button
+            class="primary-button"
+            :disabled="!optiScalerDialog.preview.canApply || moduleBusy"
+            @click="applyOptiScaler"
+          >
+            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="vrLaunchDialog" class="modal-backdrop" @click.self="vrLaunchDialog = null">
+      <section class="modal-card">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('vrLaunchPreview') }}</p>
+            <h2>{{ vrLaunchDialog.request.gameName }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="vrLaunchDialog = null">×</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>{{ t('vrRuntime') }}</span>
+            <strong>{{ vrLaunchDialog.preview.activeOpenXrRuntime ?? t('notDetected') }}</strong>
+          </div>
+          <div>
+            <span>{{ t('executable') }}</span>
+            <strong>{{ vrLaunchDialog.request.executable }}</strong>
+          </div>
+          <div>
+            <span>{{ t('launchArguments') }}</span>
+            <strong>{{ vrLaunchDialog.request.arguments.join(' ') || t('none') }}</strong>
+          </div>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('recommendedGraphics') }}</h3>
+          <ul>
+            <li v-for="recommendation in vrLaunchDialog.request.recommendations" :key="`${recommendation.label}-${recommendation.value}`">
+              <strong>{{ recommendation.label }}:</strong> {{ recommendation.value }}
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="vrLaunchDialog.preview.settings.length" class="preview-block">
+          <h3>{{ t('settingsToApply') }}</h3>
+          <ul>
+            <li v-for="setting in vrLaunchDialog.preview.settings" :key="`${setting.section}-${setting.key}`">
+              <code>{{ setting.section }}.{{ setting.key }}</code>:
+              {{ setting.currentValue ?? t('notConfigured') }} → {{ setting.value }}
+            </li>
+          </ul>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('changes') }}</h3>
+          <ul>
+            <li v-for="change in vrLaunchDialog.preview.changes" :key="change">{{ change }}</li>
+          </ul>
+        </div>
+
+        <div v-if="vrLaunchDialog.preview.warnings.length" class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <ul>
+            <li v-for="warning in vrLaunchDialog.preview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <p v-if="vrLaunchDialog.preview.configPath" class="path modal-path">{{ vrLaunchDialog.preview.configPath }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
+          <button class="primary-button" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy" @click="launchVrGame">
+            {{ moduleBusy ? t('launching') : t('launchVr') }}
           </button>
         </div>
       </section>
