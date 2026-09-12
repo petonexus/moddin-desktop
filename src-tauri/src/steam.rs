@@ -3,6 +3,7 @@ use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +93,10 @@ fn discover_steam_roots() -> Vec<PathBuf> {
         push_existing_unique_path(&mut roots, PathBuf::from(explicit));
     }
 
+    for registry_path in registry_steam_paths() {
+        push_existing_unique_path(&mut roots, registry_path);
+    }
+
     if let Ok(program_files_x86) = env::var("ProgramFiles(x86)") {
         push_existing_unique_path(&mut roots, PathBuf::from(program_files_x86).join("Steam"));
     }
@@ -104,6 +109,48 @@ fn discover_steam_roots() -> Vec<PathBuf> {
     push_existing_unique_path(&mut roots, PathBuf::from(r"C:\Program Files\Steam"));
 
     roots
+}
+
+fn registry_steam_paths() -> Vec<PathBuf> {
+    let locations = [
+        (r"HKCU\Software\Valve\Steam", "SteamPath"),
+        (r"HKLM\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+        (r"HKLM\SOFTWARE\Valve\Steam", "InstallPath"),
+    ];
+
+    let mut paths = Vec::new();
+    for (key, value_name) in locations {
+        let output = Command::new("reg.exe")
+            .args(["query", key, "/v", value_name])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+
+        if let Some(value) = parse_registry_string(&String::from_utf8_lossy(&output.stdout), value_name) {
+            push_unique_path(&mut paths, PathBuf::from(value));
+        }
+    }
+
+    paths
+}
+
+fn parse_registry_string(output: &str, value_name: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        if !line.contains(value_name) {
+            return None;
+        }
+        let marker = "REG_SZ";
+        let marker_index = line.find(marker)?;
+        let value = line[marker_index + marker.len()..].trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    })
 }
 
 fn push_existing_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
@@ -170,5 +217,17 @@ mod tests {
         let manifest = "\"AppState\"\n{\n  \"appid\"  \"1245620\"\n  \"name\"  \"ELDEN RING\"\n}";
         assert_eq!(vdf_value(manifest, "appid").as_deref(), Some("1245620"));
         assert_eq!(vdf_value(manifest, "name").as_deref(), Some("ELDEN RING"));
+    }
+
+    #[test]
+    fn parses_registry_paths_with_spaces() {
+        let output = r#"
+HKEY_CURRENT_USER\Software\Valve\Steam
+    SteamPath    REG_SZ    C:\Program Files (x86)\Steam
+"#;
+        assert_eq!(
+            parse_registry_string(output, "SteamPath").as_deref(),
+            Some(r"C:\Program Files (x86)\Steam")
+        );
     }
 }

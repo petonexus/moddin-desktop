@@ -7,6 +7,7 @@ export interface ToolModuleDefinition {
   description: string
   category: ModuleCategory
   status: ModuleStatus
+  config?: Record<string, string>
 }
 
 export interface GameCatalogEntry {

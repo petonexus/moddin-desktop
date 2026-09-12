@@ -5,9 +5,14 @@ executable: Game/eldenring.exe
 modules:
   - id: obs-vr
     name: OBS VR Capture
-    description: Create or update a dedicated OBS Game Capture source for the VR scene.
+    description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.
     category: vr
-    status: planned
+    status: available
+    config:
+      collectionName: Sem nome
+      sceneName: vr
+      sourceName: Elden Ring VR
+      executableName: eldenring.exe
   - id: optiscaler
     name: OptiScaler
     description: Install and configure OptiScaler with a game-specific injection strategy.
