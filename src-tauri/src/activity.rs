@@ -12,6 +12,7 @@ use std::{
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const DEFAULT_LIST_LIMIT: usize = 200;
 const MAX_LIST_LIMIT: usize = 1_000;
+const MAX_DETAILS: usize = 32;
 
 static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -128,6 +129,56 @@ fn read_log_file(path: PathBuf, entries: &mut Vec<ActionLogEntry>) {
     }
 }
 
+fn valid_level(level: &str) -> bool {
+    matches!(level, "info" | "success" | "warning" | "error")
+}
+
+fn valid_action(action: &str) -> bool {
+    !action.is_empty()
+        && action.len() <= 96
+        && action
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+}
+
+#[tauri::command]
+pub fn record_ui_action_log(
+    level: String,
+    action: String,
+    game_id: Option<String>,
+    transaction_id: Option<String>,
+    message: String,
+    details: Option<BTreeMap<String, String>>,
+) -> Result<ActionLogEntry, String> {
+    if !valid_level(&level) {
+        return Err("Invalid action log level.".to_owned());
+    }
+    if !valid_action(&action) {
+        return Err("Invalid action log action name.".to_owned());
+    }
+    if message.len() > 2_000 {
+        return Err("Action log message is too large.".to_owned());
+    }
+
+    let details = details.unwrap_or_default();
+    if details.len() > MAX_DETAILS
+        || details
+            .iter()
+            .any(|(key, value)| key.len() > 128 || value.len() > 1_024)
+    {
+        return Err("Action log details exceed the allowed size.".to_owned());
+    }
+
+    record(
+        &level,
+        &action,
+        game_id.as_deref(),
+        transaction_id.as_deref(),
+        message,
+        details,
+    )
+}
+
 #[tauri::command]
 pub fn list_action_logs(limit: Option<usize>) -> Result<Vec<ActionLogEntry>, String> {
     let _guard = LOG_LOCK
@@ -185,5 +236,13 @@ mod tests {
         let decoded: ActionLogEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.action, "optiscaler");
         assert_eq!(decoded.details.get("proxy").map(String::as_str), Some("dxgi.dll"));
+    }
+
+    #[test]
+    fn validates_levels_and_action_names() {
+        assert!(valid_level("success"));
+        assert!(!valid_level("trace"));
+        assert!(valid_action("set_system_openxr_runtime"));
+        assert!(!valid_action("../escape"));
     }
 }
