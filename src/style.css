@@ -203,6 +203,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .compatibility-state.experimental { color: #f0d39b; background: #3a2d18; }
 .compatibility-state.proven { color: #a8edc4; background: #173022; }
 .compatibility-state.risky, .compatibility-state.not_working { color: #f0cbd0; background: #3c1d25; }
+.research-state { display: inline-flex; flex: 0 0 auto; align-items: center; border-radius: 999px; padding: 4px 8px; font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; }
+.research-state.experimental { color: #f0d39b; background: #3a2d18; }
+.research-state.prerequisite { color: #f0cbd0; background: #3c1d25; }
 .module-verification { margin: 4px 0 14px; border: 1px solid #222d39; border-radius: 9px; padding: 10px; background: #0d131a; }
 .verification-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .verification-heading strong { font-size: 11px; }
@@ -227,7 +230,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .compatibility-heading strong { font-size: 10px; }
 .compatibility-heading small { margin-top: 4px; color: #9da6b5; font-size: 10px; line-height: 1.45; }
 .compatibility-heading .secondary-button { flex: 0 0 auto; }
+.compatibility-decision { margin: 9px 0 0; color: #c8cfdf !important; font-size: 11px !important; line-height: 1.45 !important; }
 .compatibility-evidence { display: block; margin-top: 8px; color: #707b8d; font-size: 9px; line-height: 1.45; }
+.compatibility-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .module-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 .module-actions .module-button { margin-top: 0; font-size: 12px; }
 .text-button { border: 0; padding: 7px 0 0; background: transparent; color: #8f9aaa; font-size: 10px; cursor: pointer; text-align: left; }
@@ -304,7 +309,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .preview-block p { margin-bottom: 0; color: #8b97a6; font-size: 12px; }
 .preview-block.warnings { color: #dec28d; }
 .preview-block.warnings ul { color: #cbb68c; }
+.preview-block.warnings p { color: #cbb68c; }
 .modal-path { margin-top: 18px; }
+.compatibility-guide-card { width: min(720px, 100%); }
+.guide-decision-card { display: flex; align-items: start; gap: 12px; margin-top: 18px; border: 1px solid #2d2948; border-radius: 10px; padding: 13px; background: #121426; }
+.guide-decision-card div { display: grid; gap: 5px; }
+.guide-decision-card span:not(.research-state) { color: #8c98aa; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.guide-decision-card strong { color: #d8deea; font-size: 13px; line-height: 1.4; }
+.guide-list ol { margin: 8px 0 0; padding-left: 20px; color: #aab4c0; font-size: 12px; line-height: 1.7; }
 .compatibility-form { display: grid; gap: 14px; margin-top: 18px; }
 .compatibility-form label { display: grid; gap: 6px; color: #9ba6b5; font-size: 11px; }
 .compatibility-form select, .compatibility-form textarea {

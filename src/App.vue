@@ -17,6 +17,16 @@ import type { ModuleUpdate } from './types/module-update'
 import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
 
 type ViewName = 'library' | 'transactions'
+type CheekyResearchState = 'experimental' | 'prerequisite'
+
+interface CheekyResearchGuide {
+  state: CheekyResearchState
+  decision: string
+  route: string
+  prerequisites: string[]
+  validation: string[]
+  risk: string
+}
 
 const installedGames = ref<InstalledGame[]>([])
 const transactions = ref<TransactionRecord[]>([])
@@ -43,6 +53,7 @@ const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(n
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(null)
 const cheekyDialog = ref<{ request: CheekyFoveatedDlssRequest; preview: CheekyFoveatedDlssPreview } | null>(null)
+const cheekyGuideDialog = ref<ToolModuleDefinition | null>(null)
 const compatibilityDialog = ref<{ module: ToolModuleDefinition; gameName: string; version: string } | null>(null)
 const compatibilityDraftStatus = ref<CompatibilityStatus>('unverified')
 const compatibilityDraftNote = ref('')
@@ -173,6 +184,33 @@ function compatibilityStatusLabel(status: CompatibilityStatus) {
   return t('compatibilityUnverified')
 }
 
+function cheekyResearchStateLabel(state: CheekyResearchState) {
+  return state === 'prerequisite' ? t('cheekyGuidePrerequisite') : t('cheekyGuideExperimental')
+}
+
+function cheekyResearchGuide(module: ToolModuleDefinition): CheekyResearchGuide {
+  const gameId = selectedGame.value?.catalog?.id
+  const isEldenRing = gameId === 'elden-ring'
+
+  return {
+    state: isEldenRing ? 'prerequisite' : 'experimental',
+    decision: t(isEldenRing ? 'cheekyGuideEldenDecision' : 'cheekyGuideCyberpunkDecision'),
+    route: t(isEldenRing ? 'cheekyGuideEldenRoute' : 'cheekyGuideCyberpunkRoute'),
+    prerequisites: [
+      ...(isEldenRing ? [t('cheekyGuideEldenProviderPrerequisite')] : []),
+      t('cheekyGuideReShadePrerequisite'),
+      t('cheekyGuideOneIntegration'),
+      t('cheekyGuideOpenXrPrerequisite'),
+    ],
+    validation: [
+      t('cheekyGuideTestEnableDlss'),
+      t('cheekyGuideTestCompare'),
+      t('cheekyGuideTestRecord'),
+    ],
+    risk: t('cheekyGuideRisksSummary'),
+  }
+}
+
 function compatibilityStatusSummary(module: ToolModuleDefinition) {
   const report = compatibilityReport(module)
   if (report) {
@@ -181,6 +219,10 @@ function compatibilityStatusSummary(module: ToolModuleDefinition) {
       version: report.testedVersion,
     })
     return report.note ? `${report.note} · ${recordedAt}` : recordedAt
+  }
+
+  if (cheekyResearchGuide(module).state === 'prerequisite') {
+    return t('cheekyGuideEldenDecision')
   }
 
   return `${t('compatibilityUpstreamEvidence')} ${cheekyGameCompatibilityNote(module)}`
@@ -207,6 +249,7 @@ function cheekyGameCompatibilityNote(module: ToolModuleDefinition) {
 }
 
 function openCompatibilityReport(module: ToolModuleDefinition) {
+  cheekyGuideDialog.value = null
   const version = moduleVersion(module)
   const report = compatibilityReport(module)
   compatibilityDraftStatus.value = report?.status ?? defaultCompatibilityStatus(module)
@@ -1280,11 +1323,23 @@ onUnmounted(() => {
                           <strong>{{ t('compatibilityStatus') }}</strong>
                           <small>{{ compatibilityStatusSummary(module) }}</small>
                         </div>
+                        <span
+                          class="research-state"
+                          :class="cheekyResearchGuide(module).state"
+                        >
+                          {{ cheekyResearchStateLabel(cheekyResearchGuide(module).state) }}
+                        </span>
+                      </div>
+                      <p class="compatibility-decision">{{ cheekyResearchGuide(module).decision }}</p>
+                      <small class="compatibility-evidence">{{ cheekyCompatibilityEvidence() }}</small>
+                      <div class="compatibility-actions">
+                        <button class="secondary-button compact" @click="cheekyGuideDialog = module">
+                          {{ t('viewCompatibilityGuide') }}
+                        </button>
                         <button class="secondary-button compact" @click="openCompatibilityReport(module)">
                           {{ t('recordTest') }}
                         </button>
                       </div>
-                      <small class="compatibility-evidence">{{ cheekyCompatibilityEvidence() }}</small>
                     </div>
 
                     <div v-if="moduleVerification(module)" class="module-verification">
@@ -1634,6 +1689,62 @@ onUnmounted(() => {
             @click="applyCheeky"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="cheekyGuideDialog" class="modal-backdrop" @click.self="cheekyGuideDialog = null">
+      <section class="modal-card compatibility-guide-card">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('cheekyGuideResearchBased') }} · CHEEKY FOVEATED DLSS</p>
+            <h2>{{ t('compatibilityGuide') }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="cheekyGuideDialog = null">×</button>
+        </div>
+
+        <div class="guide-decision-card">
+          <span
+            class="research-state"
+            :class="cheekyResearchGuide(cheekyGuideDialog).state"
+          >
+            {{ cheekyResearchStateLabel(cheekyResearchGuide(cheekyGuideDialog).state) }}
+          </span>
+          <div>
+            <span>{{ t('cheekyGuideDecision') }}</span>
+            <strong>{{ cheekyResearchGuide(cheekyGuideDialog).decision }}</strong>
+          </div>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('cheekyGuideRoute') }}</h3>
+          <p>{{ cheekyResearchGuide(cheekyGuideDialog).route }}</p>
+        </div>
+
+        <div class="preview-block guide-list">
+          <h3>{{ t('cheekyGuidePrerequisites') }}</h3>
+          <ul>
+            <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).prerequisites" :key="item">{{ item }}</li>
+          </ul>
+        </div>
+
+        <div class="preview-block guide-list">
+          <h3>{{ t('cheekyGuideTestChecklist') }}</h3>
+          <ol>
+            <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).validation" :key="item">{{ item }}</li>
+          </ol>
+        </div>
+
+        <div class="preview-block warnings">
+          <h3>{{ t('cheekyGuideRisks') }}</h3>
+          <p>{{ cheekyResearchGuide(cheekyGuideDialog).risk }}</p>
+        </div>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="cheekyGuideDialog = null">{{ t('close') }}</button>
+          <button class="primary-button" @click="openCompatibilityReport(cheekyGuideDialog)">
+            {{ t('recordTest') }}
           </button>
         </div>
       </section>
