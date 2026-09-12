@@ -1,0 +1,139 @@
+# Template de dados para uma receita Cheeky assistida por IA.
+# É uma especificação de planejamento: não deve ser executada diretamente.
+schemaVersion: 1
+
+game:
+  id: example-game
+  steamAppId: "000000"
+  executable: path/to/game.exe
+  build: unknown
+
+trust:
+  releaseVersion: 0.3.4
+  officialReleaseUrl: https://github.com/ClarkCheekyKent/CheekyFoveatedDLSS/releases/tag/v0.3.4
+  artifacts:
+    reshadeAddon:
+      file: CheekyFoveatedDLSS.addon64
+      sha256: replace-with-official-sha256
+    uevrPackage:
+      file: CheekyFoveatedDLSS-0.3.4-UEVR-release.zip
+      sha256: replace-with-official-sha256
+    openXrSetup:
+      file: CheekyOpenXRSetup.exe
+      sha256: replace-with-official-sha256
+
+discovery:
+  required:
+    - gameClosed
+    - executableExists
+    - x64
+    - nvidiaRtx
+    - rendererD3d11OrD3d12
+    - dlssSuperResolutionProvider
+  observed:
+    renderer: unknown # d3d11 | d3d12 | unsupported | unknown
+    dlssProvider:
+      kind: unknown # native | erss_fg | optiscaler | other_verified | unknown
+      version: unknown
+      evidence: unknown # in_game_diagnostics | log | file_only | unknown
+    integrations:
+      reshadeAddonSupport: false
+      uevrApiVersion: null
+      existingCheekyRoute: none # none | reshade | uevr | conflicting
+    vr:
+      mode: desktop # desktop | openvr | openxr | opencomposite | unknown
+      runtime: null
+      eyeTracking: unavailable # usable | unavailable | unknown
+
+decision:
+  defaultState: blocked # blocked | prerequisite | ready | experimental | proven_local | risky | not_working
+  route: null # reshade_desktop | reshade_openxr | uevr_openxr | native_openvr
+  evidenceLevel: unknown # upstream_confirmed | local_reproduced | community_reported | risk_reported | unknown
+  requiredConfirmations:
+    - installUnsignedReshadeAddonSupport
+    - enableDlssNrExperimental
+  blockers:
+    - dlss_provider_missing
+
+filePlan:
+  allowedRoots:
+    - game_executable_directory
+    - uevr_game_configuration_directory
+  actions:
+    - kind: install_reshade_addon
+      transactionKind: cheeky-foveated-dlss
+      target: game_executable_directory/CheekyFoveatedDLSS.addon64
+      backup: true
+
+profiles:
+  sr_safe:
+    editableGroups: [sr]
+    settings:
+      Enabled: true
+      PeripheralDlaa: true
+      PeripheralDlaaScale: 0.75
+      CenterPreset: 0
+      CenterSupersampling: 1.0
+      PeripheralDlaaPreset: 5
+      Width: 0.55
+      Height: 0.45
+      Roundness: 0.0
+      TransitionWidth: 0.04
+  vr_alignment_safe:
+    editableGroups: [gaze]
+    settings:
+      CenterMode: 0
+      AutoStereoAlignment: true
+      AlignedHeightOffset: 0.0
+      AlignmentBorder: true
+      GazeSmoothingMs: 20
+      GazeQuantizationPixels: 8
+      GazeJumpResetRatio: 0.125
+  nr_experimental:
+    editableGroups: [nr]
+    requires:
+      - confirmedCompatibleNrRuntime
+      - explicitUserConfirmation
+    settings:
+      NrEnabled: false
+      NrFoveated: true
+      NrProcessingOrder: 0
+      NrWorkingScale: 1.0
+      NrIntensity: 1.0
+      NrStyle: 0
+
+aiGuardrails:
+  mayProposeOnlyKnownKeys: true
+  mayWriteOnlySelectedProfileGroups: true
+  rejectUnknownSetting: true
+  requireDiffBeforeWrite: true
+  requireBackupBeforeWrite: true
+  forbidArbitraryCommands: true
+  resetCompatibilityWhenChanged:
+    - releaseVersion
+    - route
+    - renderer
+    - dlssProvider.version
+
+runtimeAcceptance:
+  required:
+    - dlssInterceptionActive
+    - firstDlssEvaluationReceived
+    - noCrashOrFreeze
+  vrRequiredWhenApplicable:
+    - stereoAlignmentVerified
+    - openXrLayerVersionMatches
+  comparison:
+    sameScene: true
+    recordFpsOrGpuTime: true
+    inspectArtifacts: true
+
+evidenceRecord:
+  status: experimental
+  cheekyVersion: 0.3.4
+  route: null
+  renderer: unknown
+  dlssProvider: unknown
+  vrMode: desktop
+  notes: ""
+  diagnosticsPath: null
