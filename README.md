@@ -28,6 +28,7 @@ The first vertical slice already includes:
 - read-only verification checklist for each available module
 - idempotent reapply and transaction-backed removal for OBS VR, OptiScaler, and VR profiles
 - VR-ready launch profiles for Elden Ring and Cyberpunk 2077
+- OFXR Bridge FrameGen integration: verified install, tray startup, recommended optical-flow configuration, OpenXR arm confirmation, and safe removal
 - one-click Windows development bootstrap
 - Windows CI for frontend build and Rust tests
 
@@ -47,6 +48,12 @@ The defaults currently target the OBS collection `Sem nome` and scene `vr`; the 
 The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring updates `ERVR.ini` to the conservative full-stereo `GameResScale=0.75` / `FpsTarget=60` starting point.
 
 The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
+
+### OFXR FrameGen workflow
+
+The VR launch flow prepares OFXR Bridge before starting either supported game. It downloads the pinned official pre-release archive, verifies its SHA-256, installs it under the user profile instead of the game directory, writes the recommended FidelityFX configuration, starts `OFXRBridgeTray.exe`, and confirms that the manual OpenXR layer is armed for the current Windows user. If activation cannot be confirmed, the game is not launched. The module can also be configured and armed from its own preview, checked for new pre-releases, and removed through the transaction history.
+
+OFXR Bridge is experimental. It requires the Microsoft Visual C++ Redistributable x64 and the game must run without administrator privileges because Windows OpenXR does not apply per-user implicit layers to elevated processes. The tray can remain in the notification area while the game is running; Moddin disables configuration, verification, update, removal, undo, and launch actions until the game closes.
 
 ### Module lifecycle
 

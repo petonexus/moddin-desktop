@@ -8,6 +8,7 @@ import type { InstalledGame, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
+import type { OfxrPreview, OfxrRequest, OfxrResult } from './types/ofxr'
 import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
@@ -37,6 +38,7 @@ const moduleUpdates = ref<Record<string, ModuleUpdate>>({})
 let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
+const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(null)
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
 
 const { t, locale } = useI18n()
@@ -74,10 +76,25 @@ const selectedGameRunning = computed(() => {
   return modules.some((module) => moduleVerification(module)?.gameRunning === true)
 })
 
+const selectedOfxrModule = computed(() =>
+  selectedGame.value?.catalog?.modules.find((module) => module.id === 'ofxr-framegen') ?? null,
+)
+
+const ofxrLaunchRequest = computed(() => {
+  const module = selectedOfxrModule.value
+  return module ? buildOfxrRequest(module) : null
+})
+
+const ofxrReadyForLaunch = computed(() => {
+  const module = selectedOfxrModule.value
+  return module ? moduleVerification(module)?.status === 'installed' : true
+})
+
 function moduleName(module: ToolModuleDefinition) {
   if (module.id === 'vr-launch') return t('moduleVrLaunch')
   if (module.id === 'obs-vr') return t('moduleObsVr')
   if (module.id === 'optiscaler') return t('moduleOptiScaler')
+  if (module.id === 'ofxr-framegen') return t('moduleOfxr')
   if (module.id === 'openxr') return t('moduleOpenXr')
   return module.name
 }
@@ -86,6 +103,7 @@ function moduleDescription(module: ToolModuleDefinition) {
   if (module.id === 'vr-launch') return t('moduleVrLaunchDescription')
   if (module.id === 'obs-vr') return t('moduleObsVrDescription')
   if (module.id === 'optiscaler') return t('moduleOptiScalerDescription')
+  if (module.id === 'ofxr-framegen') return t('moduleOfxrDescription')
   if (module.id === 'openxr') return t('moduleOpenXrDescription')
   return module.description
 }
@@ -167,6 +185,7 @@ function moduleActionLabel(module: ToolModuleDefinition) {
 function moduleTransactionKind(module: ToolModuleDefinition) {
   if (module.id === 'obs-vr') return 'obs-vr'
   if (module.id === 'optiscaler') return 'optiscaler'
+  if (module.id === 'ofxr-framegen') return 'ofxr-framegen'
   if (module.id === 'vr-launch') return 'vr-launch'
   return null
 }
@@ -367,6 +386,14 @@ async function configureModule(module: ToolModuleDefinition) {
       return
     }
 
+    if (module.id === 'ofxr-framegen') {
+      const request = buildOfxrRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
+      ofxrDialog.value = { request, preview }
+      return
+    }
+
     throw new Error(t('moduleNoAction', { module: module.id }))
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err)
@@ -388,7 +415,11 @@ async function launchVrGame() {
   moduleBusy.value = true
   try {
     const request = vrLaunchDialog.value.request
-    const result = await invoke<VrLaunchResult>('launch_vr_game', { request })
+    const ofxrRequest = ofxrLaunchRequest.value
+    const result = await invoke<VrLaunchResult>('launch_vr_game', {
+      request,
+      ofxrRequest,
+    })
     vrLaunchDialog.value = null
     success.value = t('vrLaunchSuccess', { game: request.gameName, pid: result.processId })
     if (result.transaction) {
@@ -462,6 +493,37 @@ async function applyOptiScaler() {
   }
 }
 
+async function applyOfxr() {
+  if (!ofxrDialog.value) return
+
+  if (selectedGameRunning.value || ofxrDialog.value.preview.gameRunning) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const request = ofxrDialog.value.request
+    const result = await invoke<OfxrResult>('install_ofxr', { request })
+    if (!result.armed) throw new Error(t('ofxrActivationFailed'))
+    ofxrDialog.value = null
+    success.value = result.transaction
+      ? t('configuredSuccess', {
+          source: `OFXR Bridge ${request.version}`,
+          id: `${result.transaction.id.slice(0, 13)}â€¦`,
+        })
+      : t('ofxrConfiguredState')
+    await refreshTransactions()
+    await verifyAvailableModules()
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
 async function rollback(transaction: TransactionRecord) {
   if (selectedGameRunning.value && transaction.gameId === selectedGame.value?.catalog?.id) {
     actionError.value = t('gameRunningActionBlocked')
@@ -502,6 +564,45 @@ function configList(config: ToolModuleDefinition['config'], key: string): string
   if (Array.isArray(value)) return value
   if (typeof value !== 'string' || !value.trim()) return []
   return value.split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function configBool(config: ToolModuleDefinition['config'], key: string, fallback = false): boolean {
+  const value = config?.[key]
+  if (typeof value !== 'string') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
+
+function buildOfxrRequest(module: ToolModuleDefinition): OfxrRequest | null {
+  const game = selectedGame.value
+  if (module.id !== 'ofxr-framegen' || !game?.catalog) return null
+
+  const config = module.config ?? {}
+  const version = typeof config.version === 'string' ? config.version : null
+  const implementationVersion = typeof config.implementationVersion === 'string'
+    ? Number(config.implementationVersion)
+    : null
+  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
+  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
+  const backend = typeof config.backend === 'string' ? config.backend : 'fidelityfx'
+  const nvidiaPreset = typeof config.nvidiaPreset === 'string' ? config.nvidiaPreset : 'medium'
+  const nvidiaInputScale = typeof config.nvidiaInputScale === 'string' ? Number(config.nvidiaInputScale) : 50
+  if (!version || !implementationVersion || !downloadUrl || !sha256 || !Number.isFinite(nvidiaInputScale)) return null
+
+  return {
+    gameId: game.catalog.id,
+    gameName: game.catalog.name,
+    installDir: game.installed.installDir,
+    executable: game.catalog.executable,
+    version,
+    implementationVersion,
+    downloadUrl,
+    sha256,
+    backend,
+    nvidiaPreset,
+    nvidiaInputScale,
+    nvidiaBidirectional: configBool(config, 'nvidiaBidirectional'),
+    safetyNotes: configList(config, 'safetyNotes'),
+  }
 }
 
 function buildVrLaunchRequest(module: ToolModuleDefinition): VrLaunchRequest | null {
@@ -598,6 +699,25 @@ async function verifyModule(module: ToolModuleDefinition, silent = false) {
         check(t('checkOpenXrRuntime'), Boolean(preview.activeOpenXrRuntime)),
         check(t('checkGameClosed'), !preview.gameRunning),
       ], preview.gameRunning)
+    } else if (module.id === 'ofxr-framegen') {
+      const request = buildOfxrRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
+      const installed = preview.installed && preview.configured && preview.trayRunning && preview.armed
+      const status: ModuleVerification['status'] = installed
+        ? 'installed'
+        : preview.canApply && preview.executableExists
+          ? 'ready'
+          : 'attention'
+      saveModuleVerification(module, status, verificationSummary(status), [
+        check(t('checkExecutable'), preview.executableExists),
+        check(t('checkOfxrInstalled'), preview.installed && preview.trayInstalled),
+        check(t('checkVersion'), preview.installed && preview.installedVersion === request.version, preview.installedVersion ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+        check(t('checkOfxrConfig'), preview.configured),
+        check(t('checkOfxrTray'), preview.trayRunning),
+        check(t('checkOfxrArmed'), preview.armed),
+        check(t('checkGameClosed'), !preview.gameRunning),
+      ], preview.gameRunning)
     }
 
     if (!silent) success.value = t('verificationCompleted', { module: moduleName(module) })
@@ -629,6 +749,13 @@ async function checkModuleUpdate(module: ToolModuleDefinition, silent = false) {
       const request = buildOptiScalerRequest(module)
       if (request) {
         const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+        currentVersion = preview.installedVersion ?? request.version
+      }
+    }
+    if (module.id === 'ofxr-framegen' && updateUrl) {
+      const request = buildOfxrRequest(module)
+      if (request) {
+        const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
         currentVersion = preview.installedVersion ?? request.version
       }
     }
@@ -684,6 +811,10 @@ async function removeModule(module: ToolModuleDefinition) {
       const request = buildOptiScalerRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
       await invoke<TransactionRecord>('uninstall_optiscaler', { request })
+    } else if (module.id === 'ofxr-framegen') {
+      const request = buildOfxrRequest(module)
+      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      await invoke<TransactionRecord>('uninstall_ofxr', { request })
     } else {
       await invoke<TransactionRecord>('rollback_latest_module_transaction', { gameId, kind })
     }
@@ -906,7 +1037,7 @@ onUnmounted(() => {
                       </span>
                       <button
                         class="secondary-button compact"
-                        :disabled="moduleUpdateBusy(module)"
+                        :disabled="moduleUpdateBusy(module) || selectedGameRunning"
                         @click="checkModuleUpdate(module)"
                       >
                         {{ moduleUpdateBusy(module) ? t('checkingUpdates') : t('checkUpdates') }}
@@ -916,7 +1047,7 @@ onUnmounted(() => {
                     <div class="module-actions">
                       <button
                         class="secondary-button compact"
-                        :disabled="module.status !== 'available' || verificationBusyKey === moduleKey(module)"
+                        :disabled="module.status !== 'available' || verificationBusyKey === moduleKey(module) || selectedGameRunning"
                         @click="verifyModule(module)"
                       >
                         {{ verificationBusyKey === moduleKey(module) ? t('verifying') : t('verify') }}
@@ -1166,6 +1297,61 @@ onUnmounted(() => {
       </section>
     </div>
 
+    <div v-if="ofxrDialog" class="modal-backdrop" @click.self="ofxrDialog = null">
+      <section class="modal-card">
+        <div class="modal-heading">
+          <div>
+            <p class="eyebrow">{{ t('preview') }} Â· OFXR FRAMEGEN</p>
+            <h2>OFXR Bridge {{ ofxrDialog.request.version }}</h2>
+          </div>
+          <button class="icon-button" :aria-label="t('close')" @click="ofxrDialog = null">Ã—</button>
+        </div>
+
+        <div class="preview-summary">
+          <div>
+            <span>{{ t('ofxrVersion') }}</span>
+            <strong>{{ ofxrDialog.request.version }} (V{{ ofxrDialog.request.implementationVersion }})</strong>
+          </div>
+          <div>
+            <span>{{ t('ofxrBackend') }}</span>
+            <strong>{{ ofxrDialog.request.backend }}</strong>
+          </div>
+          <div>
+            <span>{{ t('ofxrTray') }}</span>
+            <strong>{{ ofxrDialog.preview.armed ? t('ofxrConfiguredState') : t('ofxrNotConfiguredState') }}</strong>
+          </div>
+        </div>
+
+        <div class="preview-block">
+          <h3>{{ t('changes') }}</h3>
+          <ul v-if="ofxrDialog.preview.changes.length">
+            <li v-for="change in ofxrDialog.preview.changes" :key="change">{{ change }}</li>
+          </ul>
+          <p v-else>{{ t('ofxrReadyForLaunch') }}</p>
+        </div>
+
+        <div v-if="ofxrDialog.preview.warnings.length" class="preview-block warnings">
+          <h3>{{ t('notes') }}</h3>
+          <ul>
+            <li v-for="warning in ofxrDialog.preview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
+        <p class="path modal-path">{{ ofxrDialog.preview.installDirectory }}</p>
+
+        <div class="modal-actions">
+          <button class="secondary-button" @click="ofxrDialog = null">{{ t('cancel') }}</button>
+          <button
+            class="primary-button"
+            :disabled="!ofxrDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
+            @click="applyOfxr"
+          >
+            {{ moduleBusy ? t('applying') : t('ofxrInstallAndArm') }}
+          </button>
+        </div>
+      </section>
+    </div>
+
     <div v-if="vrLaunchDialog" class="modal-backdrop" @click.self="vrLaunchDialog = null">
       <section class="modal-card">
         <div class="modal-heading">
@@ -1200,6 +1386,11 @@ onUnmounted(() => {
           </ul>
         </div>
 
+        <div v-if="ofxrLaunchRequest" class="preview-block ofxr-launch-block">
+          <h3>{{ t('ofxrBeforeLaunch') }}</h3>
+          <p>{{ ofxrReadyForLaunch ? t('ofxrReadyForLaunch') : t('ofxrWillPrepareBeforeLaunch') }}</p>
+        </div>
+
         <div v-if="vrLaunchDialog.preview.settings.length" class="preview-block">
           <h3>{{ t('settingsToApply') }}</h3>
           <ul>
@@ -1229,7 +1420,7 @@ onUnmounted(() => {
         <div class="modal-actions">
           <button class="secondary-button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
           <button class="primary-button" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy || inspectionLoading || selectedGameRunning" @click="launchVrGame">
-            {{ moduleBusy ? t('launching') : t('launchVr') }}
+            {{ moduleBusy ? t('launching') : (ofxrReadyForLaunch ? t('launchVr') : t('activateAndLaunch')) }}
           </button>
         </div>
       </section>

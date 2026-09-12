@@ -51,6 +51,24 @@ modules:
       updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
       sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
       proxyCandidates: dxgi.dll,version.dll
+  - id: ofxr-framegen
+    name: OFXR FrameGen
+    description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
+    category: vr
+    status: available
+    config:
+      version: 0.2.0
+      implementationVersion: 68
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
+      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      backend: fidelityfx
+      nvidiaPreset: medium
+      nvidiaInputScale: 50
+      nvidiaBidirectional: 0
+      safetyNotes:
+        - OFXR Bridge is an experimental pre-release; it may produce artifacts, freeze, or crash depending on the game, VR mod, GPU, and runtime.
+        - The tray requires the Microsoft Visual C++ Redistributable x64. Keep the game non-elevated because OpenXR ignores per-user layers for elevated processes.
   - id: openxr
     name: OpenXR tools
     description: Manage OpenXR-related helpers and per-game VR configuration.

@@ -133,7 +133,9 @@ fn registry_steam_paths() -> Vec<PathBuf> {
             continue;
         }
 
-        if let Some(value) = parse_registry_string(&String::from_utf8_lossy(&output.stdout), value_name) {
+        if let Some(value) =
+            parse_registry_string(&String::from_utf8_lossy(&output.stdout), value_name)
+        {
             push_unique_path(&mut paths, PathBuf::from(value));
         }
     }

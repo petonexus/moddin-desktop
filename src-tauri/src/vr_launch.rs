@@ -1,4 +1,4 @@
-use crate::transaction::{self, TransactionRecord};
+use crate::{ofxr, transaction::{self, TransactionRecord}};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -424,10 +424,20 @@ pub fn preview_vr_launch(request: VrLaunchRequest) -> Result<VrLaunchPreview, St
 }
 
 #[tauri::command]
-pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String> {
+pub async fn launch_vr_game(
+    request: VrLaunchRequest,
+    ofxr_request: Option<ofxr::OfxrRequest>,
+) -> Result<VrLaunchResult, String> {
     let preview = preview_inner(&request)?;
     if !preview.can_launch {
         return Err("VR launch is blocked by the current preflight checks.".to_owned());
+    }
+
+    if let Some(ofxr_request) = ofxr_request {
+        let result = ofxr::install_ofxr(ofxr_request).await?;
+        if !result.armed {
+            return Err("OFXR Bridge could not be confirmed as armed before VR launch.".to_owned());
+        }
     }
 
     let install_root = PathBuf::from(&request.install_dir);

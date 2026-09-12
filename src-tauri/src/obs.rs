@@ -173,7 +173,10 @@ fn find_template(sources: &[Value], scene_index: usize) -> Option<(Value, Value)
     None
 }
 
-fn inspect_document(document: &Value, request: &ObsVrRequest) -> Result<(bool, Option<String>, bool), String> {
+fn inspect_document(
+    document: &Value,
+    request: &ObsVrRequest,
+) -> Result<(bool, Option<String>, bool), String> {
     let sources = document
         .get("sources")
         .and_then(Value::as_array)
@@ -183,8 +186,12 @@ fn inspect_document(document: &Value, request: &ObsVrRequest) -> Result<(bool, O
         return Ok((false, None, false));
     };
 
-    let template_name = find_template(sources, scene_index)
-        .and_then(|(_, source)| source.get("name").and_then(Value::as_str).map(str::to_owned));
+    let template_name = find_template(sources, scene_index).and_then(|(_, source)| {
+        source
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
 
     let source_exists = sources.iter().any(|source| {
         source.get("name").and_then(Value::as_str) == Some(request.source_name.as_str())
@@ -216,10 +223,7 @@ fn configured_source_state(document: &Value, request: &ObsVrRequest) -> (bool, b
     let source_uuid = source.get("uuid").and_then(Value::as_str);
     let in_scene = sources.iter().any(|scene| {
         scene.get("id").and_then(Value::as_str) == Some("scene")
-            && scene
-                .get("name")
-                .and_then(Value::as_str)
-                == Some(request.scene_name.as_str())
+            && scene.get("name").and_then(Value::as_str) == Some(request.scene_name.as_str())
             && scene
                 .get("settings")
                 .and_then(Value::as_object)
@@ -239,7 +243,13 @@ fn configured_source_state(document: &Value, request: &ObsVrRequest) -> (bool, b
 
 fn is_process_running(image_name: &str) -> bool {
     let output = Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {image_name}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();
@@ -337,8 +347,13 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
     let scene_index = find_scene_index(sources_read, &request.scene_name)
         .ok_or_else(|| format!("OBS scene '{}' was not found.", request.scene_name))?;
 
-    let (template_item, template_source) = find_template(sources_read, scene_index)
-        .ok_or_else(|| format!("Scene '{}' has no Game Capture source to use as a template.", request.scene_name))?;
+    let (template_item, template_source) =
+        find_template(sources_read, scene_index).ok_or_else(|| {
+            format!(
+                "Scene '{}' has no Game Capture source to use as a template.",
+                request.scene_name
+            )
+        })?;
 
     let existing_source_index = sources_read.iter().position(|source| {
         source.get("name").and_then(Value::as_str) == Some(request.source_name.as_str())
@@ -354,8 +369,14 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
     } else {
         let mut source = template_source;
         let source_object = ensure_object(&mut source)?;
-        source_object.insert("name".to_owned(), Value::String(request.source_name.clone()));
-        source_object.insert("uuid".to_owned(), Value::String(uuid::Uuid::new_v4().to_string()));
+        source_object.insert(
+            "name".to_owned(),
+            Value::String(request.source_name.clone()),
+        );
+        source_object.insert(
+            "uuid".to_owned(),
+            Value::String(uuid::Uuid::new_v4().to_string()),
+        );
         source_object.insert("hotkeys".to_owned(), json!({}));
         sources.push(source);
         sources.len() - 1
@@ -366,7 +387,10 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
             .get_mut(target_index)
             .ok_or_else(|| "Target OBS source index is invalid.".to_owned())?;
         let source_object = ensure_object(source)?;
-        source_object.insert("name".to_owned(), Value::String(request.source_name.clone()));
+        source_object.insert(
+            "name".to_owned(),
+            Value::String(request.source_name.clone()),
+        );
 
         let uuid = source_object
             .get("uuid")
@@ -375,12 +399,20 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         source_object.insert("uuid".to_owned(), Value::String(uuid.clone()));
 
-        let settings = source_object.entry("settings".to_owned()).or_insert_with(|| json!({}));
+        let settings = source_object
+            .entry("settings".to_owned())
+            .or_insert_with(|| json!({}));
         let settings_object = ensure_object(settings)?;
-        settings_object.insert("capture_mode".to_owned(), Value::String("window".to_owned()));
+        settings_object.insert(
+            "capture_mode".to_owned(),
+            Value::String("window".to_owned()),
+        );
         settings_object.insert(
             "window".to_owned(),
-            Value::String(format!("::{}", encode_obs_window_part(&request.executable_name))),
+            Value::String(format!(
+                "::{}",
+                encode_obs_window_part(&request.executable_name)
+            )),
         );
         settings_object.insert("priority".to_owned(), Value::Number(2.into()));
         uuid
@@ -390,9 +422,13 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
         .get_mut(scene_index)
         .ok_or_else(|| "OBS scene index became invalid.".to_owned())?;
     let scene_object = ensure_object(scene)?;
-    let settings = scene_object.entry("settings".to_owned()).or_insert_with(|| json!({}));
+    let settings = scene_object
+        .entry("settings".to_owned())
+        .or_insert_with(|| json!({}));
     let settings_object = ensure_object(settings)?;
-    let items_value = settings_object.entry("items".to_owned()).or_insert_with(|| json!([]));
+    let items_value = settings_object
+        .entry("items".to_owned())
+        .or_insert_with(|| json!([]));
     let items = items_value
         .as_array_mut()
         .ok_or_else(|| "OBS scene items are not an array.".to_owned())?;
@@ -402,7 +438,10 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
             || item.get("name").and_then(Value::as_str) == Some(request.source_name.as_str())
     }) {
         let item_object = ensure_object(item)?;
-        item_object.insert("name".to_owned(), Value::String(request.source_name.clone()));
+        item_object.insert(
+            "name".to_owned(),
+            Value::String(request.source_name.clone()),
+        );
         item_object.insert("source_uuid".to_owned(), Value::String(target_uuid));
         item_object.insert("visible".to_owned(), Value::Bool(true));
     } else {
@@ -415,7 +454,10 @@ fn configure_document(document: &mut Value, request: &ObsVrRequest) -> Result<()
 
         let item_object = ensure_object(&mut item)?;
         item_object.insert("id".to_owned(), Value::Number((max_id + 1).into()));
-        item_object.insert("name".to_owned(), Value::String(request.source_name.clone()));
+        item_object.insert(
+            "name".to_owned(),
+            Value::String(request.source_name.clone()),
+        );
         item_object.insert("source_uuid".to_owned(), Value::String(target_uuid));
         item_object.insert("visible".to_owned(), Value::Bool(true));
         items.push(item);
@@ -467,8 +509,7 @@ fn remove_document(document: &mut Value, request: &ObsVrRequest) -> Result<(), S
 
         items.retain(|item| {
             item.get("source_uuid").and_then(Value::as_str) != Some(target_uuid.as_str())
-                && item.get("name").and_then(Value::as_str)
-                    != Some(request.source_name.as_str())
+                && item.get("name").and_then(Value::as_str) != Some(request.source_name.as_str())
         });
     }
 
@@ -500,7 +541,8 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
         });
     };
 
-    let (scene_found, template_source_name, source_exists) = inspect_document(&document.value, &request)?;
+    let (scene_found, template_source_name, source_exists) =
+        inspect_document(&document.value, &request)?;
     let (source_target_matches, source_in_scene) =
         configured_source_state(&document.value, &request);
     let collection_name = document
@@ -572,8 +614,12 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
         ));
     }
 
-    let mut document = locate_collection(&request)?
-        .ok_or_else(|| format!("No OBS collection containing scene '{}' was found.", request.scene_name))?;
+    let mut document = locate_collection(&request)?.ok_or_else(|| {
+        format!(
+            "No OBS collection containing scene '{}' was found.",
+            request.scene_name
+        )
+    })?;
 
     let obs_path = running_obs_executable().or_else(|| {
         let default = PathBuf::from(r"C:\Program Files\obs-studio\bin\64bit\obs64.exe");
@@ -603,17 +649,25 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
         configure_document(&mut document.value, &request)?;
         let json = serde_json::to_string_pretty(&document.value)
             .map_err(|error| format!("Could not serialize OBS collection: {error}"))?;
-        fs::write(&document.path, json)
-            .map_err(|error| format!("Could not write OBS collection '{}': {error}", document.path.display()))?;
+        fs::write(&document.path, json).map_err(|error| {
+            format!(
+                "Could not write OBS collection '{}': {error}",
+                document.path.display()
+            )
+        })?;
 
         let verify = fs::read_to_string(&document.path)
             .map_err(|error| format!("Could not verify OBS collection: {error}"))?;
-        let verify: Value = serde_json::from_str(&verify)
-            .map_err(|error| format!("OBS collection failed JSON validation after write: {error}"))?;
+        let verify: Value = serde_json::from_str(&verify).map_err(|error| {
+            format!("OBS collection failed JSON validation after write: {error}")
+        })?;
         let (_, _, source_exists) = inspect_document(&verify, &request)?;
         let (target_matches, source_in_scene) = configured_source_state(&verify, &request);
         if !source_exists || !target_matches || !source_in_scene {
-            return Err(format!("OBS source '{}' was not present after saving.", request.source_name));
+            return Err(format!(
+                "OBS source '{}' was not present after saving.",
+                request.source_name
+            ));
         }
 
         Ok(())
@@ -625,7 +679,9 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
             reopen_obs(obs_path.as_deref());
         }
         return match restore_result {
-            Ok(_) => Err(format!("{error} The OBS backup was restored automatically.")),
+            Ok(_) => Err(format!(
+                "{error} The OBS backup was restored automatically."
+            )),
             Err(restore_error) => Err(format!(
                 "{error} Automatic restore also failed: {restore_error}"
             )),
@@ -711,7 +767,9 @@ pub fn uninstall_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
             reopen_obs(obs_path.as_deref());
         }
         return match restore_result {
-            Ok(_) => Err(format!("{error} The OBS backup was restored automatically.")),
+            Ok(_) => Err(format!(
+                "{error} The OBS backup was restored automatically."
+            )),
             Err(restore_error) => Err(format!(
                 "{error} Automatic restore also failed: {restore_error}"
             )),
@@ -810,7 +868,9 @@ mod tests {
         configure_document(&mut collection, &request).expect("configure");
         remove_document(&mut collection, &request).expect("remove");
         let sources = collection["sources"].as_array().expect("sources");
-        assert!(!sources.iter().any(|source| source["name"] == "Elden Ring VR"));
+        assert!(!sources
+            .iter()
+            .any(|source| source["name"] == "Elden Ring VR"));
         let scene = sources
             .iter()
             .find(|source| source["name"] == "vr")
@@ -834,7 +894,10 @@ mod tests {
         scene["settings"]["items"]
             .as_array_mut()
             .expect("items")
-            .insert(0, json!({ "id": 99, "name": "Missing source", "source_uuid": "missing-uuid" }));
+            .insert(
+                0,
+                json!({ "id": 99, "name": "Missing source", "source_uuid": "missing-uuid" }),
+            );
 
         let sources = collection["sources"].as_array().expect("sources");
         let scene_index = find_scene_index(sources, "vr").expect("scene index");

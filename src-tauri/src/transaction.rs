@@ -80,7 +80,13 @@ fn read_record(id: &str) -> Result<TransactionRecord, String> {
 
 fn is_process_running(image_name: &str) -> bool {
     let output = Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {image_name}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();
@@ -129,7 +135,9 @@ fn close_obs_gracefully() -> Result<bool, String> {
         .map_err(|error| format!("Could not ask OBS to close before rollback: {error}"))?;
 
     if !status.success() {
-        return Err("Windows could not request a graceful OBS shutdown before rollback.".to_owned());
+        return Err(
+            "Windows could not request a graceful OBS shutdown before rollback.".to_owned(),
+        );
     }
 
     for _ in 0..40 {
@@ -245,7 +253,10 @@ pub fn begin_file_set_transaction(
                 .unwrap_or("file.bin");
             let backup = backup_directory.join(format!("{index:04}-{file_name}"));
             fs::copy(target, &backup).map_err(|error| {
-                format!("Could not back up existing file '{}': {error}", target.display())
+                format!(
+                    "Could not back up existing file '{}': {error}",
+                    target.display()
+                )
             })?;
             Some(backup.to_string_lossy().into_owned())
         } else {
@@ -338,7 +349,10 @@ pub fn restore_record(mut record: TransactionRecord) -> Result<TransactionRecord
                 })?;
             } else if target.exists() {
                 fs::remove_file(&target).map_err(|error| {
-                    format!("Could not remove created file '{}': {error}", target.display())
+                    format!(
+                        "Could not remove created file '{}': {error}",
+                        target.display()
+                    )
                 })?;
             }
         }
@@ -393,8 +407,12 @@ pub fn rollback_latest_module_transaction(
 ) -> Result<TransactionRecord, String> {
     let record = list_transactions()?
         .into_iter()
-        .find(|record| record.status == "applied" && record.game_id == game_id && record.kind == kind)
-        .ok_or_else(|| format!("No active transaction was found for module '{kind}' in game '{game_id}'."))?;
+        .find(|record| {
+            record.status == "applied" && record.game_id == game_id && record.kind == kind
+        })
+        .ok_or_else(|| {
+            format!("No active transaction was found for module '{kind}' in game '{game_id}'.")
+        })?;
 
     rollback_transaction(record.id)
 }

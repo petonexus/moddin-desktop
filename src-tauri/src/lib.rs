@@ -1,5 +1,6 @@
 mod inspection;
 mod obs;
+mod ofxr;
 mod optiscaler;
 mod steam;
 mod transaction;
@@ -12,6 +13,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             steam::detect_steam_games,
             inspection::inspect_game_environment,
+            ofxr::preview_ofxr,
+            ofxr::install_ofxr,
+            ofxr::uninstall_ofxr,
             obs::preview_obs_vr,
             obs::configure_obs_vr,
             obs::uninstall_obs_vr,

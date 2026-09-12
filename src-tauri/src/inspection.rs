@@ -34,7 +34,13 @@ pub struct GameEnvironmentInspection {
 
 fn is_process_running(image_name: &str) -> bool {
     let output = Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {image_name}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();
@@ -75,7 +81,9 @@ pub fn inspect_game_environment(
 ) -> Result<GameEnvironmentInspection, String> {
     let root = PathBuf::from(&install_dir);
     if !root.is_dir() {
-        return Err(format!("Game install directory does not exist: {install_dir}"));
+        return Err(format!(
+            "Game install directory does not exist: {install_dir}"
+        ));
     }
 
     let executable_path = safe_join_relative(&root, &executable)?;
@@ -95,7 +103,10 @@ pub fn inspect_game_environment(
             continue;
         }
 
-        let size_bytes = candidate.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        let size_bytes = candidate
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         proxy_dlls.push(ProxyDllInfo {
             name: (*dll_name).to_owned(),
             path: candidate.to_string_lossy().into_owned(),

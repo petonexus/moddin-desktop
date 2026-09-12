@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 const GITHUB_API_RELEASE_PREFIX: &str = "https://api.github.com/repos/";
 const GITHUB_API_RELEASE_SUFFIX: &str = "/releases/latest";
+const GITHUB_API_RELEASE_LIST_SUFFIX: &str = "/releases?per_page=1";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +71,11 @@ fn version_is_newer(current: &str, latest: &str) -> bool {
 pub async fn check_module_update(
     request: ModuleUpdateRequest,
 ) -> Result<ModuleUpdateResult, String> {
-    let Some(update_url) = request.update_url.as_deref().map(str::trim).filter(|url| !url.is_empty())
+    let Some(update_url) = request
+        .update_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
     else {
         return Ok(unsupported(
             "This module recipe does not define an update source.",
@@ -78,11 +83,13 @@ pub async fn check_module_update(
         ));
     };
 
+    let is_latest_endpoint = update_url.ends_with(GITHUB_API_RELEASE_SUFFIX);
+    let is_release_list_endpoint = update_url.ends_with(GITHUB_API_RELEASE_LIST_SUFFIX);
     if !update_url.starts_with(GITHUB_API_RELEASE_PREFIX)
-        || !update_url.ends_with(GITHUB_API_RELEASE_SUFFIX)
+        || (!is_latest_endpoint && !is_release_list_endpoint)
     {
         return Err(
-            "Module update sources must use the official GitHub latest-release API endpoint."
+                "Module update sources must use an official GitHub release API endpoint."
                 .to_owned(),
         );
     }
@@ -94,16 +101,29 @@ pub async fn check_module_update(
         .build()
         .map_err(|error| format!("Could not create update checker: {error}"))?;
 
-    let release = client
+    let response = client
         .get(update_url)
         .send()
         .await
         .map_err(|error| format!("Could not check module updates: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("Update source returned an error: {error}"))?
-        .json::<GithubRelease>()
-        .await
-        .map_err(|error| format!("Could not parse module update information: {error}"))?;
+        .map_err(|error| format!("Update source returned an error: {error}"))?;
+
+    let release = if is_latest_endpoint {
+        response
+            .json::<GithubRelease>()
+            .await
+            .map_err(|error| format!("Could not parse module update information: {error}"))?
+    } else {
+        let releases = response
+            .json::<Vec<GithubRelease>>()
+            .await
+            .map_err(|error| format!("Could not parse module update information: {error}"))?;
+        releases
+            .into_iter()
+            .next()
+            .ok_or_else(|| "The GitHub release list is empty.".to_owned())?
+    };
 
     let current_version = request.current_version;
     let status = match current_version.as_deref() {

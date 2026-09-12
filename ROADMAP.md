@@ -21,6 +21,7 @@
 - [x] dry-run / preview screen
 - [x] inspect executable directory for common proxy DLLs
 - [x] VR-ready launch profiles with OpenXR preflight and recommended graphics settings
+- [x] OFXR Bridge FrameGen install/start/configure/arm flow before VR launch
 - [x] module verification checklist and post-action validation
 - [x] reapply/reinstall and transaction-backed removal flows
 - [ ] structured per-action logs
@@ -29,6 +30,7 @@
 ## v0.3 — Graphics & VR modules
 
 - [x] OptiScaler
+- [x] OFXR Bridge FrameGen
 - [ ] OpenXR helpers
 - [ ] ReShade
 - [ ] per-game VR / flat profiles

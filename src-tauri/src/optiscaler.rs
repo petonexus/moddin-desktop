@@ -11,8 +11,7 @@ use std::{
 
 const MARKER_FILE: &str = ".moddin-optiscaler.json";
 const OPTISCALER_MAIN_DLL: &str = "OptiScaler.dll";
-const OFFICIAL_RELEASE_PREFIX: &str =
-    "https://github.com/optiscaler/OptiScaler/releases/download/";
+const OFFICIAL_RELEASE_PREFIX: &str = "https://github.com/optiscaler/OptiScaler/releases/download/";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +136,13 @@ fn executable_context(request: &OptiScalerRequest) -> Result<(PathBuf, PathBuf, 
 
 fn is_process_running(image_name: &str) -> bool {
     let output = Command::new("tasklist")
-        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .args([
+            "/FI",
+            &format!("IMAGENAME eq {image_name}"),
+            "/FO",
+            "CSV",
+            "/NH",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();
@@ -209,13 +214,15 @@ pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPrevie
     let game_running = is_process_running(&process_name);
     let ini_exists = executable_directory.join("OptiScaler.ini").is_file();
     let manual_install_detected = marker.is_none() && ini_exists;
-    let (selected_proxy, conflicts) =
-        choose_proxy(&executable_directory, &request.proxy_candidates, marker.as_ref());
+    let (selected_proxy, conflicts) = choose_proxy(
+        &executable_directory,
+        &request.proxy_candidates,
+        marker.as_ref(),
+    );
 
     let installed = marker.as_ref().is_some_and(|value| {
         value.installed_files.iter().all(|relative| {
-            safe_join_relative(&executable_directory, relative)
-                .is_ok_and(|path| path.is_file())
+            safe_join_relative(&executable_directory, relative).is_ok_and(|path| path.is_file())
         })
     });
     let installed_version = marker.as_ref().map(|value| value.version.clone());
@@ -236,13 +243,16 @@ pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPrevie
                 "Install OptiScaler beside the game executable using {proxy}."
             ));
         }
-        changes.push("Back up every file that will be replaced before writing anything.".to_owned());
+        changes
+            .push("Back up every file that will be replaced before writing anything.".to_owned());
         changes.push("Record every created file so Undo can remove it safely.".to_owned());
     }
 
     let mut warnings = request.safety_notes.clone();
     if game_running {
-        warnings.push(format!("{process_name} is running. Close the game before installing."));
+        warnings.push(format!(
+            "{process_name} is running. Close the game before installing."
+        ));
     }
     if manual_install_detected {
         warnings.push(
@@ -287,7 +297,8 @@ fn collect_files(root: &Path) -> Result<Vec<PathBuf>, String> {
         for entry in fs::read_dir(directory)
             .map_err(|error| format!("Could not read extracted OptiScaler files: {error}"))?
         {
-            let entry = entry.map_err(|error| format!("Could not read extracted entry: {error}"))?;
+            let entry =
+                entry.map_err(|error| format!("Could not read extracted entry: {error}"))?;
             let path = entry.path();
             if path.is_dir() {
                 visit(&path, files)?;
@@ -342,7 +353,10 @@ fn install_from_archive(
 ) -> Result<TransactionRecord, String> {
     let preview = preview_optiscaler(request.clone())?;
     if !preview.can_apply {
-        return Err("OptiScaler installation is not safe to apply in the current game environment.".to_owned());
+        return Err(
+            "OptiScaler installation is not safe to apply in the current game environment."
+                .to_owned(),
+        );
     }
 
     let selected_proxy = preview
@@ -436,7 +450,10 @@ fn install_from_archive(
             &executable_directory,
             &targets,
             "optiscaler",
-            &format!("Install OptiScaler {} for {}", request.version, request.game_name),
+            &format!(
+                "Install OptiScaler {} for {}",
+                request.version, request.game_name
+            ),
             &request.game_id,
             metadata,
         )?;
@@ -460,7 +477,10 @@ fn install_from_archive(
             for stale in &stale_targets {
                 if stale.is_file() {
                     fs::remove_file(stale).map_err(|error| {
-                        format!("Could not remove stale OptiScaler file '{}': {error}", stale.display())
+                        format!(
+                            "Could not remove stale OptiScaler file '{}': {error}",
+                            stale.display()
+                        )
                     })?;
                 }
             }
@@ -485,7 +505,9 @@ fn install_from_archive(
 
         if let Err(error) = apply_result {
             return match transaction::restore_record(transaction) {
-                Ok(_) => Err(format!("{error} All changed files were restored automatically.")),
+                Ok(_) => Err(format!(
+                    "{error} All changed files were restored automatically."
+                )),
                 Err(restore_error) => Err(format!(
                     "{error} Automatic rollback also failed: {restore_error}"
                 )),
@@ -504,7 +526,9 @@ pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<Transactio
     validate_request(&request)?;
     let preview = preview_optiscaler(request.clone())?;
     if !preview.can_apply {
-        return Err("OptiScaler preview reports that installation is currently blocked.".to_owned());
+        return Err(
+            "OptiScaler preview reports that installation is currently blocked.".to_owned(),
+        );
     }
 
     let client = reqwest::Client::builder()
@@ -520,7 +544,9 @@ pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<Transactio
         .await
         .map_err(|error| format!("Could not download OptiScaler from GitHub: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("GitHub returned an error while downloading OptiScaler: {error}"))?;
+        .map_err(|error| {
+            format!("GitHub returned an error while downloading OptiScaler: {error}")
+        })?;
     let bytes = response
         .bytes()
         .await
@@ -568,7 +594,8 @@ pub fn uninstall_optiscaler(request: OptiScalerRequest) -> Result<TransactionRec
         last_rollback = Some(transaction::rollback_transaction(record.id)?);
     }
 
-    last_rollback.ok_or_else(|| "No active OptiScaler installation transaction was found.".to_owned())
+    last_rollback
+        .ok_or_else(|| "No active OptiScaler installation transaction was found.".to_owned())
 }
 
 #[cfg(test)]
