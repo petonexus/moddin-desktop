@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +61,85 @@ fn read_record(id: &str) -> Result<TransactionRecord, String> {
 
     serde_json::from_str(&contents)
         .map_err(|error| format!("Could not parse transaction '{id}': {error}"))
+}
+
+fn is_process_running(image_name: &str) -> bool {
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return false;
+    };
+
+    String::from_utf8_lossy(&output.stdout)
+        .to_ascii_lowercase()
+        .contains(&image_name.to_ascii_lowercase())
+}
+
+fn running_obs_executable() -> Option<PathBuf> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "(Get-Process obs64 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path)",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
+}
+
+fn close_obs_gracefully() -> Result<bool, String> {
+    if !is_process_running("obs64.exe") {
+        return Ok(false);
+    }
+
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "$p = Get-Process obs64 -ErrorAction SilentlyContinue; if ($p) { $p | ForEach-Object { [void]$_.CloseMainWindow() } }",
+        ])
+        .status()
+        .map_err(|error| format!("Could not ask OBS to close before rollback: {error}"))?;
+
+    if !status.success() {
+        return Err("Windows could not request a graceful OBS shutdown before rollback.".to_owned());
+    }
+
+    for _ in 0..40 {
+        if !is_process_running("obs64.exe") {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+
+    Err("OBS did not close within 20 seconds. Close it manually and try Undo again.".to_owned())
+}
+
+fn reopen_obs(path: Option<&Path>) {
+    let Some(path) = path else {
+        return;
+    };
+    if !path.is_file() {
+        return;
+    }
+
+    let mut command = Command::new(path);
+    if let Some(parent) = path.parent() {
+        command.current_dir(parent);
+    }
+    let _ = command.spawn();
 }
 
 pub fn backup_file(
@@ -164,5 +245,19 @@ pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
         return Ok(record);
     }
 
-    restore_record(record)
+    if record.kind != "obs-vr" {
+        return restore_record(record);
+    }
+
+    let obs_path = running_obs_executable().or_else(|| {
+        let default = PathBuf::from(r"C:\Program Files\obs-studio\bin\64bit\obs64.exe");
+        default.is_file().then_some(default)
+    });
+    let obs_was_open = close_obs_gracefully()?;
+
+    let restored = restore_record(record);
+    if obs_was_open {
+        reopen_obs(obs_path.as_deref());
+    }
+    restored
 }
