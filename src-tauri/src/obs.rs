@@ -2,6 +2,7 @@ use crate::transaction::{self, TransactionRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -25,6 +26,7 @@ pub struct ObsVrRequest {
 pub struct ObsVrPreview {
     pub can_apply: bool,
     pub obs_running: bool,
+    pub game_running: bool,
     pub collection_file: Option<String>,
     pub collection_name: Option<String>,
     pub scene_found: bool,
@@ -476,10 +478,12 @@ fn remove_document(document: &mut Value, request: &ObsVrRequest) -> Result<(), S
 #[tauri::command]
 pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     let obs_running = is_process_running("obs64.exe");
+    let game_running = is_process_running(&request.executable_name);
     let Some(document) = locate_collection(&request)? else {
         return Ok(ObsVrPreview {
             can_apply: false,
             obs_running,
+            game_running,
             collection_file: None,
             collection_name: None,
             scene_found: false,
@@ -524,6 +528,12 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     }
 
     let mut warnings = Vec::new();
+    if game_running {
+        warnings.push(format!(
+            "{} is running. Close the game before configuring OBS VR.",
+            request.executable_name
+        ));
+    }
     if obs_running {
         warnings.push("OBS is running. Moddin will close it gracefully before editing and reopen it afterwards.".to_owned());
     }
@@ -535,8 +545,11 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     }
 
     Ok(ObsVrPreview {
-        can_apply: scene_found && (source_exists || template_source_name.is_some()),
+        can_apply: scene_found
+            && (source_exists || template_source_name.is_some())
+            && !game_running,
         obs_running,
+        game_running,
         collection_file: Some(document.path.to_string_lossy().into_owned()),
         collection_name,
         scene_found,
@@ -552,6 +565,13 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
 
 #[tauri::command]
 pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, String> {
+    if is_process_running(&request.executable_name) {
+        return Err(format!(
+            "{} is running. Close the game before configuring OBS VR.",
+            request.executable_name
+        ));
+    }
+
     let mut document = locate_collection(&request)?
         .ok_or_else(|| format!("No OBS collection containing scene '{}' was found.", request.scene_name))?;
 
@@ -560,12 +580,15 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
         default.is_file().then_some(default)
     });
     let obs_was_open = close_obs_gracefully()?;
+    let mut metadata = BTreeMap::new();
+    metadata.insert("processName".to_owned(), request.executable_name.clone());
 
-    let transaction = match transaction::backup_file(
+    let transaction = match transaction::backup_file_with_metadata(
         &document.path,
         "obs-vr",
         &format!("Configure OBS VR for {}", request.game_name),
         &request.game_id,
+        metadata,
     ) {
         Ok(transaction) => transaction,
         Err(error) => {
@@ -618,6 +641,13 @@ pub fn configure_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
 
 #[tauri::command]
 pub fn uninstall_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, String> {
+    if is_process_running(&request.executable_name) {
+        return Err(format!(
+            "{} is running. Close the game before removing OBS VR.",
+            request.executable_name
+        ));
+    }
+
     let mut document = locate_collection(&request)?.ok_or_else(|| {
         format!(
             "No OBS collection containing scene '{}' was found.",
@@ -630,11 +660,14 @@ pub fn uninstall_obs_vr(request: ObsVrRequest) -> Result<TransactionRecord, Stri
         default.is_file().then_some(default)
     });
     let obs_was_open = close_obs_gracefully()?;
-    let transaction = match transaction::backup_file(
+    let mut metadata = BTreeMap::new();
+    metadata.insert("processName".to_owned(), request.executable_name.clone());
+    let transaction = match transaction::backup_file_with_metadata(
         &document.path,
         "obs-vr",
         &format!("Remove OBS VR for {}", request.game_name),
         &request.game_id,
+        metadata,
     ) {
         Ok(transaction) => transaction,
         Err(error) => {

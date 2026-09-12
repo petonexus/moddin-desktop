@@ -8,5 +8,6 @@ export interface GameEnvironmentInspection {
   executablePath: string
   executableDirectory: string
   executableExists: boolean
+  gameRunning: boolean
   proxyDlls: ProxyDllInfo[]
 }

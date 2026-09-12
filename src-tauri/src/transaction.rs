@@ -163,11 +163,12 @@ fn new_transaction_id() -> Result<(String, u64), String> {
     Ok((id, created_at))
 }
 
-pub fn backup_file(
+pub fn backup_file_with_metadata(
     target: &Path,
     kind: &str,
     label: &str,
     game_id: &str,
+    metadata: BTreeMap<String, String>,
 ) -> Result<TransactionRecord, String> {
     if !target.is_file() {
         return Err(format!("Cannot back up missing file: {}", target.display()));
@@ -202,7 +203,7 @@ pub fn backup_file(
             existed_before: true,
         }],
         created_directories: Vec::new(),
-        metadata: BTreeMap::new(),
+        metadata,
     };
 
     write_record(&record)?;

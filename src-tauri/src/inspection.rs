@@ -1,5 +1,8 @@
 use serde::Serialize;
-use std::path::{Component, Path, PathBuf};
+use std::{
+    path::{Component, Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 const PROXY_DLL_NAMES: &[&str] = &[
     "dxgi.dll",
@@ -25,7 +28,24 @@ pub struct GameEnvironmentInspection {
     pub executable_path: String,
     pub executable_directory: String,
     pub executable_exists: bool,
+    pub game_running: bool,
     pub proxy_dlls: Vec<ProxyDllInfo>,
+}
+
+fn is_process_running(image_name: &str) -> bool {
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {image_name}"), "/FO", "CSV", "/NH"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return false;
+    };
+
+    String::from_utf8_lossy(&output.stdout)
+        .to_ascii_lowercase()
+        .contains(&image_name.to_ascii_lowercase())
 }
 
 fn safe_join_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -63,6 +83,10 @@ pub fn inspect_game_environment(
         .parent()
         .ok_or_else(|| "Could not resolve executable directory.".to_owned())?
         .to_path_buf();
+    let process_name = executable_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Could not resolve executable process name.".to_owned())?;
 
     let mut proxy_dlls = Vec::new();
     for dll_name in PROXY_DLL_NAMES {
@@ -81,6 +105,7 @@ pub fn inspect_game_environment(
 
     Ok(GameEnvironmentInspection {
         executable_exists: executable_path.is_file(),
+        game_running: is_process_running(process_name),
         executable_path: executable_path.to_string_lossy().into_owned(),
         executable_directory: executable_directory.to_string_lossy().into_owned(),
         proxy_dlls,

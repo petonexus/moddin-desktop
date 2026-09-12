@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
 import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
@@ -31,6 +31,7 @@ const moduleBusy = ref(false)
 const verificationBusyKey = ref<string | null>(null)
 const rollbackBusyId = ref<string | null>(null)
 const moduleVerifications = ref<Record<string, ModuleVerification>>({})
+let gameStatePoll: number | null = null
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
@@ -61,6 +62,13 @@ const selectedGame = computed(() => {
     installed,
     catalog: findCatalogGameBySteamAppId(installed.appId),
   }
+})
+
+const selectedGameRunning = computed(() => {
+  if (gameInspection.value?.gameRunning) return true
+
+  const modules = selectedGame.value?.catalog?.modules ?? []
+  return modules.some((module) => moduleVerification(module)?.gameRunning === true)
 })
 
 function moduleName(module: ToolModuleDefinition) {
@@ -95,6 +103,13 @@ function moduleKey(module: ToolModuleDefinition) {
 
 function moduleVerification(module: ToolModuleDefinition) {
   return moduleVerifications.value[moduleKey(module)]
+}
+
+function moduleActionsBlocked(module: ToolModuleDefinition) {
+  return module.status !== 'available'
+    || moduleBusy.value
+    || inspectionLoading.value
+    || selectedGameRunning.value
 }
 
 function verificationStatusLabel(status: ModuleVerification['status']) {
@@ -133,11 +148,18 @@ function check(label: string, passed: boolean, detail?: string): ModuleVerificat
   return { label, passed, detail }
 }
 
-function saveModuleVerification(module: ToolModuleDefinition, status: ModuleVerification['status'], summary: string, checks: ModuleVerificationCheck[]) {
+function saveModuleVerification(
+  module: ToolModuleDefinition,
+  status: ModuleVerification['status'],
+  summary: string,
+  checks: ModuleVerificationCheck[],
+  gameRunning: boolean,
+) {
   moduleVerifications.value[moduleKey(module)] = {
     status,
     summary,
     checks,
+    gameRunning,
     checkedAt: Date.now(),
     activeTransactionId: activeModuleTransaction(module)?.id ?? null,
   }
@@ -160,23 +182,30 @@ async function refreshGames() {
   }
 }
 
-async function inspectSelectedGame() {
-  gameInspection.value = null
-  inspectionError.value = null
+async function inspectSelectedGame(silent = false) {
+  if (!silent) {
+    gameInspection.value = null
+    inspectionError.value = null
+  }
 
   const game = selectedGame.value
   if (!game?.catalog) return
 
-  inspectionLoading.value = true
+  if (!silent) inspectionLoading.value = true
+  const previousGameRunning = gameInspection.value?.gameRunning
   try {
-    gameInspection.value = await invoke<GameEnvironmentInspection>('inspect_game_environment', {
+    const nextInspection = await invoke<GameEnvironmentInspection>('inspect_game_environment', {
       installDir: game.installed.installDir,
       executable: game.catalog.executable,
     })
+    gameInspection.value = nextInspection
+    if (silent && previousGameRunning !== undefined && previousGameRunning !== nextInspection.gameRunning) {
+      void verifyAvailableModules()
+    }
   } catch (err) {
-    inspectionError.value = err instanceof Error ? err.message : String(err)
+    if (!silent) inspectionError.value = err instanceof Error ? err.message : String(err)
   } finally {
-    inspectionLoading.value = false
+    if (!silent) inspectionLoading.value = false
   }
 }
 
@@ -265,6 +294,11 @@ async function configureModule(module: ToolModuleDefinition) {
   actionError.value = null
   success.value = null
 
+  if (selectedGameRunning.value) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
   const vrRequest = buildVrLaunchRequest(module)
   if (vrRequest) {
     moduleBusy.value = true
@@ -308,6 +342,11 @@ async function configureModule(module: ToolModuleDefinition) {
 async function launchVrGame() {
   if (!vrLaunchDialog.value) return
 
+  if (selectedGameRunning.value || vrLaunchDialog.value.preview.gameRunning) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
   actionError.value = null
   success.value = null
   moduleBusy.value = true
@@ -330,6 +369,11 @@ async function launchVrGame() {
 
 async function applyObsConfiguration() {
   if (!obsDialog.value) return
+
+  if (selectedGameRunning.value || obsDialog.value.preview.gameRunning) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
 
   actionError.value = null
   success.value = null
@@ -356,6 +400,11 @@ async function applyObsConfiguration() {
 async function applyOptiScaler() {
   if (!optiScalerDialog.value) return
 
+  if (selectedGameRunning.value || optiScalerDialog.value.preview.gameRunning) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
   actionError.value = null
   success.value = null
   moduleBusy.value = true
@@ -378,6 +427,11 @@ async function applyOptiScaler() {
 }
 
 async function rollback(transaction: TransactionRecord) {
+  if (selectedGameRunning.value && transaction.gameId === selectedGame.value?.catalog?.id) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
   actionError.value = null
   success.value = null
   rollbackBusyId.value = transaction.id
@@ -470,7 +524,8 @@ async function verifyModule(module: ToolModuleDefinition, silent = false) {
         check(t('checkObsSource'), preview.sourceExists),
         check(t('checkObsTarget'), preview.sourceTargetMatches),
         check(t('checkObsSceneLink'), preview.sourceInScene),
-      ])
+        check(t('checkGameClosed'), !preview.gameRunning),
+      ], preview.gameRunning)
     } else if (module.id === 'optiscaler') {
       const request = buildOptiScalerRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
@@ -487,7 +542,7 @@ async function verifyModule(module: ToolModuleDefinition, silent = false) {
         check(t('checkManagedInstall'), !preview.manualInstallDetected),
         check(t('checkProxyAvailable'), Boolean(preview.selectedProxy)),
         check(t('checkVersion'), installed, preview.installed ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
-      ])
+      ], preview.gameRunning)
     } else if (module.id === 'vr-launch') {
       const request = buildVrLaunchRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
@@ -506,7 +561,7 @@ async function verifyModule(module: ToolModuleDefinition, silent = false) {
         check(t('checkVrConfig'), configMatches),
         check(t('checkOpenXrRuntime'), Boolean(preview.activeOpenXrRuntime)),
         check(t('checkGameClosed'), !preview.gameRunning),
-      ])
+      ], preview.gameRunning)
     }
 
     if (!silent) success.value = t('verificationCompleted', { module: moduleName(module) })
@@ -523,6 +578,11 @@ async function verifyAvailableModules() {
 }
 
 async function removeModule(module: ToolModuleDefinition) {
+  if (selectedGameRunning.value) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
   const gameId = selectedGame.value?.catalog?.id
   const kind = moduleTransactionKind(module)
   if (!gameId || !kind || !activeModuleTransaction(module)) {
@@ -578,6 +638,15 @@ watch(locale, (value) => {
 
 onMounted(async () => {
   await Promise.all([refreshGames(), refreshTransactions()])
+  gameStatePoll = window.setInterval(() => {
+    if (activeView.value === 'library' && selectedGame.value?.catalog) {
+      void inspectSelectedGame(true)
+    }
+  }, 2000)
+})
+
+onUnmounted(() => {
+  if (gameStatePoll !== null) window.clearInterval(gameStatePoll)
 })
 </script>
 
@@ -693,6 +762,10 @@ onMounted(async () => {
                   </div>
                 </div>
 
+                <div v-if="selectedGameRunning" class="game-running-banner">
+                  <strong>{{ t('gameRunningBanner') }}</strong>
+                </div>
+
                 <div class="module-grid">
                   <article v-for="module in selectedGame.catalog.modules" :key="module.id" class="module-card">
                     <div class="module-topline">
@@ -741,7 +814,8 @@ onMounted(async () => {
                       </button>
                       <button
                         class="module-button"
-                        :disabled="module.status !== 'available' || moduleBusy"
+                        :disabled="moduleActionsBlocked(module)"
+                        :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
                         @click="configureModule(module)"
                       >
                         {{ module.status === 'available' ? (moduleBusy ? t('checking') : moduleActionLabel(module)) : t('comingNext') }}
@@ -750,7 +824,8 @@ onMounted(async () => {
                     <button
                       v-if="module.status === 'available' && activeModuleTransaction(module)"
                       class="text-button danger-action"
-                      :disabled="moduleBusy"
+                      :disabled="moduleBusy || inspectionLoading || selectedGameRunning"
+                      :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
                       @click="removeModule(module)"
                     >
                       {{ module.id === 'optiscaler' ? t('uninstallOptiScaler') : t('removeConfiguration') }}
@@ -775,7 +850,7 @@ onMounted(async () => {
                       <span class="environment-label">{{ t('gameEnvironment') }}</span>
                       <h3>{{ t('injectionReadiness') }}</h3>
                     </div>
-                    <button class="secondary-button compact" :disabled="inspectionLoading" @click="inspectSelectedGame">
+                    <button class="secondary-button compact" :disabled="inspectionLoading" @click="inspectSelectedGame()">
                       {{ inspectionLoading ? t('inspecting') : t('rescan') }}
                     </button>
                   </div>
@@ -849,7 +924,11 @@ onMounted(async () => {
             </div>
             <button
               class="secondary-button"
-              :disabled="transaction.status !== 'applied' || rollbackBusyId === transaction.id"
+              :disabled="transaction.status !== 'applied'
+                || rollbackBusyId === transaction.id
+                || inspectionLoading
+                || (selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id)"
+              :title="selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id ? t('gameRunningActionBlocked') : undefined"
               @click="rollback(transaction)"
             >
               {{ rollbackBusyId === transaction.id ? t('restoring') : t('undo') }}
@@ -905,7 +984,7 @@ onMounted(async () => {
           <button class="secondary-button" @click="obsDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
-            :disabled="!obsDialog.preview.canApply || moduleBusy"
+            :disabled="!obsDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyObsConfiguration"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
@@ -969,7 +1048,7 @@ onMounted(async () => {
           <button class="secondary-button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
-            :disabled="!optiScalerDialog.preview.canApply || moduleBusy"
+            :disabled="!optiScalerDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyOptiScaler"
           >
             {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
@@ -1040,7 +1119,7 @@ onMounted(async () => {
 
         <div class="modal-actions">
           <button class="secondary-button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
-          <button class="primary-button" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy" @click="launchVrGame">
+          <button class="primary-button" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy || inspectionLoading || selectedGameRunning" @click="launchVrGame">
             {{ moduleBusy ? t('launching') : t('launchVr') }}
           </button>
         </div>

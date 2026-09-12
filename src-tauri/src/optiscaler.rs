@@ -535,7 +535,12 @@ pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<Transactio
 #[tauri::command]
 pub fn uninstall_optiscaler(request: OptiScalerRequest) -> Result<TransactionRecord, String> {
     validate_request(&request)?;
-    let (_, executable_directory, _) = executable_context(&request)?;
+    let (_, executable_directory, process_name) = executable_context(&request)?;
+    if is_process_running(&process_name) {
+        return Err(format!(
+            "Close {process_name} before uninstalling OptiScaler."
+        ));
+    }
     if !marker_path(&executable_directory).is_file() {
         return Err("No Moddin-managed OptiScaler installation was found.".to_owned());
     }

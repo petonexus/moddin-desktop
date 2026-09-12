@@ -183,6 +183,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .details-header { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid #202a36; }
 .path { margin-bottom: 0; max-width: 620px; color: #6f7b8b; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
 .section-title { display: flex; justify-content: space-between; margin-top: 24px; }
+.game-running-banner { margin-top: 14px; border: 1px solid #63313a; border-radius: 10px; padding: 11px 13px; color: #f0cbd0; background: #241317; font-size: 12px; line-height: 1.45; }
 
 .module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .module-card { display: flex; flex-direction: column; min-height: 190px; border: 1px solid #27313e; border-radius: 12px; padding: 16px; background: #111821; }

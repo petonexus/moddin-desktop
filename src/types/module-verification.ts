@@ -10,6 +10,7 @@ export interface ModuleVerification {
   status: ModuleVerificationStatus
   summary: string
   checks: ModuleVerificationCheck[]
+  gameRunning: boolean
   checkedAt: number
   activeTransactionId: string | null
 }

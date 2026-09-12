@@ -1,6 +1,7 @@
 use crate::transaction::{self, TransactionRecord};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -430,6 +431,7 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
     }
 
     let install_root = PathBuf::from(&request.install_dir);
+    let (executable_path, executable_directory, process_name) = executable_context(&request)?;
     let config_path = request
         .config_path
         .as_deref()
@@ -453,11 +455,14 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
         let path = config_path
             .as_ref()
             .ok_or_else(|| "VR configuration path could not be resolved.".to_owned())?;
-        transaction = Some(transaction::backup_file(
+        let mut metadata = BTreeMap::new();
+        metadata.insert("processName".to_owned(), process_name.clone());
+        transaction = Some(transaction::backup_file_with_metadata(
             path,
             "vr-launch",
             &format!("Configure VR launch profile for {}", request.game_name),
             &request.game_id,
+            metadata,
         )?);
 
         let contents = fs::read_to_string(path).map_err(|error| {
@@ -506,7 +511,6 @@ pub fn launch_vr_game(request: VrLaunchRequest) -> Result<VrLaunchResult, String
         }
     }
 
-    let (executable_path, executable_directory, _) = executable_context(&request)?;
     let mut command = Command::new(&executable_path);
     command
         .args(&request.arguments)

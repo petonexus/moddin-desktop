@@ -10,6 +10,7 @@ export interface ObsVrRequest {
 export interface ObsVrPreview {
   canApply: boolean
   obsRunning: boolean
+  gameRunning: boolean
   collectionFile: string | null
   collectionName: string | null
   sceneFound: boolean
