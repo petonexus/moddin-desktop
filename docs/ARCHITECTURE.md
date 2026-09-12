@@ -54,6 +54,7 @@ Rust is intentionally kept narrow. It owns operations that benefit from native/l
 - process inspection/lifecycle integration;
 - downloads and hash verification;
 - backup/restore transactions;
+- OpenXR runtime discovery and launch-time overrides;
 - integration with OBS and external tooling.
 
 The majority of product/UI logic remains TypeScript.
@@ -101,11 +102,26 @@ The OptiScaler action already uses the multi-file form: it records replaced and 
 
 `Windows Registry / Steam roots -> Steam libraries -> installed games -> catalog match -> game detail UI`
 
+### OpenXR runtime management
+
+`Windows OpenXR registry -> discover installed runtime manifests -> validate runtime libraries -> choose global or per-game runtime -> VR launch`
+
+The OpenXR manager understands two deliberately separate scopes:
+
+- **Windows global runtime** — backed by `HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime`. Changing it is an explicit action and uses an administrator UAC prompt.
+- **Per-game override** — stored by Moddin under `%LOCALAPPDATA%\Moddin\profiles\openxr`. It never changes the Windows global runtime. When Moddin launches that game it injects `XR_RUNTIME_JSON` only into the child process.
+
+This separation makes it possible to keep, for example, SteamVR as the system default while launching a specific game through another installed OpenXR runtime. A stale per-game manifest is ignored and reported as a warning rather than silently breaking launch.
+
+Runtime discovery combines the Khronos `AvailableRuntimes` registry entries with known default manifest locations for common Windows runtimes. Every candidate manifest is parsed and its runtime library is checked before the UI enables selection.
+
 ### VR-ready launch profiles
 
 `Elden Ring/Cyberpunk -> launch recipe -> executable/VR files/OpenXR preflight -> declared graphics settings -> backup -> launch -> transaction history`
 
 Launch recipes are declarative. They define required VR markers, launch arguments, optional INI patches, and safety notes. The native layer never accepts an arbitrary absolute config path: relative paths are resolved below the game installation and only existing keys named by the recipe are changed. A missing OpenXR runtime, missing VR integration, or running game blocks launch.
+
+If a per-game OpenXR override exists, the launch preflight reports it as the effective runtime and the child process receives `XR_RUNTIME_JSON`. Otherwise the validated Windows `ActiveRuntime` is used.
 
 Cyberpunk's current VR Port owns its first-launch `UserSettings.json` migration, so Moddin intentionally does not compete with it. Elden Ring's ERVR recipe applies the documented conservative starting values when the existing `Game/ERVR/ERVR.ini` contains those keys.
 
@@ -115,4 +131,4 @@ Cyberpunk's current VR Port owns its first-launch `UserSettings.json` migration,
 
 The OBS module clones a Game Capture already present in the target scene. This preserves the user's transform and capture-related settings instead of inventing a generic source layout.
 
-After this flow is validated against real OBS data, the action engine will be generalized and reused for OptiScaler, OpenXR helpers, ReShade, UE4SS, BepInEx, REFramework, and normal QoL mods.
+The same safety model is now being reused across OptiScaler, OpenXR helpers, future ReShade support, UE4SS, BepInEx, REFramework, and normal QoL mods.
