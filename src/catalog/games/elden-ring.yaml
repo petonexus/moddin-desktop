@@ -5,7 +5,7 @@ executable: Game/eldenring.exe
 modules:
   - id: vr-launch
     name: VR launch profile
-    description: Validate ERVR, apply the recommended full-stereo performance settings with backup, and start Elden Ring through OpenXR.
+    description: Validate the ERVR + VDXR + OFXR baseline, apply its full-stereo settings with backup, and start Elden Ring through OpenXR.
     category: vr
     status: available
     config:
@@ -16,20 +16,29 @@ modules:
       configPatches:
         - VR|StereoMode|full
         - VR|GameRes|auto
-        - VR|GameResScale|0.75
+        - VR|GameResScale|1.0
         - VR|RenderScale|1.0
         - Patches|FpsTarget|60
+        - FirstPerson|CameraBob|0
+        - HUD|Mode|quad
+        - HUD|Lock|body
+        - General|LogLevel|debug
       recommendations:
         - Stereo mode=full
         - Game resolution=auto
-        - Game resolution scale=0.75
+        - Game resolution scale=1.0
         - OpenXR render scale=1.0
         - FPS target=60
+        - Camera bob=0
+        - HUD=quad, locked to body
+        - ERVR log level=debug
         - Steam=Offline mode
         - Easy Anti-Cheat=Disabled by the existing offline mod setup
       safetyNotes:
         - ERVR does not disable Easy Anti-Cheat. Moddin will not bypass EAC; use the existing offline launch method and never load an online character with the mod active.
-        - Start SteamVR, Meta Quest Link, Virtual Desktop VDXR, or another OpenXR runtime before launching.
+        - Start Virtual Desktop with VDXR, arm the already-installed OFXR Bridge, and then launch through the existing offline method.
+        - This baseline does not install, update, or reconfigure OFXR; use the separate OFXR module only as an explicit experiment.
+        - Do not automatically install Cheeky, ERSS-FG, DLSS runtimes, Streamline, OptiScaler, R.E.A.L. VR, or extra ReShade add-ons for this profile.
   - id: obs-vr
     name: OBS VR Capture
     description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.

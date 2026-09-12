@@ -46,7 +46,9 @@ The defaults currently target the OBS collection `Sem nome` and scene `vr`; the 
 
 ### VR-ready launch workflow
 
-The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring updates `ERVR.ini` to the conservative full-stereo `GameResScale=0.75` / `FpsTarget=60` starting point.
+The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring uses the documented full-stereo baseline with `GameResScale=1.0`, `FpsTarget=60`, `CameraBob=0`, quad/body HUD, and debug logging.
+
+The standalone reversible baseline package is available under [`tools/elden-ring-ervr-ofxr-baseline`](tools/elden-ring-ervr-ofxr-baseline). It verifies the existing ReShade/ERVR/OpenXR/OFXR chain, quarantines identified experimental extras without deleting them, and restores the previous state through `02-RESTAURAR-ESTADO-ANTERIOR.cmd`. It never updates or reconfigures OFXR and never changes anti-cheat.
 
 The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
 
@@ -58,7 +60,7 @@ Per-game recipes can pin the only known-good build with `versionPolicy: pinned` 
 
 ### OFXR FrameGen workflow
 
-The VR launch flow prepares OFXR Bridge before starting either supported game. It downloads the pinned official pre-release archive, verifies its SHA-256, installs it under the user profile instead of the game directory, writes the recommended FidelityFX configuration, starts `OFXRBridgeTray.exe`, and confirms that the manual OpenXR layer is armed for the current Windows user. If activation cannot be confirmed, the game is not launched. The module can also be configured and armed from its own preview, checked for new pre-releases, and removed through the transaction history.
+The explicit OFXR module can prepare OFXR Bridge before starting either supported game. It downloads the pinned official pre-release archive, verifies its SHA-256, installs it under the user profile instead of the game directory, writes the recommended FidelityFX configuration, starts `OFXRBridgeTray.exe`, and confirms that the manual OpenXR layer is armed for the current Windows user. If activation cannot be confirmed, the game is not launched. The module can also be configured and armed from its own preview, checked for new pre-releases, and removed through the transaction history. The Elden Ring baseline package deliberately does not invoke this install/update path; it only inspects the existing OFXR state.
 
 OFXR Bridge is experimental. It requires the Microsoft Visual C++ Redistributable x64 and the game must run without administrator privileges because Windows OpenXR does not apply per-user implicit layers to elevated processes. The tray can remain in the notification area while the game is running; Moddin disables configuration, verification, update, removal, undo, and launch actions until the game closes.
 
