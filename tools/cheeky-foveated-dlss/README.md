@@ -5,7 +5,8 @@ Scanner + instalador conservador para **STALKER 2 UEVR**, **Dead Island 2 UEVR**
 ## Uso
 
 - `VERIFICAR.cmd`: só detecta jogos, pipeline VR, DLSS, UEVR/ReShade e conflitos. Não altera nada.
-- `INSTALAR.cmd`: instala a release estável mais recente do Cheeky nos alvos que passaram nas regras. Inclui candidatos experimentais somente quando todos os pré-requisitos detectáveis estão presentes.
+- `INSTALAR.cmd`: modo conservador; instala somente alvos `READY`.
+- `INSTALAR-EXPERIMENTAIS.cmd`: também permite alvos `EXPERIMENTAL_READY`, mas apenas quando todos os pré-requisitos detectáveis passaram.
 - `DESINSTALAR.cmd`: remove apenas os arquivos instalados pelo script e restaura backups quando existiam arquivos anteriores.
 
 O script baixa os assets diretamente da release oficial `ClarkCheekyKent/CheekyFoveatedDLSS`, valida SHA-256 quando o GitHub publica `digest` no asset, mantém logs e backups locais e executa o `CheekyOpenXRSetup.exe` da mesma release quando há instalação.
@@ -22,6 +23,14 @@ O script baixa os assets diretamente da release oficial `ClarkCheekyKent/CheekyF
 `READY` significa que o jogo caiu no caminho de integração oficialmente suportado pelo Cheeky e não há conflito detectável. Isso não equivale a dizer que aquela versão específica do jogo foi validada pelo autor.
 
 `EXPERIMENTAL_READY` significa **pipeline tecnicamente coerente, mas combinação ainda não listada como oficialmente testada pelo Cheeky**.
+
+### O que o scanner não consegue provar sozinho
+
+- Que o OptiScaler está efetivamente selecionando **DLSS SR em runtime**; ele consegue confirmar os arquivos necessários, não o estado do overlay enquanto o jogo roda.
+- A versão exata da **Plugin API do UEVR** em todas as formas de instalação. O Cheeky exige API 2.39.0 ou 2.x compatível mais nova.
+- Compatibilidade de uma atualização futura do jogo/VR mod. O scanner evita conflitos de arquivos conhecidos, mas não substitui o teste visual/frametime dentro do headset.
+
+Por isso rode `VERIFICAR.cmd` primeiro e trate `EXPERIMENTAL_READY` literalmente como experimental.
 
 ## Quest 3
 
@@ -45,6 +54,7 @@ Se ERSS-FG e OptiScaler forem usados juntos com ERVR, mantenha o `dxgi.dll` do R
 ```text
 VERIFICAR.cmd
 INSTALAR.cmd
+INSTALAR-EXPERIMENTAIS.cmd
 DESINSTALAR.cmd
 scripts/
   CheekyFoveatedDLSS.ps1
