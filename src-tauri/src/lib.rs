@@ -1,3 +1,4 @@
+mod activity;
 mod inspection;
 mod obs;
 mod openxr;
@@ -11,6 +12,9 @@ mod vr_launch;
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            activity::record_ui_action_log,
+            activity::list_action_logs,
+            activity::clear_action_logs,
             steam::detect_steam_games,
             inspection::inspect_game_environment,
             obs::preview_obs_vr,
