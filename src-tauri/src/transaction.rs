@@ -1,11 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionFile {
+    pub target_path: String,
+    pub backup_path: Option<String>,
+    pub existed_before: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +27,12 @@ pub struct TransactionRecord {
     pub target_path: String,
     pub backup_path: String,
     pub status: String,
+    #[serde(default)]
+    pub files: Vec<TransactionFile>,
+    #[serde(default)]
+    pub created_directories: Vec<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 fn now_millis() -> Result<u64, String> {
@@ -142,6 +157,12 @@ fn reopen_obs(path: Option<&Path>) {
     let _ = command.spawn();
 }
 
+fn new_transaction_id() -> Result<(String, u64), String> {
+    let created_at = now_millis()?;
+    let id = format!("{}-{}", created_at, uuid::Uuid::new_v4().simple());
+    Ok((id, created_at))
+}
+
 pub fn backup_file(
     target: &Path,
     kind: &str,
@@ -152,8 +173,7 @@ pub fn backup_file(
         return Err(format!("Cannot back up missing file: {}", target.display()));
     }
 
-    let created_at = now_millis()?;
-    let id = format!("{}-{}", created_at, uuid::Uuid::new_v4().simple());
+    let (id, created_at) = new_transaction_id()?;
     let directory = transaction_dir(&id);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create transaction directory: {error}"))?;
@@ -176,32 +196,159 @@ pub fn backup_file(
         target_path: target.to_string_lossy().into_owned(),
         backup_path: backup_path.to_string_lossy().into_owned(),
         status: "applied".to_owned(),
+        files: vec![TransactionFile {
+            target_path: target.to_string_lossy().into_owned(),
+            backup_path: Some(backup_path.to_string_lossy().into_owned()),
+            existed_before: true,
+        }],
+        created_directories: Vec::new(),
+        metadata: BTreeMap::new(),
     };
 
     write_record(&record)?;
     Ok(record)
 }
 
+pub fn begin_file_set_transaction(
+    target_root: &Path,
+    targets: &[PathBuf],
+    kind: &str,
+    label: &str,
+    game_id: &str,
+    metadata: BTreeMap<String, String>,
+) -> Result<TransactionRecord, String> {
+    let (id, created_at) = new_transaction_id()?;
+    let directory = transaction_dir(&id);
+    let backup_directory = directory.join("files");
+    fs::create_dir_all(&backup_directory)
+        .map_err(|error| format!("Could not create transaction backup directory: {error}"))?;
+
+    let mut unique_targets = targets.to_vec();
+    unique_targets.sort();
+    unique_targets.dedup();
+
+    let mut files = Vec::with_capacity(unique_targets.len());
+    for (index, target) in unique_targets.iter().enumerate() {
+        if !target.starts_with(target_root) {
+            return Err(format!(
+                "Transaction target escapes the selected game directory: {}",
+                target.display()
+            ));
+        }
+
+        let existed_before = target.is_file();
+        let backup_path = if existed_before {
+            let file_name = target
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("file.bin");
+            let backup = backup_directory.join(format!("{index:04}-{file_name}"));
+            fs::copy(target, &backup).map_err(|error| {
+                format!("Could not back up existing file '{}': {error}", target.display())
+            })?;
+            Some(backup.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+
+        files.push(TransactionFile {
+            target_path: target.to_string_lossy().into_owned(),
+            backup_path,
+            existed_before,
+        });
+    }
+
+    let mut directories = Vec::new();
+    for target in &unique_targets {
+        let mut current = target.parent();
+        while let Some(directory) = current {
+            if directory == target_root || !directory.starts_with(target_root) {
+                break;
+            }
+            if !directory.exists() {
+                directories.push(directory.to_string_lossy().into_owned());
+            }
+            current = directory.parent();
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    directories.dedup();
+
+    let record = TransactionRecord {
+        id,
+        created_at,
+        kind: kind.to_owned(),
+        label: label.to_owned(),
+        game_id: game_id.to_owned(),
+        target_path: target_root.to_string_lossy().into_owned(),
+        backup_path: backup_directory.to_string_lossy().into_owned(),
+        status: "prepared".to_owned(),
+        files,
+        created_directories: directories,
+        metadata,
+    };
+
+    write_record(&record)?;
+    Ok(record)
+}
+
+pub fn mark_applied(mut record: TransactionRecord) -> Result<TransactionRecord, String> {
+    record.status = "applied".to_owned();
+    write_record(&record)?;
+    Ok(record)
+}
+
 pub fn restore_record(mut record: TransactionRecord) -> Result<TransactionRecord, String> {
-    let backup = PathBuf::from(&record.backup_path);
-    let target = PathBuf::from(&record.target_path);
+    if record.files.is_empty() {
+        let backup = PathBuf::from(&record.backup_path);
+        let target = PathBuf::from(&record.target_path);
+        if !backup.is_file() {
+            return Err(format!("Backup no longer exists: {}", backup.display()));
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("Could not recreate target directory: {error}"))?;
+        }
+        fs::copy(&backup, &target).map_err(|error| {
+            format!(
+                "Could not restore '{}' from '{}': {error}",
+                target.display(),
+                backup.display()
+            )
+        })?;
+    } else {
+        for file in record.files.iter().rev() {
+            let target = PathBuf::from(&file.target_path);
+            if file.existed_before {
+                let backup = file
+                    .backup_path
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| format!("Missing backup metadata for {}", target.display()))?;
+                if !backup.is_file() {
+                    return Err(format!("Backup no longer exists: {}", backup.display()));
+                }
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|error| format!("Could not recreate target directory: {error}"))?;
+                }
+                fs::copy(&backup, &target).map_err(|error| {
+                    format!("Could not restore '{}': {error}", target.display())
+                })?;
+            } else if target.exists() {
+                fs::remove_file(&target).map_err(|error| {
+                    format!("Could not remove created file '{}': {error}", target.display())
+                })?;
+            }
+        }
 
-    if !backup.is_file() {
-        return Err(format!("Backup no longer exists: {}", backup.display()));
+        for directory in &record.created_directories {
+            let path = PathBuf::from(directory);
+            if path.is_dir() {
+                let _ = fs::remove_dir(&path);
+            }
+        }
     }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Could not recreate target directory: {error}"))?;
-    }
-
-    fs::copy(&backup, &target).map_err(|error| {
-        format!(
-            "Could not restore '{}' from '{}': {error}",
-            target.display(),
-            backup.display()
-        )
-    })?;
 
     record.status = "rolled_back".to_owned();
     write_record(&record)?;
@@ -243,6 +390,14 @@ pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
     let record = read_record(&id)?;
     if record.status == "rolled_back" {
         return Ok(record);
+    }
+
+    if let Some(process_name) = record.metadata.get("processName") {
+        if is_process_running(process_name) {
+            return Err(format!(
+                "Close {process_name} before undoing this transaction."
+            ));
+        }
     }
 
     if record.kind != "obs-vr" {
