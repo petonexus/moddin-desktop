@@ -4,13 +4,17 @@ import type { GameCatalogEntry } from '../types/game'
 import cyberpunkRaw from '../catalog/games/cyberpunk-2077.yaml?raw'
 import eldenRingRaw from '../catalog/games/elden-ring.yaml?raw'
 
+const configValueSchema = z
+  .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+  .transform((value) => (typeof value === 'string' || Array.isArray(value) ? value : String(value)))
+
 const moduleSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().min(1),
   category: z.enum(['vr', 'graphics', 'qol', 'system']),
   status: z.enum(['available', 'planned']),
-  config: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
+  config: z.record(z.string(), configValueSchema).optional(),
 })
 
 const gameSchema = z.object({
