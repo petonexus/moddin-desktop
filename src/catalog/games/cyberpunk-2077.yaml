@@ -85,3 +85,23 @@ modules:
     description: Manage OpenXR-related helpers and per-game VR configuration.
     category: vr
     status: planned
+  - id: uevr
+    name: UEVR engine-aware installer
+    description: Detect the game engine, resolve the newest compatible UEVR build, and keep Nightly, JoeyHodge, and AFW variants separate and reversible.
+    category: vr
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
+      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
+      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
+      defaultBackend: nightly
+      backendCandidates:
+        - nightly|available
+        - joey|available
+        - afw|experimental
+        - joey-afw|experimental
+      safetyNotes:
+        - UEVR is only eligible for Unreal Engine games in the supported UE 4.8-5.4 range; the local engine detection is a gate, not a compatibility guarantee.
+        - Nightly is verified with the upstream SHA-256 sidecar. JoeyHodge and AFW releases are official GitHub sources but may not publish a checksum sidecar.
+        - Close the game and UEVRInjector.exe before installing or changing a backend. Do not run UEVR, Steam, or the game as administrator.

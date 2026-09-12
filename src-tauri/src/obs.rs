@@ -242,24 +242,7 @@ fn configured_source_state(document: &Value, request: &ObsVrRequest) -> (bool, b
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn running_obs_executable() -> Option<PathBuf> {
@@ -516,8 +499,7 @@ fn remove_document(document: &mut Value, request: &ObsVrRequest) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
-pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
+fn preview_obs_vr_sync(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
     let obs_running = is_process_running("obs64.exe");
     let game_running = is_process_running(&request.executable_name);
     let Some(document) = locate_collection(&request)? else {
@@ -603,6 +585,13 @@ pub fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
         changes,
         warnings,
     })
+}
+
+#[tauri::command]
+pub async fn preview_obs_vr(request: ObsVrRequest) -> Result<ObsVrPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_obs_vr_sync(request))
+        .await
+        .map_err(|error| format!("OBS preview task failed: {error}"))?
 }
 
 #[tauri::command]

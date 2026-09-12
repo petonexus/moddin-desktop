@@ -5,7 +5,6 @@ use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -135,25 +134,7 @@ fn executable_context(request: &OptiScalerRequest) -> Result<(PathBuf, PathBuf, 
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn marker_path(executable_directory: &Path) -> PathBuf {
@@ -206,8 +187,7 @@ fn proxy_conflict(name: &str, path: &Path) -> ProxyConflict {
     }
 }
 
-#[tauri::command]
-pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPreview, String> {
+fn preview_optiscaler_sync(request: OptiScalerRequest) -> Result<OptiScalerPreview, String> {
     validate_request(&request)?;
     let (executable_path, executable_directory, process_name) = executable_context(&request)?;
     let marker = read_marker(&executable_directory);
@@ -292,6 +272,13 @@ pub fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPrevie
     })
 }
 
+#[tauri::command]
+pub async fn preview_optiscaler(request: OptiScalerRequest) -> Result<OptiScalerPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_optiscaler_sync(request))
+        .await
+        .map_err(|error| format!("OptiScaler preview task failed: {error}"))?
+}
+
 fn collect_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     fn visit(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
         for entry in fs::read_dir(directory)
@@ -351,7 +338,7 @@ fn install_from_archive(
     request: OptiScalerRequest,
     archive_bytes: Vec<u8>,
 ) -> Result<TransactionRecord, String> {
-    let preview = preview_optiscaler(request.clone())?;
+    let preview = preview_optiscaler_sync(request.clone())?;
     if !preview.can_apply {
         return Err(
             "OptiScaler installation is not safe to apply in the current game environment."
@@ -524,7 +511,7 @@ fn install_from_archive(
 #[tauri::command]
 pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<TransactionRecord, String> {
     validate_request(&request)?;
-    let preview = preview_optiscaler(request.clone())?;
+    let preview = preview_optiscaler_sync(request.clone())?;
     if !preview.can_apply {
         return Err(
             "OptiScaler preview reports that installation is currently blocked.".to_owned(),
@@ -578,7 +565,7 @@ pub fn uninstall_optiscaler(request: OptiScalerRequest) -> Result<TransactionRec
             break;
         }
 
-        let record = transaction::list_transactions()?
+        let record = transaction::list_transactions_sync()?
             .into_iter()
             .find(|record| {
                 record.status == "applied"

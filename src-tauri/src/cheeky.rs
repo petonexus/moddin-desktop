@@ -5,7 +5,6 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
     time::Duration,
 };
 
@@ -136,25 +135,7 @@ fn executable_context(
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn marker_path(executable_directory: &Path) -> PathBuf {
@@ -166,8 +147,7 @@ fn read_marker(executable_directory: &Path) -> Option<CheekyMarker> {
     serde_json::from_str(&contents).ok()
 }
 
-#[tauri::command]
-pub fn preview_cheeky_foveated_dlss(
+fn preview_cheeky_foveated_dlss_sync(
     request: CheekyFoveatedDlssRequest,
 ) -> Result<CheekyFoveatedDlssPreview, String> {
     validate_request(&request)?;
@@ -238,11 +218,20 @@ pub fn preview_cheeky_foveated_dlss(
     })
 }
 
+#[tauri::command]
+pub async fn preview_cheeky_foveated_dlss(
+    request: CheekyFoveatedDlssRequest,
+) -> Result<CheekyFoveatedDlssPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_cheeky_foveated_dlss_sync(request))
+        .await
+        .map_err(|error| format!("Cheeky preview task failed: {error}"))?
+}
+
 fn install_from_bytes(
     request: CheekyFoveatedDlssRequest,
     bytes: Vec<u8>,
 ) -> Result<TransactionRecord, String> {
-    let preview = preview_cheeky_foveated_dlss(request.clone())?;
+    let preview = preview_cheeky_foveated_dlss_sync(request.clone())?;
     if !preview.can_apply {
         return Err(
             "Cheeky Foveated DLSS installation is blocked by the current game environment."
@@ -331,7 +320,7 @@ pub async fn install_cheeky_foveated_dlss(
     request: CheekyFoveatedDlssRequest,
 ) -> Result<TransactionRecord, String> {
     validate_request(&request)?;
-    let preview = preview_cheeky_foveated_dlss(request.clone())?;
+    let preview = preview_cheeky_foveated_dlss_sync(request.clone())?;
     if !preview.can_apply {
         return Err(
             "Cheeky Foveated DLSS preview reports that installation is currently blocked."
@@ -381,7 +370,7 @@ pub fn uninstall_cheeky_foveated_dlss(
     let target_root = executable_directory.to_string_lossy().into_owned();
     let mut last_rollback = None;
     while marker_path(&executable_directory).is_file() {
-        let record = transaction::list_transactions()?
+        let record = transaction::list_transactions_sync()?
             .into_iter()
             .find(|record| {
                 record.status == "applied"

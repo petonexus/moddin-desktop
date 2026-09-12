@@ -15,8 +15,7 @@ pub struct InstalledGame {
     pub library_path: String,
 }
 
-#[tauri::command]
-pub fn detect_steam_games() -> Result<Vec<InstalledGame>, String> {
+fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
     let steam_roots = discover_steam_roots();
     let mut libraries = Vec::new();
 
@@ -84,6 +83,13 @@ pub fn detect_steam_games() -> Result<Vec<InstalledGame>, String> {
 
     games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(games)
+}
+
+#[tauri::command]
+pub async fn detect_steam_games() -> Result<Vec<InstalledGame>, String> {
+    tauri::async_runtime::spawn_blocking(detect_steam_games_sync)
+        .await
+        .map_err(|error| format!("Steam library scan task failed: {error}"))?
 }
 
 fn discover_steam_roots() -> Vec<PathBuf> {

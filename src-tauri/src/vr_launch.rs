@@ -156,25 +156,7 @@ fn executable_context(request: &VrLaunchRequest) -> Result<(PathBuf, PathBuf, St
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn ini_value(contents: &str, section: &str, key: &str) -> Option<String> {
@@ -410,8 +392,10 @@ fn preview_inner(request: &VrLaunchRequest) -> Result<VrLaunchPreview, String> {
 }
 
 #[tauri::command]
-pub fn preview_vr_launch(request: VrLaunchRequest) -> Result<VrLaunchPreview, String> {
-    preview_inner(&request)
+pub async fn preview_vr_launch(request: VrLaunchRequest) -> Result<VrLaunchPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_inner(&request))
+        .await
+        .map_err(|error| format!("VR launch preview task failed: {error}"))?
 }
 
 #[tauri::command]

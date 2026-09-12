@@ -119,6 +119,8 @@ The Activity panel can search/filter this history independently from the transac
 
 `Windows Registry / Steam roots -> Steam libraries -> installed games -> catalog match -> game detail UI`
 
+The environment inspection also reads bounded executable bytes and checks engine-specific game layout markers. It returns the engine, a coarse confidence level, and the evidence used. UEVR consumes this result as a hard Unreal Engine gate; an unknown engine is never treated as Unreal.
+
 ### OpenXR runtime management
 
 `Windows OpenXR registry -> discover installed runtime manifests -> validate runtime libraries -> choose global or per-game runtime -> VR launch`
@@ -141,6 +143,12 @@ Launch recipes are declarative. They define required VR markers, launch argument
 If a per-game OpenXR override exists, the launch preflight reports it as the effective runtime and the child process receives `XR_RUNTIME_JSON`. Otherwise the validated Windows `ActiveRuntime` is used.
 
 Cyberpunk's current VR Port owns its first-launch `UserSettings.json` migration, so Moddin intentionally does not compete with it. Elden Ring's ERVR recipe applies the documented conservative starting values when the existing `Game/ERVR/ERVR.ini` contains those keys.
+
+### Engine-aware UEVR
+
+`selected game -> local engine detection -> backend/release resolution -> safe ZIP extraction -> tool transaction`
+
+UEVR recipes declare the release API, version policy, optional pinned tag, and backend candidates. The native layer resolves the current official release at install time, verifies the UEVR Nightly checksum sidecar, refuses unsafe archive paths, and stores Nightly, JoeyHodge, AFW, and combined variants in separate user-tool directories. Community backend assets without an upstream checksum are recorded with their calculated hash and shown as such; they are never silently treated as locally proven compatibility.
 
 ### First safe mutation: OBS VR
 

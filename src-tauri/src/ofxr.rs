@@ -200,25 +200,7 @@ fn executable_context(request: &OfxrRequest) -> Result<(PathBuf, String), String
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn read_marker() -> Option<OfxrMarker> {
@@ -879,8 +861,10 @@ fn activate(
 }
 
 #[tauri::command]
-pub fn preview_ofxr(request: OfxrRequest) -> Result<OfxrPreview, String> {
-    preview_inner(&request)
+pub async fn preview_ofxr(request: OfxrRequest) -> Result<OfxrPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || preview_inner(&request))
+        .await
+        .map_err(|error| format!("OFXR preview task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1001,7 +985,7 @@ pub fn uninstall_ofxr(request: OfxrRequest) -> Result<TransactionRecord, String>
         if read_marker().is_none() {
             break;
         }
-        let record = transaction::list_transactions()?
+        let record = transaction::list_transactions_sync()?
             .into_iter()
             .find(|record| {
                 record.status == "applied"

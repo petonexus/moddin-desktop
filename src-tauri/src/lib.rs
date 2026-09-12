@@ -5,8 +5,10 @@ mod obs;
 mod ofxr;
 mod openxr;
 mod optiscaler;
+mod process;
 mod steam;
 mod transaction;
+mod uevr;
 mod updates;
 mod vr_launch;
 
@@ -38,6 +40,9 @@ pub fn run() {
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
             updates::check_module_update,
+            uevr::preview_uevr,
+            uevr::install_uevr,
+            uevr::uninstall_uevr,
             vr_launch::preview_vr_launch,
             vr_launch::launch_vr_game,
         ])

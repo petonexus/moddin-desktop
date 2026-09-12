@@ -29,6 +29,7 @@ The first vertical slice already includes:
 - idempotent reapply and transaction-backed removal for OBS VR, OptiScaler, and VR profiles
 - VR-ready launch profiles for Elden Ring and Cyberpunk 2077
 - OFXR Bridge FrameGen integration: verified install, tray startup, recommended optical-flow configuration, OpenXR arm confirmation, and safe removal
+- engine-aware UEVR installer: local engine detection, live official Nightly resolution, optional JoeyHodge/AFW variants, SHA-256 verification where upstream publishes it, and rollback
 - one-click Windows development bootstrap
 - Windows CI for frontend build and Rust tests
 
@@ -48,6 +49,12 @@ The defaults currently target the OBS collection `Sem nome` and scene `vr`; the 
 The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring updates `ERVR.ini` to the conservative full-stereo `GameResScale=0.75` / `FpsTarget=60` starting point.
 
 The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
+
+### UEVR workflow
+
+The UEVR module inspects the selected executable and game layout before it resolves a release. Only games detected as Unreal Engine can proceed; Unity, RE Engine, REDengine, and unknown engines remain blocked. The selected backend is resolved at install time: official UEVR Nightly, Nightly plus JoeyHodge's backend, PureDark AFW, or the combined JoeyHodge/AFW archive. Nightly archives are checked against the upstream `.sha256` asset. Each variant lives in its own `%LOCALAPPDATA%/Moddin/tools/uevr` folder and is transaction-backed.
+
+Per-game recipes can pin the only known-good build with `versionPolicy: pinned` and `releaseTag`, or keep `versionPolicy: latest` to follow the newest release. Backend compatibility labels in the catalog are evidence/status metadata, not a claim that Moddin has tested the game; a local VR test is still required.
 
 ### OFXR FrameGen workflow
 
@@ -78,7 +85,7 @@ RODAR-MODDIN.bat
 or:
 
 ```bash
-npm run tauri dev
+c
 ```
 
 ### Debugging

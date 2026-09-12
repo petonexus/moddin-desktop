@@ -79,25 +79,7 @@ fn read_record(id: &str) -> Result<TransactionRecord, String> {
 }
 
 fn is_process_running(image_name: &str) -> bool {
-    let output = Command::new("tasklist")
-        .args([
-            "/FI",
-            &format!("IMAGENAME eq {image_name}"),
-            "/FO",
-            "CSV",
-            "/NH",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .to_ascii_lowercase()
-        .contains(&image_name.to_ascii_lowercase())
+    crate::process::is_process_running(image_name)
 }
 
 fn running_obs_executable() -> Option<PathBuf> {
@@ -370,8 +352,7 @@ pub fn restore_record(mut record: TransactionRecord) -> Result<TransactionRecord
     Ok(record)
 }
 
-#[tauri::command]
-pub fn list_transactions() -> Result<Vec<TransactionRecord>, String> {
+pub fn list_transactions_sync() -> Result<Vec<TransactionRecord>, String> {
     let root = transaction_root();
     if !root.exists() {
         return Ok(Vec::new());
@@ -401,11 +382,18 @@ pub fn list_transactions() -> Result<Vec<TransactionRecord>, String> {
 }
 
 #[tauri::command]
+pub async fn list_transactions() -> Result<Vec<TransactionRecord>, String> {
+    tauri::async_runtime::spawn_blocking(list_transactions_sync)
+        .await
+        .map_err(|error| format!("Transaction history task failed: {error}"))?
+}
+
+#[tauri::command]
 pub fn rollback_latest_module_transaction(
     game_id: String,
     kind: String,
 ) -> Result<TransactionRecord, String> {
-    let record = list_transactions()?
+    let record = list_transactions_sync()?
         .into_iter()
         .find(|record| {
             record.status == "applied" && record.game_id == game_id && record.kind == kind
