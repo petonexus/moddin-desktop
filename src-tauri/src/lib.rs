@@ -1,5 +1,6 @@
 mod inspection;
 mod obs;
+mod openxr;
 mod optiscaler;
 mod steam;
 mod transaction;
@@ -15,6 +16,9 @@ pub fn run() {
             obs::preview_obs_vr,
             obs::configure_obs_vr,
             obs::uninstall_obs_vr,
+            openxr::inspect_openxr,
+            openxr::set_game_openxr_runtime,
+            openxr::set_system_openxr_runtime,
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
