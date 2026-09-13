@@ -1,33 +1,27 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { activityCopyForLocale, activityDateLocale } from '../features/activity/copy'
-import { clearActionLogs, listActionLogs } from '../features/activity/service'
-import type { ActionLogEntry, ActionLogLevel } from '../types/activity'
+import { useActivityLogPanel } from '../features/activity/useActivityLogPanel'
 
 const { locale } = useI18n()
-
-const open = ref(false)
-const loading = ref(false)
-const clearing = ref(false)
-const error = ref<string | null>(null)
-const logs = ref<ActionLogEntry[]>([])
-const search = ref('')
-const level = ref<'all' | ActionLogLevel>('all')
-const expanded = ref(new Set<string>())
-
 const copy = computed(() => activityCopyForLocale(locale.value))
 
-const filteredLogs = computed(() => {
-  const term = search.value.trim().toLowerCase()
-  return logs.value.filter((entry) => {
-    if (level.value !== 'all' && entry.level !== level.value) return false
-    if (!term) return true
-    return [entry.action, entry.gameId, entry.message, entry.transactionId]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(term))
-  })
-})
+const {
+  open,
+  loading,
+  clearing,
+  error,
+  logs,
+  search,
+  level,
+  expanded,
+  filteredLogs,
+  toggleDetails,
+  refresh,
+  openPanel,
+  clearLogs: clearLogsAction,
+} = useActivityLogPanel()
 
 function formatDate(timestamp: number) {
   return new Intl.DateTimeFormat(activityDateLocale(locale.value), {
@@ -36,43 +30,8 @@ function formatDate(timestamp: number) {
   }).format(new Date(timestamp))
 }
 
-function toggleDetails(id: string) {
-  const next = new Set(expanded.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expanded.value = next
-}
-
-async function refresh() {
-  loading.value = true
-  error.value = null
-  try {
-    logs.value = await listActionLogs()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function openPanel() {
-  open.value = true
-  await refresh()
-}
-
 async function clearLogs() {
-  if (!window.confirm(copy.value.confirmClear)) return
-  clearing.value = true
-  error.value = null
-  try {
-    await clearActionLogs()
-    logs.value = []
-    expanded.value = new Set()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    clearing.value = false
-  }
+  await clearLogsAction(copy.value.confirmClear)
 }
 </script>
 
