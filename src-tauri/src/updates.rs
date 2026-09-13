@@ -72,6 +72,9 @@ fn parse_version(value: &str) -> Option<ParsedVersion> {
         .trim_start_matches(['-', '_', '.'])
         .trim()
         .to_ascii_lowercase();
+    if !prerelease.is_ascii() {
+        return None;
+    }
     let prerelease = (!prerelease.is_empty()).then_some(prerelease);
 
     Some(ParsedVersion { core, prerelease })
@@ -273,5 +276,11 @@ mod tests {
     fn ignores_build_metadata_and_accepts_prefixed_tags() {
         assert!(!version_is_newer("1.2.3+local.1", "v1.2.3+build.9"));
         assert!(version_is_newer("0.9.4", "OptiScaler_v0.9.5"));
+    }
+
+    #[test]
+    fn rejects_non_ascii_prerelease_suffixes() {
+        assert!(parse_version("1.0.0-béta.1").is_none());
+        assert!(!version_is_newer("1.0.0", "1.0.0-béta.2"));
     }
 }
