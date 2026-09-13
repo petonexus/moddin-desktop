@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
 import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
 import { localeOptions } from './i18n'
-import type { InstalledGame, ToolModuleDefinition } from './types/game'
+import type { InstalledGame, ModuleCategory, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
@@ -19,6 +19,7 @@ import type { CompatibilityReport, CompatibilityStatus } from './types/compatibi
 
 type ViewName = 'library' | 'transactions'
 type CheekyResearchState = 'experimental' | 'prerequisite'
+type ModuleFilter = 'all' | ModuleCategory
 
 interface CheekyResearchGuide {
   state: CheekyResearchState
@@ -40,6 +41,8 @@ const inspectionError = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const success = ref<string | null>(null)
 const search = ref('')
+const supportedOnly = ref(false)
+const activeModuleFilter = ref<ModuleFilter>('all')
 const selectedAppId = ref<string | null>(null)
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
@@ -81,6 +84,8 @@ const compatibilityStatuses: CompatibilityStatus[] = [
   'not_working',
 ]
 
+const moduleCategories: ModuleCategory[] = ['vr', 'graphics', 'qol', 'system']
+
 const { t, locale } = useI18n()
 
 const supportedInstalledGames = computed(() =>
@@ -96,8 +101,11 @@ const filteredGames = computed(() => {
     return a.name.localeCompare(b.name)
   })
 
-  if (!term) return ordered
-  return ordered.filter((game) => game.name.toLowerCase().includes(term))
+  return ordered.filter((game) => {
+    const matchesSupport = !supportedOnly.value || Boolean(findCatalogGameBySteamAppId(game.appId))
+    const matchesSearch = !term || game.name.toLowerCase().includes(term)
+    return matchesSupport && matchesSearch
+  })
 })
 
 const selectedGame = computed(() => {
@@ -137,6 +145,52 @@ const ofxrReadyForLaunch = computed(() => {
   const module = selectedOfxrModule.value
   return module ? moduleVerification(module)?.status === 'installed' : true
 })
+
+const primaryModule = computed(() => {
+  const modules = selectedGame.value?.catalog?.modules ?? []
+  return modules.find((module) => module.id === 'vr-launch' && module.status === 'available')
+    ?? modules.find((module) => module.status === 'available')
+    ?? modules.find((module) => module.id === 'vr-launch')
+    ?? null
+})
+
+const moduleStatusSummary = computed(() => {
+  const modules = selectedGame.value?.catalog?.modules ?? []
+  const statuses = modules.map((module) => moduleVerification(module)?.status ?? 'unknown')
+  return {
+    unknown: statuses.filter((status) => status === 'unknown').length,
+    installed: statuses.filter((status) => status === 'installed').length,
+    ready: statuses.filter((status) => status === 'ready').length,
+    attention: statuses.filter((status) => status === 'attention').length,
+  }
+})
+
+const availableModuleCategories = computed(() => {
+  const modules = selectedGame.value?.catalog?.modules ?? []
+  return moduleCategories.filter((category) => modules.some((module) => module.category === category))
+})
+
+const moduleGroups = computed(() => {
+  const modules = selectedGame.value?.catalog?.modules ?? []
+  return availableModuleCategories.value
+    .filter((category) => activeModuleFilter.value === 'all' || activeModuleFilter.value === category)
+    .map((category) => ({
+      category,
+      modules: modules.filter((module) => module.category === category),
+    }))
+    .filter((group) => group.modules.length > 0)
+})
+
+function moduleCategoryCount(category: ModuleCategory) {
+  return (selectedGame.value?.catalog?.modules ?? []).filter((module) => module.category === category).length
+}
+
+function moduleChecklistSummary(module: ToolModuleDefinition) {
+  const verification = moduleVerification(module)
+  if (!verification) return t('verificationNotChecked')
+  const passed = verification.checks.filter((item) => item.passed).length
+  return t('checksSummary', { passed, total: verification.checks.length })
+}
 
 function moduleName(module: ToolModuleDefinition) {
   if (module.id === 'vr-launch') return t('moduleVrLaunch')
@@ -1473,7 +1527,10 @@ function scheduleGameStatePoll() {
   }, GAME_STATE_POLL_MS)
 }
 
-watch(selectedAppId, scheduleSelectedGameWork)
+watch(selectedAppId, () => {
+  activeModuleFilter.value = 'all'
+  scheduleSelectedGameWork()
+})
 
 watch(locale, (value) => {
   try {
@@ -1523,7 +1580,6 @@ onUnmounted(() => {
         <button class="nav-item" :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')">
           {{ t('transactions') }}
         </button>
-        <button class="nav-item" disabled>{{ t('settings') }}</button>
       </nav>
 
       <div class="sidebar-footer">
@@ -1539,16 +1595,18 @@ onUnmounted(() => {
     </aside>
 
     <main class="main-content">
-      <div v-if="success" class="success-banner">
-        <strong>{{ t('done') }}</strong>
-        <span>{{ success }}</span>
-      </div>
-      <div v-if="actionError" class="error-banner">
-        <strong>{{ t('actionFailed') }}</strong>
-        <span>{{ actionError }}</span>
+      <div class="notification-stack" aria-live="polite">
+        <div v-if="success" class="success-banner">
+          <strong>{{ t('done') }}</strong>
+          <span>{{ success }}</span>
+        </div>
+        <div v-if="actionError" class="error-banner">
+          <strong>{{ t('actionFailed') }}</strong>
+          <span>{{ actionError }}</span>
+        </div>
       </div>
 
-      <template v-if="activeView === 'library'">
+      <section v-if="activeView === 'library'" class="library-view">
         <header class="topbar">
           <div>
             <p class="eyebrow">{{ t('localLibrary') }}</p>
@@ -1562,7 +1620,25 @@ onUnmounted(() => {
           </button>
         </header>
 
-        <div class="search-row">
+        <div class="library-controls">
+          <div class="game-filter-control" :aria-label="t('supportedOnly')">
+            <button
+              class="filter-button"
+              :class="{ active: !supportedOnly }"
+              :aria-pressed="!supportedOnly"
+              @click="supportedOnly = false"
+            >
+              {{ t('allGames') }}
+            </button>
+            <button
+              class="filter-button"
+              :class="{ active: supportedOnly }"
+              :aria-pressed="supportedOnly"
+              @click="supportedOnly = true"
+            >
+              {{ t('supportedOnly') }}
+            </button>
+          </div>
           <input v-model="search" type="search" :placeholder="t('searchPlaceholder')" />
         </div>
 
@@ -1573,6 +1649,12 @@ onUnmounted(() => {
 
         <section class="workspace">
           <div class="game-list-panel">
+            <div class="panel-heading">
+              <div>
+                <span>{{ supportedOnly ? t('supportedOnly') : t('allGames') }}</span>
+                <strong>{{ t('shownGames', { count: filteredGames.length }) }}</strong>
+              </div>
+            </div>
             <div v-if="loading" class="empty-state">{{ t('scanningLibraries') }}</div>
             <div v-else-if="filteredGames.length === 0" class="empty-state">{{ t('noGamesFound') }}</div>
 
@@ -1605,15 +1687,71 @@ onUnmounted(() => {
                   <h2>{{ selectedGame.installed.name }}</h2>
                   <p class="path">{{ selectedGame.installed.installDir }}</p>
                 </div>
-                <span v-if="selectedGame.catalog" class="status supported">{{ t('catalogMatch') }}</span>
-                <span v-else class="status unsupported">{{ t('noRecipes') }}</span>
+                <div class="details-header-actions">
+                  <span v-if="selectedGame.catalog" class="status supported">{{ t('catalogMatch') }}</span>
+                  <span v-else class="status unsupported">{{ t('noRecipes') }}</span>
+                  <button
+                    v-if="primaryModule"
+                    class="primary-button"
+                    :disabled="moduleActionsBlocked(primaryModule)"
+                    :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
+                    @click="configureModule(primaryModule)"
+                  >
+                    {{ moduleBusy ? t('checking') : moduleActionLabel(primaryModule) }}
+                  </button>
+                </div>
               </div>
 
               <template v-if="selectedGame.catalog">
-                <div class="section-title">
+                <section class="setup-overview-section" :aria-label="t('setupOverview')">
+                  <div class="overview-heading">
+                    <h3>{{ t('setupOverview') }}</h3>
+                    <span>{{ selectedGame.catalog.modules.length }} {{ t('modules') }}</span>
+                  </div>
+                  <div class="setup-overview">
+                    <div class="setup-stat">
+                      <span>{{ t('verificationNotChecked') }}</span>
+                      <strong>{{ moduleStatusSummary.unknown }}</strong>
+                    </div>
+                    <div class="setup-stat configured">
+                      <span>{{ t('verificationInstalled') }}</span>
+                      <strong>{{ moduleStatusSummary.installed }}</strong>
+                    </div>
+                    <div class="setup-stat ready">
+                      <span>{{ t('verificationReady') }}</span>
+                      <strong>{{ moduleStatusSummary.ready }}</strong>
+                    </div>
+                    <div class="setup-stat attention">
+                      <span>{{ t('verificationAttention') }}</span>
+                      <strong>{{ moduleStatusSummary.attention }}</strong>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="section-title module-section-title">
                   <div>
                     <h3>{{ t('toolsRecipes') }}</h3>
                     <p>{{ t('previewChanges') }}</p>
+                  </div>
+                  <div class="module-filter-control" :aria-label="t('filterTools')">
+                    <button
+                      class="filter-button"
+                      :class="{ active: activeModuleFilter === 'all' }"
+                      :aria-pressed="activeModuleFilter === 'all'"
+                      @click="activeModuleFilter = 'all'"
+                    >
+                      {{ t('allTools') }}
+                    </button>
+                    <button
+                      v-for="category in availableModuleCategories"
+                      :key="category"
+                      class="filter-button"
+                      :class="{ active: activeModuleFilter === category }"
+                      :aria-pressed="activeModuleFilter === category"
+                      @click="activeModuleFilter = category"
+                    >
+                      {{ categoryLabel(category) }} {{ moduleCategoryCount(category) }}
+                    </button>
                   </div>
                 </div>
 
@@ -1621,10 +1759,16 @@ onUnmounted(() => {
                   <strong>{{ t('gameRunningBanner') }}</strong>
                 </div>
 
-                <div class="module-grid">
-                  <article v-for="module in selectedGame.catalog.modules" :key="module.id" class="module-card">
+                <div class="module-groups">
+                  <section v-for="group in moduleGroups" :key="group.category" class="module-group">
+                    <header class="module-group-heading">
+                      <h4>{{ categoryLabel(group.category) }}</h4>
+                      <span>{{ group.modules.length }} {{ t('modules') }}</span>
+                    </header>
+
+                    <div class="module-grid">
+                      <article v-for="module in group.modules" :key="module.id" class="module-card">
                     <div class="module-topline">
-                      <span class="category">{{ categoryLabel(module.category) }}</span>
                       <div class="module-states">
                         <span
                           v-if="moduleVerification(module)?.status !== 'installed'"
@@ -1652,7 +1796,9 @@ onUnmounted(() => {
                     <h4>{{ moduleName(module) }}</h4>
                     <p>{{ moduleDescription(module) }}</p>
 
-                    <div v-if="module.id === 'cheeky-foveated-dlss'" class="compatibility-panel">
+                    <details v-if="module.id === 'cheeky-foveated-dlss'" class="module-details compatibility-panel">
+                      <summary>{{ t('technicalDetails') }}</summary>
+                      <div class="module-detail-content">
                       <div class="compatibility-heading">
                         <div>
                           <strong>{{ t('compatibilityStatus') }}</strong>
@@ -1675,9 +1821,12 @@ onUnmounted(() => {
                           {{ t('recordTest') }}
                         </button>
                       </div>
-                    </div>
+                      </div>
+                    </details>
 
-                    <div v-if="module.id === 'uevr'" class="compatibility-panel uevr-panel">
+                    <details v-if="module.id === 'uevr'" class="module-details compatibility-panel uevr-panel">
+                      <summary>{{ t('technicalDetails') }}</summary>
+                      <div class="module-detail-content">
                       <div class="compatibility-heading">
                         <div>
                           <strong>{{ t('uevrEngine') }}</strong>
@@ -1712,9 +1861,19 @@ onUnmounted(() => {
                         </select>
                       </label>
                       <small class="compatibility-evidence">{{ t('uevrCompatibilityHint') }}</small>
-                    </div>
+                      </div>
+                    </details>
 
-                    <div v-if="moduleVerification(module)" class="module-verification">
+                    <details
+                      v-if="moduleVerification(module)"
+                      class="module-details verification-details"
+                      :open="moduleVerification(module)?.status === 'attention'"
+                    >
+                      <summary>
+                        <span>{{ moduleVerification(module)?.summary }}</span>
+                        <small>{{ moduleChecklistSummary(module) }}</small>
+                      </summary>
+                      <div class="module-detail-content module-verification">
                       <div class="verification-heading">
                         <strong>{{ moduleVerification(module)?.summary }}</strong>
                         <small>{{ t('verifiedAt', { date: formatTransactionDate(moduleVerification(module)!.checkedAt) }) }}</small>
@@ -1732,7 +1891,8 @@ onUnmounted(() => {
                           </div>
                         </li>
                       </ul>
-                    </div>
+                      </div>
+                    </details>
 
                     <div v-if="module.status === 'available'" class="module-update-row">
                       <div class="module-update-copy">
@@ -1786,9 +1946,17 @@ onUnmounted(() => {
                             ? t('uninstallUevr')
                           : t('removeConfiguration') }}
                     </button>
-                  </article>
+                      </article>
+                    </div>
+                  </section>
                 </div>
 
+                <details class="advanced-panel">
+                  <summary>
+                    <span>{{ t('advancedDiagnostics') }}</span>
+                    <small>{{ t('advancedDiagnosticsHint') }}</small>
+                  </summary>
+                  <div class="advanced-content">
                 <div class="metadata-card">
                   <div>
                     <span>{{ t('executable') }}</span>
@@ -1850,6 +2018,8 @@ onUnmounted(() => {
                     <p v-else class="environment-note">{{ t('noCommonProxy') }}</p>
                   </template>
                 </div>
+                  </div>
+                </details>
               </template>
 
               <div v-else class="unsupported-copy">
@@ -1859,9 +2029,9 @@ onUnmounted(() => {
             </template>
           </div>
         </section>
-      </template>
+      </section>
 
-      <template v-else>
+      <section v-else class="transactions-view">
         <header class="topbar transactions-topbar">
           <div>
             <p class="eyebrow">{{ t('rollbackHistory') }}</p>
@@ -1902,7 +2072,7 @@ onUnmounted(() => {
             </button>
           </article>
         </section>
-      </template>
+      </section>
     </main>
 
     <div v-if="obsDialog" class="modal-backdrop" @click.self="obsDialog = null">

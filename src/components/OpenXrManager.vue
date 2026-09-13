@@ -576,4 +576,36 @@ watch(selectedGameId, async (value) => {
   .openxr-primary,
   .openxr-secondary { width: 100%; }
 }
+
+/* Shared utility styling with the rest of Moddin. */
+.openxr-fab {
+  right: 22px;
+  bottom: 22px;
+  border-color: #2b3744;
+  color: #e8edf3;
+  background: rgba(16, 23, 32, 0.96);
+}
+
+.openxr-backdrop { background: rgba(3, 6, 10, 0.76); }
+.openxr-panel { border-color: #2b3744; background: #101720; color: #e8edf3; }
+.openxr-header small,
+.openxr-toolbar span,
+.openxr-summary span,
+.openxr-header p,
+.openxr-note p,
+.openxr-section-title span { color: #8996a5; }
+.openxr-toolbar select { border-color: #2b3744; color: #e8edf3; background: #0b1118; }
+.openxr-summary > div,
+.openxr-note,
+.openxr-runtime,
+.openxr-empty { border-color: #2a3642; background: rgba(20, 29, 39, 0.8); }
+.openxr-summary code,
+.openxr-runtime code { color: #c5bcff; }
+.openxr-primary { border-color: #8268ff; background: #6951df; }
+.openxr-secondary { border-color: #394756; color: #e8edf3; background: #18222d; }
+.openxr-badges .selected { color: #c5bcff; background: rgba(130, 104, 255, 0.18); }
+
+@media (max-width: 720px) {
+  .openxr-fab { right: 16px; bottom: 16px; }
+}
 </style>

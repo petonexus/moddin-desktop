@@ -325,4 +325,33 @@ async function clearLogs() {
   .activity-danger { width: 100%; }
   .activity-entry-top { align-items: flex-start; }
 }
+
+/* Keep utility surfaces in the same visual language as the main workspace. */
+.activity-fab {
+  right: 22px;
+  bottom: 74px;
+  border-color: #2b3744;
+  color: #e8edf3;
+  background: rgba(16, 23, 32, 0.96);
+}
+
+.activity-fab span { color: #b3a8ff; }
+.activity-backdrop { background: rgba(3, 6, 10, 0.76); }
+.activity-panel { border-color: #2b3744; background: #101720; color: #e8edf3; }
+.activity-header p,
+.activity-header small,
+.activity-storage,
+.activity-entry-title time,
+.activity-details span { color: #8996a5; }
+.activity-toolbar input,
+.activity-toolbar select { border-color: #2b3744; color: #e8edf3; background: #0b1118; }
+.activity-secondary { border-color: #394756; color: #e8edf3; background: #18222d; }
+.activity-link { color: #b3a8ff; }
+.activity-entry { border-color: #2a3642; background: rgba(20, 29, 39, 0.8); }
+.activity-entry p { color: #c6d0dc; }
+.activity-details code { color: #c5bcff; }
+
+@media (max-width: 760px) {
+  .activity-fab { right: 16px; bottom: 70px; }
+}
 </style>
