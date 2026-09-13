@@ -1,0 +1,73 @@
+const activityMessages = {
+  'pt-BR': {
+    button: 'Logs',
+    title: 'Histórico de ações',
+    subtitle: 'Registro persistente das alterações executadas pelo Moddin',
+    refresh: 'Atualizar',
+    clear: 'Limpar logs',
+    close: 'Fechar',
+    search: 'Filtrar por ação, jogo ou mensagem…',
+    all: 'Todos',
+    success: 'sucesso',
+    error: 'erro',
+    warning: 'aviso',
+    info: 'info',
+    empty: 'Nenhuma ação registrada ainda.',
+    details: 'Detalhes',
+    transaction: 'Transação',
+    game: 'Jogo',
+    confirmClear: 'Apagar o histórico persistente de ações do Moddin?',
+    storage: 'Os logs ficam em %LOCALAPPDATA%\\Moddin\\logs e rotacionam automaticamente ao atingir 5 MB.',
+  },
+  en: {
+    button: 'Logs',
+    title: 'Action history',
+    subtitle: 'Persistent record of changes performed by Moddin',
+    refresh: 'Refresh',
+    clear: 'Clear logs',
+    close: 'Close',
+    search: 'Filter by action, game, or message…',
+    all: 'All',
+    success: 'success',
+    error: 'error',
+    warning: 'warning',
+    info: 'info',
+    empty: 'No actions have been recorded yet.',
+    details: 'Details',
+    transaction: 'Transaction',
+    game: 'Game',
+    confirmClear: 'Delete Moddin’s persistent action history?',
+    storage: 'Logs live under %LOCALAPPDATA%\\Moddin\\logs and rotate automatically at 5 MB.',
+  },
+  es: {
+    button: 'Logs',
+    title: 'Historial de acciones',
+    subtitle: 'Registro persistente de los cambios ejecutados por Moddin',
+    refresh: 'Actualizar',
+    clear: 'Borrar logs',
+    close: 'Cerrar',
+    search: 'Filtrar por acción, juego o mensaje…',
+    all: 'Todos',
+    success: 'éxito',
+    error: 'error',
+    warning: 'aviso',
+    info: 'info',
+    empty: 'Aún no hay acciones registradas.',
+    details: 'Detalles',
+    transaction: 'Transacción',
+    game: 'Juego',
+    confirmClear: '¿Borrar el historial persistente de acciones de Moddin?',
+    storage: 'Los logs se guardan en %LOCALAPPDATA%\\Moddin\\logs y rotan automáticamente al llegar a 5 MB.',
+  },
+} as const
+
+export function activityCopyForLocale(locale: string) {
+  const key = locale === 'pt-BR' || locale === 'es' ? locale : 'en'
+  return activityMessages[key]
+}
+
+export function activityDateLocale(locale: string) {
+  if (locale === 'en') return 'en-US'
+  if (locale === 'es') return 'es-ES'
+  return 'pt-BR'
+}
