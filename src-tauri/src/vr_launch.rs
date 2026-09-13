@@ -112,7 +112,7 @@ fn validate_request(request: &VrLaunchRequest) -> Result<(), String> {
         safe_join_relative(Path::new("."), config_path)?;
     }
 
-    for patch in &request.config_patches {
+    for (index, patch) in request.config_patches.iter().enumerate() {
         if patch.section.trim().is_empty()
             || patch.key.trim().is_empty()
             || patch.section.contains('\r')
@@ -126,6 +126,15 @@ fn validate_request(request: &VrLaunchRequest) -> Result<(), String> {
             || patch.value.contains('\n')
         {
             return Err("VR INI recipe contains an invalid section, key, or value.".to_owned());
+        }
+
+        if request.config_patches[..index].iter().any(|previous| {
+            previous.section == patch.section && previous.key == patch.key
+        }) {
+            return Err(format!(
+                "VR INI recipe declares duplicate patch [{}] {}.",
+                patch.section, patch.key
+            ));
         }
     }
 
@@ -240,7 +249,9 @@ fn patch_ini(contents: &str, patches: &[VrIniPatch]) -> (String, bool) {
 fn read_setting_status(config_contents: Option<&str>, patch: &VrIniPatch) -> VrSettingStatus {
     let current_value =
         config_contents.and_then(|contents| ini_value(contents, &patch.section, &patch.key));
-    let will_change = current_value.as_deref() != Some(patch.value.as_str());
+    let will_change = current_value
+        .as_deref()
+        .is_some_and(|current| current != patch.value);
 
     VrSettingStatus {
         section: patch.section.clone(),
@@ -262,6 +273,19 @@ fn config_context(
     let path = safe_join_relative(install_root, relative)?;
     let contents = fs::read_to_string(&path).ok();
     Ok((Some(path), contents))
+}
+
+fn existing_patches_match(
+    original: &str,
+    written: &str,
+    patches: &[VrIniPatch],
+) -> bool {
+    patches.iter().all(|patch| {
+        let existed = ini_value(original, &patch.section, &patch.key).is_some();
+        !existed
+            || ini_value(written, &patch.section, &patch.key).as_deref()
+                == Some(patch.value.as_str())
+    })
 }
 
 fn effective_openxr_runtime(game_id: &str) -> (Option<String>, bool) {
@@ -422,37 +446,9 @@ pub async fn launch_vr_game(
         .as_deref()
         .map(|relative| safe_join_relative(&install_root, relative))
         .transpose()?;
-    let config_changed = config_path.as_ref().is_some_and(|path| {
-        path.is_file()
-            && request.config_patches.iter().any(|patch| {
-                ini_value(
-                    &fs::read_to_string(path).unwrap_or_default(),
-                    &patch.section,
-                    &patch.key,
-                )
-                .as_deref()
-                    != Some(patch.value.as_str())
-            })
-    });
 
     let mut transaction = None;
-    if config_changed {
-        let path = config_path
-            .as_ref()
-            .ok_or_else(|| "VR configuration path could not be resolved.".to_owned())?;
-        let mut metadata = BTreeMap::new();
-        metadata.insert("processName".to_owned(), process_name.clone());
-        if let Some(runtime) = openxr::game_runtime_override(&request.game_id) {
-            metadata.insert("openXrRuntimeJson".to_owned(), runtime);
-        }
-        transaction = Some(transaction::backup_file_with_metadata(
-            path,
-            "vr-launch",
-            &format!("Configure VR launch profile for {}", request.game_name),
-            &request.game_id,
-            metadata,
-        )?);
-
+    if let Some(path) = config_path.as_ref().filter(|path| path.is_file()) {
         let contents = fs::read_to_string(path).map_err(|error| {
             format!(
                 "Could not read VR configuration '{}': {error}",
@@ -460,42 +456,59 @@ pub async fn launch_vr_game(
             )
         })?;
         let (patched, changed) = patch_ini(&contents, &request.config_patches);
-        if !changed {
-            transaction = None;
-        } else if let Err(error) = fs::write(path, patched) {
-            if let Some(record) = transaction.take() {
-                let _ = transaction::restore_record(record);
+
+        if changed {
+            let mut metadata = BTreeMap::new();
+            metadata.insert("processName".to_owned(), process_name.clone());
+            if let Some(runtime) = openxr::game_runtime_override(&request.game_id) {
+                metadata.insert("openXrRuntimeJson".to_owned(), runtime);
             }
-            return Err(format!(
-                "Could not apply VR configuration '{}': {error}",
-                path.display()
-            ));
-        } else {
+
+            let record = transaction::begin_file_set_transaction(
+                &install_root,
+                std::slice::from_ref(path),
+                "vr-launch",
+                &format!("Configure VR launch profile for {}", request.game_name),
+                &request.game_id,
+                metadata,
+            )?;
+
+            if let Err(error) = fs::write(path, patched) {
+                let _ = transaction::restore_record(record);
+                return Err(format!(
+                    "Could not apply VR configuration '{}': {error}",
+                    path.display()
+                ));
+            }
+
             let verify_contents = match fs::read_to_string(path) {
                 Ok(contents) => contents,
                 Err(error) => {
-                    if let Some(record) = transaction.take() {
-                        let _ = transaction::restore_record(record);
-                    }
+                    let _ = transaction::restore_record(record);
                     return Err(format!(
                         "Could not verify VR configuration '{}': {error}",
                         path.display()
                     ));
                 }
             };
-            let invalid = request.config_patches.iter().any(|patch| {
-                ini_value(&verify_contents, &patch.section, &patch.key).as_deref()
-                    != Some(patch.value.as_str())
-            });
-            if invalid {
-                if let Some(record) = transaction.take() {
-                    let _ = transaction::restore_record(record);
-                }
+            if !existing_patches_match(&contents, &verify_contents, &request.config_patches) {
+                let _ = transaction::restore_record(record);
                 return Err(format!(
                     "VR configuration '{}' failed post-write verification.",
                     path.display()
                 ));
             }
+
+            let rollback_record = record.clone();
+            transaction = match transaction::mark_applied(record) {
+                Ok(record) => Some(record),
+                Err(error) => {
+                    let _ = transaction::restore_record(rollback_record);
+                    return Err(format!(
+                        "VR configuration was written, but its transaction could not be committed: {error}"
+                    ));
+                }
+            };
         }
     }
 
@@ -533,6 +546,20 @@ pub async fn launch_vr_game(
 mod tests {
     use super::*;
 
+    fn request_with_patches(patches: Vec<VrIniPatch>) -> VrLaunchRequest {
+        VrLaunchRequest {
+            game_id: "test-game".to_owned(),
+            game_name: "Test Game".to_owned(),
+            install_dir: "C:\\Games\\Test".to_owned(),
+            executable: "Game.exe".to_owned(),
+            arguments: Vec::new(),
+            required_files: Vec::new(),
+            config_path: Some("settings.ini".to_owned()),
+            config_patches: patches,
+            safety_notes: Vec::new(),
+        }
+    }
+
     #[test]
     fn refuses_paths_that_escape_game_root() {
         let root = Path::new(r"C:\Games\Example");
@@ -555,6 +582,54 @@ mod tests {
         assert!(output.contains("GameResScale=0.75\r\n"));
         assert!(output.contains("StereoMode=cinema\r\n"));
         assert!(output.contains("Value=keep\r\n"));
+    }
+
+    #[test]
+    fn missing_ini_keys_are_not_reported_as_changes() {
+        let patch = VrIniPatch {
+            section: "VR".to_owned(),
+            key: "MissingKey".to_owned(),
+            value: "1".to_owned(),
+        };
+        let input = "[VR]\nExisting=1\n";
+        let status = read_setting_status(Some(input), &patch);
+        let (output, changed) = patch_ini(input, std::slice::from_ref(&patch));
+
+        assert!(status.current_value.is_none());
+        assert!(!status.will_change);
+        assert!(!changed);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn verification_ignores_keys_that_were_missing_before_write() {
+        let patches = vec![
+            VrIniPatch {
+                section: "VR".to_owned(),
+                key: "Existing".to_owned(),
+                value: "2".to_owned(),
+            },
+            VrIniPatch {
+                section: "VR".to_owned(),
+                key: "Missing".to_owned(),
+                value: "3".to_owned(),
+            },
+        ];
+        let original = "[VR]\nExisting=1\n";
+        let written = "[VR]\nExisting=2\n";
+
+        assert!(existing_patches_match(original, written, &patches));
+    }
+
+    #[test]
+    fn rejects_duplicate_ini_patch_targets() {
+        let patch = VrIniPatch {
+            section: "VR".to_owned(),
+            key: "Scale".to_owned(),
+            value: "1".to_owned(),
+        };
+        let request = request_with_patches(vec![patch.clone(), patch]);
+        assert!(validate_request(&request).is_err());
     }
 
     #[test]
