@@ -1,0 +1,2 @@
+/* Shared module-state rules split from the legacy stylesheet. */
+.module-check-state.installed { color: #a8edc4; background: #173022; }

@@ -1,12 +1,13 @@
 /*
  * Frontend style entrypoint.
  *
- * Legacy application/component styles stay imported first while the frontend is
- * decomposed. Tokens and product polish intentionally come last so new work has
- * one predictable customization layer instead of appending overrides to
- * style.css.
+ * Preserve the historical cascade explicitly while the frontend is decomposed:
+ * base structure -> module states -> current library layout -> environment ->
+ * shared tokens -> final product polish.
  */
-@import '../style.css';
+@import './base.css';
+@import './module-states.css';
+@import './library-layout.css';
 @import '../environment.css';
 @import './tokens.css';
 @import './polish.css';
