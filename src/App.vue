@@ -47,6 +47,7 @@ const selectedAppId = ref<string | null>(null)
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
 const verificationBusyKey = ref<string | null>(null)
+const verificationBusyKeys = ref(new Set<string>())
 const rollbackBusyId = ref<string | null>(null)
 const moduleVerifications = ref<Record<string, ModuleVerification>>({})
 const updateBusyKeys = ref(new Set<string>())
@@ -57,6 +58,7 @@ const BACKGROUND_TASK_DELAY_MS = 220
 const GAME_STATE_POLL_MS = 3000
 const AUTO_VERIFICATION_TTL_MS = 15_000
 const AUTO_UPDATE_TTL_MS = 10 * 60_000
+const UPDATE_CHECK_TIMEOUT_MS = 35_000
 const BACKGROUND_CONCURRENCY = 2
 let gameStatePoll: number | null = null
 let selectionDebounce: number | null = null
@@ -237,6 +239,17 @@ function moduleVerification(module: ToolModuleDefinition) {
   return moduleVerifications.value[moduleKey(module)]
 }
 
+function moduleVerificationBusy(module: ToolModuleDefinition) {
+  const key = moduleKey(module)
+  return verificationBusyKey.value === key || verificationBusyKeys.value.has(key)
+}
+
+function moduleVerificationPending(module: ToolModuleDefinition) {
+  return module.status === 'available'
+    && !moduleVerification(module)
+    && (inspectionLoading.value || moduleVerificationBusy(module))
+}
+
 function isCompatibilityStatus(value: unknown): value is CompatibilityStatus {
   return typeof value === 'string' && compatibilityStatuses.includes(value as CompatibilityStatus)
 }
@@ -392,6 +405,37 @@ function moduleUpdate(module: ToolModuleDefinition) {
   return moduleUpdates.value[moduleKey(module)]
 }
 
+function moduleUpdateSource(module: ToolModuleDefinition): string | null {
+  const config = module.config ?? {}
+  const configured = config.updateUrl
+  if (typeof configured === 'string' && configured.trim()) return configured.trim()
+
+  if (module.id === 'uevr') {
+    const backend = selectedUevrBackend(module)
+    const sourceKey = backend === 'afw' || backend === 'joey-afw' ? 'afwReleaseApiUrl' : 'releaseApiUrl'
+    const source = config[sourceKey]
+    return typeof source === 'string' && source.trim() ? source.trim() : null
+  }
+
+  return null
+}
+
+function moduleHasUpdateSource(module: ToolModuleDefinition) {
+  return Boolean(moduleUpdateSource(module))
+}
+
+async function openRelease(url: string | null) {
+  if (!url) return
+
+  try {
+    await invoke('open_external_url', { url })
+  } catch (err) {
+    // Keep the link useful when the UI is running directly in a browser.
+    const opened = window.open(url, '_blank', 'noopener,noreferrer')
+    if (!opened) actionError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 function moduleUpdateBusy(module: ToolModuleDefinition) {
   return updateBusyKeys.value.has(moduleKey(module))
 }
@@ -406,6 +450,7 @@ function moduleUpdateLabel(status: ModuleUpdate['status']) {
 
 function moduleUpdateSummary(module: ToolModuleDefinition) {
   const update = moduleUpdate(module)
+  if (!moduleHasUpdateSource(module)) return t('updatesNotConfigured')
   if (!update) return t('updatesNotChecked')
   if (update.status === 'available') {
     return t('updateAvailableSummary', { version: update.latestVersion ?? '?' })
@@ -419,6 +464,13 @@ function moduleUpdateSummary(module: ToolModuleDefinition) {
     return t('updateVersionUnknownSummary', { version: update.latestVersion })
   }
   return t('updateVersionUnknown')
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs)
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timer))
+  })
 }
 
 function moduleActionsBlocked(module: ToolModuleDefinition) {
@@ -1187,6 +1239,9 @@ async function verifyModule(
   if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
 
   const key = moduleKeyForApp(module, expectedAppId)
+  const busyKeys = new Set(verificationBusyKeys.value)
+  busyKeys.add(key)
+  verificationBusyKeys.value = busyKeys
   if (!silent) verificationBusyKey.value = key
   if (!silent) actionError.value = null
 
@@ -1307,6 +1362,9 @@ async function verifyModule(
       actionError.value = err instanceof Error ? err.message : String(err)
     }
   } finally {
+    const nextBusyKeys = new Set(verificationBusyKeys.value)
+    nextBusyKeys.delete(key)
+    verificationBusyKeys.value = nextBusyKeys
     if (!silent && verificationBusyKey.value === key) verificationBusyKey.value = null
   }
 }
@@ -1339,49 +1397,66 @@ async function checkModuleUpdate(
   if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
 
   const key = moduleKeyForApp(module, expectedAppId)
+  if (updateBusyKeys.value.has(key)) return
+  const config = module.config ?? {}
+  const updateUrl = moduleUpdateSource(module)
+  const configuredVersion = typeof config.version === 'string' ? config.version : null
+  if (!updateUrl) {
+    moduleUpdates.value[key] = {
+      status: 'unavailable',
+      currentVersion: configuredVersion,
+      latestVersion: null,
+      releaseUrl: null,
+      checkedAt: Date.now(),
+      detail: 'This module recipe does not define an update source.',
+    }
+    return
+  }
+
   const busyKeys = new Set(updateBusyKeys.value)
   busyKeys.add(key)
   updateBusyKeys.value = busyKeys
-  const config = module.config ?? {}
-  let updateUrl = typeof config.updateUrl === 'string' ? config.updateUrl : null
-  let currentVersion = typeof config.version === 'string' ? config.version : null
+  let currentVersion = configuredVersion
 
   try {
-    if (module.id === 'optiscaler' && updateUrl) {
+    if (module.id === 'optiscaler') {
       const request = buildOptiScalerRequest(module)
       if (request) {
-        const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+        const preview = await withTimeout(
+          invoke<OptiScalerPreview>('preview_optiscaler', { request }),
+          UPDATE_CHECK_TIMEOUT_MS,
+          'OptiScaler update check timed out.',
+        )
         currentVersion = preview.installedVersion ?? request.version
       }
     }
-    if (module.id === 'ofxr-framegen' && updateUrl) {
+    if (module.id === 'ofxr-framegen') {
       const request = buildOfxrRequest(module)
       if (request) {
-        const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
+        const preview = await withTimeout(
+          invoke<OfxrPreview>('preview_ofxr', { request }),
+          UPDATE_CHECK_TIMEOUT_MS,
+          'OFXR update check timed out.',
+        )
         currentVersion = preview.installedVersion ?? request.version
       }
     }
-    if (module.id === 'cheeky-foveated-dlss' && updateUrl) {
+    if (module.id === 'cheeky-foveated-dlss') {
       const request = buildCheekyRequest(module)
       if (request) {
-        const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
+        const preview = await withTimeout(
+          invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request }),
+          UPDATE_CHECK_TIMEOUT_MS,
+          'Cheeky Foveated DLSS update check timed out.',
+        )
         currentVersion = preview.installedVersion ?? request.version
       }
     }
-    if (module.id === 'uevr') {
-      const request = buildUevrRequest(module)
-      if (request) {
-        const preview = await invoke<UevrPreview>('preview_uevr', { request })
-        currentVersion = preview.installedVersion ?? preview.selectedVersion ?? null
-        updateUrl = request.releaseApiUrl
-      }
-    }
-
     if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
 
-    const result = await invoke<ModuleUpdate>('check_module_update', {
+    const result = await withTimeout(invoke<ModuleUpdate>('check_module_update', {
       request: { currentVersion, updateUrl },
-    })
+    }), UPDATE_CHECK_TIMEOUT_MS, 'The update check timed out. Please try again.')
     if (selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
       moduleUpdates.value[key] = { ...result, checkedAt: Date.now() }
     }
@@ -1408,14 +1483,11 @@ async function checkAvailableModuleUpdates(
   expectedAppId = selectedAppId.value,
   expectedGeneration = selectionGeneration,
 ) {
-  // UEVR resolves remote release metadata only after the user opens/checks it.
-  // Keeping it out of the startup fan-out prevents a slow GitHub request from
-  // making the whole library look stalled.
   const game = gameContextForAppId(expectedAppId)
   if (!game || selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
   const now = Date.now()
   const modules = game.catalog.modules.filter((module) => {
-    if (module.status !== 'available' || module.id === 'uevr') return false
+    if (module.status !== 'available' || !moduleHasUpdateSource(module)) return false
     const previous = moduleUpdates.value[moduleKeyForApp(module, expectedAppId)]
     return !previous || now - previous.checkedAt > AUTO_UPDATE_TTL_MS
   })
@@ -1615,7 +1687,7 @@ onUnmounted(() => {
               {{ t('detectedSupported', { detected: installedGames.length, supported: supportedInstalledGames.length }) }}
             </p>
           </div>
-          <button class="secondary-button" :disabled="loading" @click="refreshGames">
+          <button class="secondary-button" :class="{ 'is-loading': loading }" :disabled="loading" @click="refreshGames">
             {{ loading ? t('scanning') : t('rescanSteam') }}
           </button>
         </header>
@@ -1655,7 +1727,12 @@ onUnmounted(() => {
                 <strong>{{ t('shownGames', { count: filteredGames.length }) }}</strong>
               </div>
             </div>
-            <div v-if="loading" class="empty-state">{{ t('scanningLibraries') }}</div>
+            <div v-if="loading" class="empty-state">
+              <span class="loading-state" role="status" aria-live="polite">
+                <span class="loading-spinner" aria-hidden="true"></span>
+                {{ t('scanningLibraries') }}
+              </span>
+            </div>
             <div v-else-if="filteredGames.length === 0" class="empty-state">{{ t('noGamesFound') }}</div>
 
             <button
@@ -1693,6 +1770,7 @@ onUnmounted(() => {
                   <button
                     v-if="primaryModule"
                     class="primary-button"
+                    :class="{ 'is-loading': moduleBusy }"
                     :disabled="moduleActionsBlocked(primaryModule)"
                     :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
                     @click="configureModule(primaryModule)"
@@ -1778,6 +1856,15 @@ onUnmounted(() => {
                           {{ t(module.status) }}
                         </span>
                         <span
+                          v-if="moduleVerificationPending(module)"
+                          class="module-loading-state"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <span class="loading-spinner" aria-hidden="true"></span>
+                          {{ inspectionLoading && !moduleVerificationBusy(module) ? t('inspecting') : t('verifying') }}
+                        </span>
+                        <span
                           v-if="moduleVerification(module)"
                           class="module-check-state"
                           :class="moduleVerification(module)?.status"
@@ -1830,13 +1917,26 @@ onUnmounted(() => {
                       <div class="compatibility-heading">
                         <div>
                           <strong>{{ t('uevrEngine') }}</strong>
-                          <small>
+                          <small v-if="inspectionLoading && !gameInspection" class="inline-loading" role="status">
+                            <span class="loading-spinner" aria-hidden="true"></span>
+                            {{ t('inspecting') }}
+                          </small>
+                          <small v-else>
                             {{ gameInspection?.engine ?? t('notDetected') }}
                             <template v-if="gameInspection?.engineVersion"> · {{ gameInspection.engineVersion }}</template>
                             <template v-if="gameInspection?.engineConfidence"> · {{ gameInspection.engineConfidence }}</template>
                           </small>
                         </div>
                         <span
+                          v-if="inspectionLoading && !gameInspection"
+                          class="research-state loading"
+                          role="status"
+                        >
+                          <span class="loading-spinner" aria-hidden="true"></span>
+                          {{ t('inspecting') }}
+                        </span>
+                        <span
+                          v-else
                           class="research-state"
                           :class="gameInspection?.engine === 'Unreal Engine' ? 'available' : 'prerequisite'"
                         >
@@ -1905,25 +2005,41 @@ onUnmounted(() => {
                       >
                         {{ moduleUpdateLabel(moduleUpdate(module)!.status) }}
                       </span>
-                      <button
-                        class="secondary-button compact"
-                        :disabled="moduleUpdateBusy(module) || selectedGameRunning"
-                        @click="checkModuleUpdate(module)"
-                      >
-                        {{ moduleUpdateBusy(module) ? t('checkingUpdates') : t('checkUpdates') }}
-                      </button>
+                      <div class="module-update-actions">
+                        <a
+                          v-if="moduleUpdate(module)?.releaseUrl"
+                          class="text-button compact"
+                          :href="moduleUpdate(module)!.releaseUrl!"
+                          target="_blank"
+                          rel="noreferrer"
+                          @click.prevent="openRelease(moduleUpdate(module)!.releaseUrl)"
+                        >
+                          {{ t('openRelease') }}
+                        </a>
+                        <button
+                          v-if="moduleHasUpdateSource(module)"
+                          class="secondary-button compact"
+                          :class="{ 'is-loading': moduleUpdateBusy(module) }"
+                          :disabled="moduleUpdateBusy(module) || selectedGameRunning"
+                          @click="checkModuleUpdate(module)"
+                        >
+                          {{ moduleUpdateBusy(module) ? t('checkingUpdates') : t('checkUpdates') }}
+                        </button>
+                      </div>
                     </div>
 
                     <div class="module-actions">
                       <button
                         class="secondary-button compact"
-                        :disabled="module.status !== 'available' || verificationBusyKey === moduleKey(module) || selectedGameRunning"
+                        :class="{ 'is-loading': moduleVerificationBusy(module) }"
+                        :disabled="module.status !== 'available' || moduleVerificationBusy(module) || selectedGameRunning"
                         @click="verifyModule(module)"
                       >
-                        {{ verificationBusyKey === moduleKey(module) ? t('verifying') : t('verify') }}
+                        {{ moduleVerificationBusy(module) ? t('verifying') : t('verify') }}
                       </button>
                       <button
                         class="module-button"
+                        :class="{ 'is-loading': moduleBusy }"
                         :disabled="moduleActionsBlocked(module)"
                         :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
                         @click="configureModule(module)"
@@ -1974,12 +2090,17 @@ onUnmounted(() => {
                       <span class="environment-label">{{ t('gameEnvironment') }}</span>
                       <h3>{{ t('injectionReadiness') }}</h3>
                     </div>
-                    <button class="secondary-button compact" :disabled="inspectionLoading" @click="inspectSelectedGame()">
+                    <button class="secondary-button compact" :class="{ 'is-loading': inspectionLoading }" :disabled="inspectionLoading" @click="inspectSelectedGame()">
                       {{ inspectionLoading ? t('inspecting') : t('rescan') }}
                     </button>
                   </div>
 
-                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">{{ t('inspectingDirectory') }}</div>
+                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">
+                    <span class="loading-state" role="status" aria-live="polite">
+                      <span class="loading-spinner" aria-hidden="true"></span>
+                      {{ t('inspectingDirectory') }}
+                    </span>
+                  </div>
                   <div v-else-if="inspectionError" class="environment-message danger">{{ inspectionError }}</div>
                   <template v-else-if="gameInspection">
                     <div class="environment-row">
@@ -2038,13 +2159,18 @@ onUnmounted(() => {
             <h1>{{ t('transactions') }}</h1>
             <p class="subtle">{{ t('everyDestructive') }}</p>
           </div>
-          <button class="secondary-button" :disabled="transactionsLoading" @click="refreshTransactions">
+          <button class="secondary-button" :class="{ 'is-loading': transactionsLoading }" :disabled="transactionsLoading" @click="refreshTransactions">
             {{ transactionsLoading ? t('refreshing') : t('refresh') }}
           </button>
         </header>
 
         <section class="transactions-panel">
-          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">{{ t('loadingTransactions') }}</div>
+          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">
+            <span class="loading-state" role="status" aria-live="polite">
+              <span class="loading-spinner" aria-hidden="true"></span>
+              {{ t('loadingTransactions') }}
+            </span>
+          </div>
           <div v-else-if="transactions.length === 0" class="empty-state">{{ t('noTransactions') }}</div>
 
           <article v-for="transaction in transactions" :key="transaction.id" class="transaction-row">
@@ -2061,6 +2187,7 @@ onUnmounted(() => {
             </div>
             <button
               class="secondary-button"
+              :class="{ 'is-loading': rollbackBusyId === transaction.id }"
               :disabled="transaction.status !== 'applied'
                 || rollbackBusyId === transaction.id
                 || inspectionLoading
@@ -2121,6 +2248,7 @@ onUnmounted(() => {
           <button class="secondary-button" @click="obsDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
+            :class="{ 'is-loading': moduleBusy }"
             :disabled="!obsDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyObsConfiguration"
           >
@@ -2185,6 +2313,7 @@ onUnmounted(() => {
           <button class="secondary-button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
+            :class="{ 'is-loading': moduleBusy }"
             :disabled="!optiScalerDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyOptiScaler"
           >
@@ -2240,6 +2369,7 @@ onUnmounted(() => {
           <button class="secondary-button" @click="cheekyDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
+            :class="{ 'is-loading': moduleBusy }"
             :disabled="!cheekyDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyCheeky"
           >
@@ -2295,6 +2425,7 @@ onUnmounted(() => {
           <button class="secondary-button" @click="uevrDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
+            :class="{ 'is-loading': moduleBusy }"
             :disabled="!uevrDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyUevr"
           >
@@ -2456,6 +2587,7 @@ onUnmounted(() => {
           <button class="secondary-button" @click="ofxrDialog = null">{{ t('cancel') }}</button>
           <button
             class="primary-button"
+            :class="{ 'is-loading': moduleBusy }"
             :disabled="!ofxrDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
             @click="applyOfxr"
           >
@@ -2532,7 +2664,7 @@ onUnmounted(() => {
 
         <div class="modal-actions">
           <button class="secondary-button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
-          <button class="primary-button" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy || inspectionLoading || selectedGameRunning" @click="launchVrGame">
+          <button class="primary-button" :class="{ 'is-loading': moduleBusy }" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy || inspectionLoading || selectedGameRunning" @click="launchVrGame">
             {{ moduleBusy ? t('launching') : (ofxrReadyForLaunch ? t('launchVr') : t('activateAndLaunch')) }}
           </button>
         </div>

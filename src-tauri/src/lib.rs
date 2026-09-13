@@ -12,6 +12,41 @@ mod uevr;
 mod updates;
 mod vr_launch;
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only HTTP and HTTPS URLs can be opened externally.".to_owned());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open the release page: {error}"))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open the release page: {error}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open the release page: {error}"))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -40,6 +75,7 @@ pub fn run() {
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
             updates::check_module_update,
+            open_external_url,
             uevr::preview_uevr,
             uevr::install_uevr,
             uevr::uninstall_uevr,
