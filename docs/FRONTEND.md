@@ -1,112 +1,168 @@
 # Moddin frontend architecture
 
-This document defines the target structure for the Vue frontend while Moddin grows from a bootstrap application into a reusable game tooling manager.
+This document describes the current Vue frontend boundaries and the remaining decomposition work as Moddin grows into a reusable game tooling manager.
 
-## Why this exists
+## Design rule
 
-The first product slices were intentionally built quickly. That proved the native module model, but the frontend accumulated most orchestration, presentation and module-specific UI in `src/App.vue`.
+The frontend grows by **feature boundaries**, not by adding more state, dialogs and native-command branches to `src/App.vue`.
 
-The application should now grow by **feature boundaries**, not by adding more state, dialogs and conditionals to the root view.
+Refactoring is incremental. Working install/rollback behavior must not be rewritten merely to satisfy a folder structure. Prefer small moves that preserve contracts and can be reviewed independently.
 
-The goal is incremental decomposition. Working install/rollback behavior must not be rewritten merely to satisfy a folder structure.
+## Current structure
 
-## Frontend boundaries
+```text
+src/
+  App.vue                         # legacy workspace coordinator; still the main hotspot
+  Root.vue                        # root composition
 
-### `App.vue`
+  components/
+    shell/
+      GlobalTools.vue             # shell-owned global tool dock
+      global-tools.css
 
-`App.vue` is the workspace coordinator. Its long-term responsibilities are limited to:
+  composables/
+    useDialogLifecycle.ts         # shared modal keyboard/focus behavior
+
+  features/
+    activity/
+      ActivityLogPanel.vue
+      activity-log-panel.css
+      copy.ts
+      service.ts
+      types.ts
+      useActivityLogPanel.ts
+
+    openxr/
+      OpenXrManager.vue
+      openxr-manager.css
+      copy.ts
+      service.ts
+      types.ts
+      useOpenXrManager.ts
+
+  i18n/
+    locale.ts                     # locale resolution/options/date locale
+    localizedCopy.ts              # typed feature-copy helper
+    locales/
+      pt-BR.ts
+      en.ts
+      es.ts
+  i18n.ts                         # vue-i18n bootstrap only
+
+  services/
+    activity-log.ts               # persistent action logging infrastructure
+    catalog.ts                    # validated/indexed YAML catalog
+    debug-panel.ts                # emergency runtime error panel
+    storage.ts                    # safe localStorage boundary
+
+  styles/
+    index.css                     # explicit global cascade entrypoint
+    base.css
+    module-states.css
+    library-layout.css
+    tokens.css
+    polish.css
+
+  types/                          # genuinely shared domain/transport types
+```
+
+## `App.vue`
+
+`App.vue` remains the largest legacy hotspot. Its long-term responsibilities are limited to:
 
 - current top-level view;
 - selected game;
 - shell-level notifications;
-- composing feature views.
+- composing library/module feature views.
 
-It should not own the implementation details for every installer, verification checklist, update checker or modal.
+It should not own implementation details for every installer, verification checklist, update checker or modal.
 
-### `components/shell`
+Because the GitHub connector currently replaces whole files instead of applying partial patches, decomposing this 100+ KB file must be done conservatively. Do not reconstruct it blindly just to make the file smaller.
 
-Owns application-shell composition that is independent from the selected game.
+The architecture guard freezes its current growth budget while extraction continues.
 
-Examples:
+## Shell
 
-- global tools;
-- future command palette;
-- navigation shell;
-- notification host.
+`src/components/shell` owns application-shell composition that is independent from the selected game.
 
-`GlobalTools.vue` is the first extraction in this direction.
+Current example:
 
-### `components/library`
+- `GlobalTools.vue` composes Activity and OpenXR;
+- `global-tools.css` owns the placement/gap of their trigger dock;
+- each feature still owns its own dialog and behavior.
 
-Target home for the installed-game browser and selected-game workspace.
+Future shell-level concerns may include navigation, notification hosting or a command palette.
 
-Suggested components:
+## Feature boundary
 
-- `LibraryHeader.vue`
-- `GameFilters.vue`
-- `GameList.vue`
-- `GameDetails.vue`
-- `SetupOverview.vue`
+Substantial UI should live in `src/features/<feature>`.
 
-### `components/modules`
-
-Target home for reusable module presentation.
-
-Suggested components:
-
-- `ModuleGrid.vue`
-- `ModuleCard.vue`
-- `ModuleVerification.vue`
-- `ModuleUpdateStatus.vue`
-- `CompatibilityPanel.vue`
-
-A generic module component may receive a `ToolModuleDefinition`, but it must not contain native installation logic.
-
-### `features/<module>`
-
-When a module requires substantial UI of its own, prefer a feature folder instead of adding another special case to `App.vue`.
-
-Example:
+A feature should colocate what belongs specifically to it:
 
 ```text
-src/features/uevr/
-  components/
-  requests.ts
-  state.ts
-  labels.ts
+src/features/<feature>/
+  FeatureView.vue
+  feature-view.css
+  copy.ts
+  service.ts
+  types.ts
+  useFeature.ts
 ```
 
-The feature may build typed requests and interpret previews. Native filesystem/process behavior remains in Rust.
+Not every feature requires every file. Create boundaries because responsibilities exist, not to satisfy a template.
 
-### `composables`
+### View
 
-Stateful reusable frontend behavior belongs here.
+The `.vue` file should primarily render state and connect user interactions to the feature API.
 
-Good candidates for extraction from the current root view:
+It should not contain direct Tauri command names or large dictionaries of translated copy.
 
-- `useInstalledGames`
-- `useSelectedGameInspection`
-- `useModuleVerification`
-- `useModuleUpdates`
-- `useTransactions`
-- `useCompatibilityReports`
+### `service.ts`
 
-A composable should expose state and commands with a small public API. It should not know about layout.
+Feature-native commands live behind a typed service boundary. Services use `invokeDebug` so diagnostics and persistent action logging remain consistent.
 
-### `services`
+New native-command access should not be added directly to feature views/composables.
 
-Stateless adapters and external boundaries live here.
+### Composable
 
-Examples:
+Stateful orchestration belongs in `useFeature.ts` when it has enough behavior to justify extraction.
 
-- catalog loading;
-- future typed Tauri command gateway;
-- safe persisted preferences;
-- release metadata adapters.
+Examples already implemented:
 
-### `types`
+- Activity filtering/loading/clearing/expanded state;
+- OpenXR discovery, selected game persistence, inspection and runtime mutations.
 
-Keep transport/domain interfaces separate from presentation state. Prefer explicit types over large anonymous object shapes in components.
+A composable should expose a small public API and should not know about CSS/layout.
+
+### `types.ts`
+
+Types that belong to only one feature stay with that feature. Types used across multiple domains remain under `src/types`.
+
+Example: OpenXR runtime types are feature-owned; `InstalledGame` remains shared because the library and OpenXR both use it.
+
+## Library and module presentation
+
+The next major extraction from `App.vue` should be presentation that does not own native mutation logic.
+
+Likely boundaries:
+
+```text
+src/features/library/
+  LibraryHeader.vue
+  GameFilters.vue
+  GameList.vue
+  GameDetails.vue
+  SetupOverview.vue
+
+src/features/modules/
+  ModuleGrid.vue
+  ModuleCard.vue
+  ModuleVerification.vue
+  ModuleUpdateStatus.vue
+  CompatibilityPanel.vue
+```
+
+A generic module component may receive a `ToolModuleDefinition`, but it must not contain native installation logic.
 
 ## Native command boundary
 
@@ -125,20 +181,40 @@ The UI must not:
 - duplicate game-specific installation logic that belongs in a catalog recipe or native module;
 - consider a mutation successful without the native command succeeding.
 
+Direct `@tauri-apps/api/core` usage is infrastructure-only. Feature commands should go through `invokeDebug` from a feature service.
+
+## Catalog boundary
+
+Game recipes under `src/catalog/games/*.yaml` are auto-discovered.
+
+`src/services/catalog.ts`:
+
+- validates each YAML with Zod;
+- rejects duplicate game ids;
+- rejects duplicate Steam App IDs;
+- rejects duplicate module ids inside one game;
+- indexes entries by game id and Steam App ID.
+
+Adding a normal game recipe should not require registering it manually in TypeScript.
+
 ## Styling
 
-The stylesheet entrypoint is `src/styles/index.css`.
+The global stylesheet entrypoint is `src/styles/index.css`.
 
 Current cascade:
 
-1. `style.css` — legacy application styles while the large root view is decomposed;
-2. `environment.css` — environment/inspection-specific legacy styles;
-3. `styles/tokens.css` — shared product tokens and compatibility aliases;
-4. `styles/polish.css` — cross-component interaction and visual polish.
+1. `styles/base.css` — historical application base while `App.vue` is decomposed;
+2. `styles/module-states.css` — shared module-state presentation;
+3. `styles/library-layout.css` — current library/workspace layout layer;
+4. `environment.css` — environment/inspection-specific legacy styles;
+5. `styles/tokens.css` — shared product tokens and compatibility aliases;
+6. `styles/polish.css` — final cross-component interaction/visual polish.
 
-New colors, radii, text tones and semantic states should use tokens instead of introducing one-off values when practical.
+`src/style.css` must not return.
 
-Do not append another redesign block to the bottom of `style.css`. When a component is extracted from `App.vue`, move its layout styles with it or into a clearly named stylesheet and remove the obsolete legacy selectors.
+Feature-owned styles should be colocated with the feature and loaded through `<style scoped src="...">` when appropriate.
+
+Do not append another redesign block to a legacy stylesheet. When a component is extracted, move its effective rules with it and consolidate old-plus-override declarations into their final values.
 
 The UI must preserve:
 
@@ -146,37 +222,66 @@ The UI must preserve:
 - disabled states for unsafe actions;
 - reduced-motion preferences;
 - readable contrast;
-- keyboard-accessible native controls where possible.
+- keyboard-accessible controls;
+- modal focus containment and Escape dismissal.
+
+## Dialog lifecycle
+
+`useDialogLifecycle` is the shared boundary for modal behavior.
+
+Current guarantees:
+
+- remembers the control that opened the dialog;
+- moves focus into the dialog after it renders;
+- traps `Tab` and `Shift+Tab` inside the dialog;
+- closes on Escape;
+- returns focus to the opener on close;
+- removes global listeners when the consumer unmounts.
+
+Do not reimplement those behaviors independently in a feature.
 
 ## Internationalization
 
-The current shared `i18n.ts` and the local dictionaries inside some global tools are transitional.
+Shared locale infrastructure lives under `src/i18n`.
 
-Target structure:
+- `locale.ts` owns supported locales, fallback resolution and date-locale mapping;
+- `locales/*.ts` contains application-wide translations;
+- `localizedCopy.ts` provides typed local copy for feature-specific text;
+- `i18n.ts` only boots `vue-i18n` and preserves public exports.
 
-```text
-src/i18n/
-  index.ts
-  locales/
-    pt-BR.ts
-    en.ts
-    es.ts
-```
+PT-BR is currently the key-shape reference. EN and ES must implement matching keys at compile time.
 
 Rules:
 
-- user-facing strings should not be added directly to feature logic;
+- user-facing strings should not be embedded in feature logic;
 - game/module names from the catalog may remain data;
-- safety messages that depend on a native result should have stable translation keys whenever possible;
-- locale persistence remains a frontend concern.
+- stable native-result/safety messages should prefer translation keys when practical;
+- locale persistence is a frontend concern handled through the safe storage boundary.
 
 ## State and persistence
 
-Not every state belongs in global storage.
+Use in-memory component/composable state for transient UI such as loading, open dialogs and filters.
 
-Use in-memory component/composable state for transient UI such as loading, open dialogs and filters. Persist only user preferences or local evidence that must survive application restarts, such as locale, compatibility test results and per-game selections.
+Persist only preferences/evidence that must survive restarts, such as:
 
-Persistent writes must tolerate unavailable browser storage because Tauri/webview policy can change independently from product logic.
+- locale;
+- compatibility test results;
+- selected per-game options.
+
+All direct local storage access should go through `src/services/storage.ts`, which tolerates unavailable or policy-restricted WebView storage without throwing.
+
+## Activity logging and debug
+
+Developer diagnostics and user-visible action history are separate concerns.
+
+- `debug.ts` owns the bounded debug stream, runtime instrumentation and the `invokeDebug` gateway;
+- `services/activity-log.ts` owns persistent action-log policy/payloads;
+- `services/debug-panel.ts` owns the emergency DOM error panel;
+- Activity feature owns reading/filtering/clearing the user-visible history.
+
+Mutating commands meaningful to users must be present in the persistent activity allowlist. Preview/inspection calls should remain in the bounded debug stream.
+
+A failure to persist diagnostics must never turn a successful mod/game mutation into a failure.
 
 ## Module lifecycle
 
@@ -186,33 +291,49 @@ All user-visible modules should converge on the same lifecycle vocabulary:
 inspect -> verify -> preview -> apply -> verify -> update/remove -> rollback
 ```
 
-The UI should make these states visible without requiring users to understand DLL injection or filesystem layout.
-
 Technical evidence belongs in expandable diagnostics. The primary card should answer three questions quickly:
 
 1. What is this?
 2. What state is it in?
 3. What is the safe next action?
 
-## Activity logging
+## Architecture guard
 
-`invokeDebug` is the frontend gateway for commands that need diagnostics. Mutating commands that are meaningful to the user must be included in the persistent activity allowlist.
+`npm run check:architecture` runs `scripts/check-frontend-architecture.mjs` and is part of CI before the frontend build.
 
-Preview and inspection calls should remain in the bounded debug stream rather than filling the persistent action log.
+Current guardrails intentionally encode the migration state:
 
-When a new module gains install/uninstall actions, updating the persistent command allowlist is part of the feature definition of done.
+- `App.vue` may not grow past 115 KB while it is being decomposed;
+- other Vue files are limited to 30 KB;
+- feature views may not drift back into the generic `src/components/` root;
+- `src/style.css` may not be recreated;
+- `src/i18n.ts` must remain a small bootstrap;
+- direct Tauri-core access is restricted to infrastructure boundaries;
+- new `invokeDebug` consumers must use feature service boundaries, with a temporary exception for legacy `App.vue`.
 
-## Refactor sequence
+These are maintenance budgets, not permanent product constraints. Tighten or remove legacy exceptions as extraction progresses.
 
-The preferred order is deliberately incremental:
+## Remaining refactor sequence
 
-1. establish shared style tokens and shell boundaries;
-2. extract library/game-list presentation;
-3. extract module-card presentation;
-4. move verification/update orchestration into composables;
-5. move large module-specific request builders into feature folders;
-6. split translations by locale;
-7. remove obsolete rules from the legacy stylesheet;
-8. keep `App.vue` as a small coordinator.
+Completed foundations:
 
-Every step must keep `npm run build`, Rust tests and `cargo check` green.
+- shared style tokens and explicit style layers;
+- shell/global-tools boundary and dock;
+- split translations and typed feature copy;
+- safe storage boundary;
+- Activity feature decomposition;
+- OpenXR feature decomposition;
+- shared dialog lifecycle/focus trap;
+- catalog auto-discovery, validation and indexes;
+- frontend architecture guard.
+
+Highest-value remaining work:
+
+1. extract library/game-list presentation from `App.vue`;
+2. extract module-card/verification/update presentation;
+3. move verification/update orchestration into focused composables;
+4. move module-specific request builders into feature folders;
+5. shrink `App.vue` to workspace coordination;
+6. continue removing obsolete selectors from `polish.css`/legacy layers as ownership moves.
+
+Every code change should keep architecture checks, `npm run build`, Rust tests and `cargo check` green whenever CI runners are available.
