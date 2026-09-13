@@ -12,12 +12,25 @@ mod uevr;
 mod updates;
 mod vr_launch;
 
+fn validate_external_release_url(value: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(value.trim())
+        .map_err(|_| "Release link is not a valid URL.".to_owned())?;
+
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("External release links must use HTTPS on github.com.".to_owned());
+    }
+
+    Ok(url)
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    let url = url.trim();
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("Only HTTP and HTTPS URLs can be opened externally.".to_owned());
-    }
+    let url = validate_external_release_url(&url)?;
+    let url = url.as_str();
 
     #[cfg(target_os = "windows")]
     {
@@ -84,4 +97,35 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moddin");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_github_https_release_links() {
+        let url = validate_external_release_url(
+            "https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4",
+        )
+        .expect("GitHub release URL should be accepted");
+        assert_eq!(url.host_str(), Some("github.com"));
+    }
+
+    #[test]
+    fn rejects_http_credentials_and_other_hosts() {
+        assert!(validate_external_release_url(
+            "http://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4"
+        )
+        .is_err());
+        assert!(validate_external_release_url(
+            "https://github.com@evil.example/releases/tag/v1"
+        )
+        .is_err());
+        assert!(validate_external_release_url(
+            "https://user:pass@github.com/owner/repo/releases/tag/v1"
+        )
+        .is_err());
+        assert!(validate_external_release_url("https://example.com/releases/tag/v1").is_err());
+    }
 }
