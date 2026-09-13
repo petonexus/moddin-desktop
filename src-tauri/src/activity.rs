@@ -13,6 +13,10 @@ const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const DEFAULT_LIST_LIMIT: usize = 200;
 const MAX_LIST_LIMIT: usize = 1_000;
 const MAX_DETAILS: usize = 32;
+const MAX_REFERENCE_BYTES: usize = 128;
+const MAX_MESSAGE_BYTES: usize = 2_000;
+const MAX_DETAIL_KEY_BYTES: usize = 128;
+const MAX_DETAIL_VALUE_BYTES: usize = 1_024;
 
 static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -53,11 +57,11 @@ fn rotated_log_path() -> PathBuf {
     logs_root().join("actions.1.jsonl")
 }
 
-fn rotate_if_needed(path: &PathBuf) -> Result<(), String> {
+fn rotate_if_needed(path: &PathBuf, incoming_bytes: u64) -> Result<(), String> {
     let Ok(metadata) = fs::metadata(path) else {
         return Ok(());
     };
-    if metadata.len() < MAX_LOG_FILE_BYTES {
+    if metadata.len().saturating_add(incoming_bytes) <= MAX_LOG_FILE_BYTES {
         return Ok(());
     }
 
@@ -87,9 +91,6 @@ pub fn record(
     fs::create_dir_all(&root)
         .map_err(|error| format!("Could not create Moddin action log directory: {error}"))?;
 
-    let path = current_log_path();
-    rotate_if_needed(&path)?;
-
     let entry = ActionLogEntry {
         id: uuid::Uuid::new_v4().to_string(),
         timestamp: now_millis()?,
@@ -103,6 +104,14 @@ pub fn record(
 
     let serialized = serde_json::to_string(&entry)
         .map_err(|error| format!("Could not serialize action log entry: {error}"))?;
+    let incoming_bytes = serialized.len() as u64 + 1;
+    if incoming_bytes > MAX_LOG_FILE_BYTES {
+        return Err("Action log entry exceeds the maximum log file size.".to_owned());
+    }
+
+    let path = current_log_path();
+    rotate_if_needed(&path, incoming_bytes)?;
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -141,6 +150,18 @@ fn valid_action(action: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
 }
 
+fn valid_reference(reference: &str) -> bool {
+    !reference.is_empty()
+        && reference.len() <= MAX_REFERENCE_BYTES
+        && reference
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+}
+
+fn valid_optional_reference(reference: Option<&str>) -> bool {
+    reference.is_none_or(valid_reference)
+}
+
 #[tauri::command]
 pub fn record_ui_action_log(
     level: String,
@@ -156,15 +177,21 @@ pub fn record_ui_action_log(
     if !valid_action(&action) {
         return Err("Invalid action log action name.".to_owned());
     }
-    if message.len() > 2_000 {
+    if !valid_optional_reference(game_id.as_deref()) {
+        return Err("Invalid action log game id.".to_owned());
+    }
+    if !valid_optional_reference(transaction_id.as_deref()) {
+        return Err("Invalid action log transaction id.".to_owned());
+    }
+    if message.len() > MAX_MESSAGE_BYTES {
         return Err("Action log message is too large.".to_owned());
     }
 
     let details = details.unwrap_or_default();
     if details.len() > MAX_DETAILS
-        || details
-            .iter()
-            .any(|(key, value)| key.len() > 128 || value.len() > 1_024)
+        || details.iter().any(|(key, value)| {
+            key.len() > MAX_DETAIL_KEY_BYTES || value.len() > MAX_DETAIL_VALUE_BYTES
+        })
     {
         return Err("Action log details exceed the allowed size.".to_owned());
     }
@@ -239,10 +266,21 @@ mod tests {
     }
 
     #[test]
-    fn validates_levels_and_action_names() {
+    fn validates_levels_action_names_and_references() {
         assert!(valid_level("success"));
         assert!(!valid_level("trace"));
         assert!(valid_action("set_system_openxr_runtime"));
         assert!(!valid_action("../escape"));
+        assert!(valid_reference("cyberpunk-2077"));
+        assert!(valid_reference("1757720000000-0123456789abcdef0123456789abcdef"));
+        assert!(!valid_reference("../escape"));
+        assert!(!valid_reference(&"x".repeat(MAX_REFERENCE_BYTES + 1)));
+    }
+
+    #[test]
+    fn rotation_accounts_for_the_next_entry_size() {
+        assert!(MAX_LOG_FILE_BYTES > 100);
+        let almost_full = MAX_LOG_FILE_BYTES - 10;
+        assert!(almost_full.saturating_add(20) > MAX_LOG_FILE_BYTES);
     }
 }
