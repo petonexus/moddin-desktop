@@ -1,17 +1,13 @@
 import { createI18n } from 'vue-i18n'
+import { isLocale, localeFromBrowserLanguage, localeOptions, type Locale } from './i18n/locale'
 import ptBR from './i18n/locales/pt-BR'
 import en from './i18n/locales/en'
 import es from './i18n/locales/es'
 
-export type Locale = 'pt-BR' | 'en' | 'es'
+export { localeOptions }
+export type { Locale }
 
 type TranslationMessages = Record<keyof typeof ptBR, string>
-
-export const localeOptions: Array<{ value: Locale; label: string }> = [
-  { value: 'pt-BR', label: 'Português (Brasil)' },
-  { value: 'en', label: 'English' },
-  { value: 'es', label: 'Español' },
-]
 
 const messages = {
   'pt-BR': ptBR,
@@ -22,15 +18,13 @@ const messages = {
 export function getInitialLocale(): Locale {
   try {
     const saved = window.localStorage.getItem('moddin-locale')
-    if (saved === 'pt-BR' || saved === 'en' || saved === 'es') return saved
+    if (isLocale(saved)) return saved
   } catch {
     // Ignore unavailable storage, such as privacy-restricted browser contexts.
   }
 
-  const browserLanguage = typeof navigator !== 'undefined' ? navigator.language.toLowerCase() : ''
-  if (browserLanguage.startsWith('pt')) return 'pt-BR'
-  if (browserLanguage.startsWith('es')) return 'es'
-  return 'en'
+  const browserLanguage = typeof navigator !== 'undefined' ? navigator.language : ''
+  return localeFromBrowserLanguage(browserLanguage)
 }
 
 export const i18n = createI18n({
