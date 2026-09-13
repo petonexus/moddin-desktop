@@ -2,13 +2,13 @@ import { computed, ref, watch } from 'vue'
 import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { findCatalogGameBySteamAppId } from '../../services/catalog'
 import type { InstalledGame } from '../../types/game'
-import type { OpenXrRuntimeInfo, OpenXrState } from '../../types/openxr'
 import {
   detectOpenXrGames,
   inspectOpenXr,
   setGameOpenXrRuntime,
   setSystemOpenXrRuntime,
 } from './service'
+import type { OpenXrRuntimeInfo, OpenXrState } from './types'
 
 const SELECTED_GAME_STORAGE_KEY = 'moddin-openxr-game'
 
