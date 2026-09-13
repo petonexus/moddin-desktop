@@ -27,7 +27,10 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
             for line in contents.lines() {
                 if let Some((key, value)) = quoted_pair(line) {
                     if key == "path" {
-                        push_unique_path(&mut libraries, PathBuf::from(unescape_vdf_path(&value)));
+                        push_existing_unique_path(
+                            &mut libraries,
+                            PathBuf::from(unescape_vdf_path(&value)),
+                        );
                     }
                 }
             }
@@ -48,10 +51,9 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
             let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-
-            if !file_name.starts_with("appmanifest_") || !file_name.ends_with(".acf") {
+            let Some(manifest_app_id) = app_id_from_manifest_name(file_name) else {
                 continue;
-            }
+            };
 
             let Ok(contents) = fs::read_to_string(&path) else {
                 continue;
@@ -60,18 +62,28 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
             let Some(app_id) = vdf_value(&contents, "appid") else {
                 continue;
             };
-            if !seen_app_ids.insert(app_id.clone()) {
+            if app_id != manifest_app_id {
                 continue;
             }
 
             let Some(name) = vdf_value(&contents, "name") else {
                 continue;
             };
+            if name.trim().is_empty() {
+                continue;
+            }
+
             let Some(install_dir_name) = vdf_value(&contents, "installdir") else {
                 continue;
             };
+            let Some(install_dir) = resolve_install_dir(&steamapps, &install_dir_name) else {
+                continue;
+            };
 
-            let install_dir = steamapps.join("common").join(install_dir_name);
+            if !seen_app_ids.insert(app_id.clone()) {
+                continue;
+            }
+
             games.push(InstalledGame {
                 app_id,
                 name,
@@ -161,6 +173,41 @@ fn parse_registry_string(output: &str, value_name: &str) -> Option<String> {
     })
 }
 
+fn app_id_from_manifest_name(file_name: &str) -> Option<&str> {
+    let app_id = file_name
+        .strip_prefix("appmanifest_")?
+        .strip_suffix(".acf")?;
+    (!app_id.is_empty() && app_id.chars().all(|character| character.is_ascii_digit()))
+        .then_some(app_id)
+}
+
+fn valid_install_dir_name(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.starts_with('\\')
+        || value.contains('\0')
+    {
+        return false;
+    }
+
+    value.split(['/', '\\']).all(|segment| {
+        !segment.is_empty()
+            && segment != "."
+            && segment != ".."
+            && !segment.contains(':')
+    })
+}
+
+fn resolve_install_dir(steamapps: &Path, install_dir_name: &str) -> Option<PathBuf> {
+    if !valid_install_dir_name(install_dir_name) {
+        return None;
+    }
+
+    let install_dir = steamapps.join("common").join(install_dir_name.trim());
+    install_dir.is_dir().then_some(install_dir)
+}
+
 fn push_existing_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     if path.exists() {
         push_unique_path(paths, path);
@@ -237,5 +284,24 @@ HKEY_CURRENT_USER\Software\Valve\Steam
             parse_registry_string(output, "SteamPath").as_deref(),
             Some(r"C:\Program Files (x86)\Steam")
         );
+    }
+
+    #[test]
+    fn validates_manifest_file_app_ids() {
+        assert_eq!(app_id_from_manifest_name("appmanifest_1245620.acf"), Some("1245620"));
+        assert_eq!(app_id_from_manifest_name("appmanifest_abc.acf"), None);
+        assert_eq!(app_id_from_manifest_name("appmanifest_1245620.txt"), None);
+    }
+
+    #[test]
+    fn rejects_install_directories_that_can_escape_common() {
+        assert!(valid_install_dir_name("ELDEN RING"));
+        assert!(valid_install_dir_name("nested/game"));
+        assert!(!valid_install_dir_name("../Windows"));
+        assert!(!valid_install_dir_name(r"..\Windows"));
+        assert!(!valid_install_dir_name(r"C:\Windows"));
+        assert!(!valid_install_dir_name("/tmp/game"));
+        assert!(!valid_install_dir_name("."));
+        assert!(!valid_install_dir_name(""));
     }
 }
