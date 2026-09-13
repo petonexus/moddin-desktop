@@ -31,11 +31,19 @@ declare global {
 const MAX_LOG_ENTRIES = 300
 const entries: DebugEntry[] = []
 
+// Keep this list limited to user-visible operations that mutate state or launch
+// a configured game. Preview/inspection commands intentionally remain ephemeral.
 const PERSISTENT_ACTION_COMMANDS = new Set([
   'configure_obs_vr',
   'uninstall_obs_vr',
   'install_optiscaler',
   'uninstall_optiscaler',
+  'install_ofxr',
+  'uninstall_ofxr',
+  'install_cheeky_foveated_dlss',
+  'uninstall_cheeky_foveated_dlss',
+  'install_uevr',
+  'uninstall_uevr',
   'rollback_latest_module_transaction',
   'rollback_transaction',
   'launch_vr_game',

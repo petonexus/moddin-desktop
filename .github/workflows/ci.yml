@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feat/**']
+    branches: [main, 'feat/**', 'refactor/**']
   pull_request:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -23,9 +23,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck and build frontend
         run: npm run build

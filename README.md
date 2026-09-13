@@ -10,7 +10,7 @@ Instead of keeping one-off PowerShell installers per game, Moddin detects instal
 - Vue 3
 - TypeScript
 - Rust only for native Windows/filesystem/process integration
-- YAML game catalog validated with Zod
+- YAML game catalog validated with Zod and discovered automatically at build time
 
 ## Current MVP
 
@@ -86,9 +86,13 @@ RODAR-MODDIN.bat
 
 or:
 
-```bash
-c
+```powershell
+npm run tauri dev
 ```
+
+Game recipes under `src/catalog/games/*.yaml` are loaded automatically. Adding support for another game should not require registering a new TypeScript import; the catalog loader also rejects duplicate catalog IDs and Steam App IDs.
+
+For the complete local validation and frontend conventions, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) and [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 ### Debugging
 
@@ -109,4 +113,4 @@ window.__MODDIN_DEBUG__.clear()
 
 Game-specific support should live in catalog recipes rather than hard-coded UI branches. Reusable modules such as OBS, OptiScaler, OpenXR, ReShade, UE4SS, BepInEx, and REFramework will be shared across games and composed from declarative configuration.
 
-See [`ROADMAP.md`](ROADMAP.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current plan.
+See [`ROADMAP.md`](ROADMAP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/FRONTEND.md`](docs/FRONTEND.md) for the current plan.

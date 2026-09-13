@@ -1,8 +1,6 @@
 import { parse } from 'yaml'
 import { z } from 'zod'
 import type { GameCatalogEntry } from '../types/game'
-import cyberpunkRaw from '../catalog/games/cyberpunk-2077.yaml?raw'
-import eldenRingRaw from '../catalog/games/elden-ring.yaml?raw'
 
 const configValueSchema = z
   .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
@@ -25,14 +23,45 @@ const gameSchema = z.object({
   modules: z.array(moduleSchema).default([]),
 })
 
-function readCatalogEntry(raw: string): GameCatalogEntry {
-  return gameSchema.parse(parse(raw))
+const catalogFiles = import.meta.glob('../catalog/games/*.yaml', {
+  eager: true,
+  import: 'default',
+  query: '?raw',
+}) as Record<string, string>
+
+function readCatalogEntry(raw: string, source: string): GameCatalogEntry {
+  try {
+    return gameSchema.parse(parse(raw))
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid Moddin game catalog entry ${source}: ${detail}`)
+  }
 }
 
-export const gameCatalog: GameCatalogEntry[] = [
-  readCatalogEntry(eldenRingRaw),
-  readCatalogEntry(cyberpunkRaw),
-]
+function loadGameCatalog(): GameCatalogEntry[] {
+  const entries = Object.entries(catalogFiles)
+    .map(([source, raw]) => readCatalogEntry(raw, source))
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  const ids = new Set<string>()
+  const steamAppIds = new Set<string>()
+
+  for (const game of entries) {
+    if (ids.has(game.id)) {
+      throw new Error(`Duplicate Moddin game catalog id: ${game.id}`)
+    }
+    if (steamAppIds.has(game.steamAppId)) {
+      throw new Error(`Duplicate Moddin Steam App ID: ${game.steamAppId}`)
+    }
+
+    ids.add(game.id)
+    steamAppIds.add(game.steamAppId)
+  }
+
+  return entries
+}
+
+export const gameCatalog: GameCatalogEntry[] = loadGameCatalog()
 
 export function findCatalogGameBySteamAppId(appId: string) {
   return gameCatalog.find((game) => game.steamAppId === appId)

@@ -1,0 +1,511 @@
+/*
+ * Final visual pass for the current desktop shell.
+ *
+ * Keep this file focused on product-level polish and cross-component behavior.
+ * Component-specific layout should gradually move beside its Vue component as
+ * App.vue is decomposed.
+ */
+
+html {
+  background: var(--moddin-bg);
+}
+
+body {
+  color: var(--moddin-text);
+  background: var(--moddin-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  color: #fff;
+  background: rgba(138, 112, 255, 0.42);
+}
+
+:where(button, input, select, textarea, summary, a):focus-visible {
+  outline: 2px solid var(--moddin-accent);
+  outline-offset: 2px;
+}
+
+:where(button, input, select, textarea) {
+  transition:
+    border-color var(--moddin-fast) var(--moddin-ease),
+    background-color var(--moddin-fast) var(--moddin-ease),
+    color var(--moddin-fast) var(--moddin-ease),
+    box-shadow var(--moddin-fast) var(--moddin-ease),
+    transform var(--moddin-fast) var(--moddin-ease),
+    opacity var(--moddin-fast) var(--moddin-ease);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #344150 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: #344150;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #475668;
+  background-clip: padding-box;
+}
+
+.app-shell {
+  background:
+    radial-gradient(circle at 74% -16%, rgba(128, 97, 255, 0.21), transparent 34%),
+    radial-gradient(circle at 18% 110%, rgba(49, 119, 181, 0.08), transparent 28%),
+    var(--moddin-bg);
+}
+
+.sidebar {
+  border-color: var(--moddin-line-soft);
+  background:
+    linear-gradient(180deg, rgba(17, 23, 31, 0.92), rgba(8, 12, 17, 0.96)),
+    var(--moddin-bg);
+  box-shadow: 16px 0 42px rgba(0, 0, 0, 0.12);
+}
+
+.brand {
+  position: relative;
+}
+
+.brand::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 10px;
+  left: 8px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--moddin-line), transparent);
+}
+
+.brand-mark {
+  border: 1px solid rgba(183, 168, 255, 0.22);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.12), transparent 44%),
+    linear-gradient(135deg, #8d73ff, #5a42dc);
+  box-shadow:
+    0 9px 30px rgba(104, 77, 244, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.brand strong {
+  color: var(--moddin-text);
+  letter-spacing: -0.015em;
+}
+
+.brand span,
+.sidebar-footer,
+.language-control {
+  color: var(--moddin-text-muted);
+}
+
+.nav-item {
+  position: relative;
+  border: 1px solid transparent;
+}
+
+.nav-item:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.nav-item.active {
+  border-color: rgba(138, 112, 255, 0.16);
+  background:
+    linear-gradient(90deg, rgba(138, 112, 255, 0.15), rgba(138, 112, 255, 0.07));
+  box-shadow: inset 2px 0 0 var(--moddin-accent);
+}
+
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--moddin-accent);
+  box-shadow: 0 0 12px rgba(138, 112, 255, 0.75);
+  transform: translateY(-50%);
+}
+
+.language-control select,
+.library-controls > input,
+.uevr-backend-picker select,
+.compatibility-form select,
+.compatibility-form textarea {
+  border-color: var(--moddin-line);
+  color: var(--moddin-text-soft);
+  background: rgba(9, 14, 20, 0.82);
+}
+
+.language-control select:hover,
+.library-controls > input:hover,
+.uevr-backend-picker select:hover,
+.compatibility-form select:hover,
+.compatibility-form textarea:hover {
+  border-color: var(--moddin-line-strong);
+}
+
+.main-content {
+  isolation: isolate;
+}
+
+.topbar {
+  min-height: 72px;
+}
+
+.topbar h1,
+.details-header h2 {
+  text-wrap: balance;
+}
+
+.eyebrow {
+  color: #9a83ff;
+}
+
+.subtle,
+.section-title p {
+  color: var(--moddin-text-muted);
+}
+
+.secondary-button,
+.module-button,
+.primary-button,
+.icon-button {
+  border-color: var(--moddin-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.secondary-button,
+.module-button,
+.icon-button {
+  color: var(--moddin-text-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+    var(--moddin-surface-2);
+}
+
+.secondary-button:hover:not(:disabled),
+.module-button:hover:not(:disabled),
+.icon-button:hover:not(:disabled) {
+  border-color: rgba(138, 112, 255, 0.55);
+  color: #fff;
+  background: #192230;
+  transform: translateY(-1px);
+}
+
+.primary-button {
+  border-color: rgba(157, 136, 255, 0.65);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent),
+    linear-gradient(135deg, #8165fa, #6548df);
+  box-shadow:
+    0 8px 24px rgba(83, 59, 209, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow:
+    0 12px 30px rgba(83, 59, 209, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+:where(.secondary-button, .module-button, .primary-button):active:not(:disabled) {
+  transform: translateY(0);
+}
+
+button:disabled {
+  opacity: 0.43;
+}
+
+.notification-stack .error-banner,
+.notification-stack .success-banner {
+  border-radius: var(--moddin-radius-md);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--moddin-shadow-md);
+}
+
+.notification-stack .success-banner {
+  border-color: rgba(92, 190, 131, 0.38);
+  color: #c8f2d8;
+  background: rgba(15, 42, 27, 0.91);
+}
+
+.notification-stack .error-banner {
+  border-color: rgba(204, 92, 112, 0.4);
+  color: #f6d0d7;
+  background: rgba(48, 19, 25, 0.92);
+}
+
+.game-filter-control,
+.module-filter-control {
+  border-color: var(--moddin-line-soft);
+  background: rgba(4, 7, 11, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.filter-button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.filter-button.active {
+  color: #f2efff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    rgba(110, 82, 226, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(153, 132, 255, 0.12);
+}
+
+.game-list-panel,
+.details-panel,
+.transactions-panel {
+  border-color: var(--moddin-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 160px),
+    rgba(14, 20, 27, 0.91);
+  box-shadow: var(--moddin-shadow-sm);
+}
+
+.game-row {
+  border-color: transparent;
+}
+
+.game-row:hover {
+  border-color: rgba(255, 255, 255, 0.04);
+  background: rgba(29, 39, 51, 0.75);
+  transform: translateX(2px);
+}
+
+.game-row.selected {
+  border-color: rgba(138, 112, 255, 0.42);
+  background:
+    linear-gradient(90deg, rgba(126, 96, 244, 0.14), rgba(126, 96, 244, 0.07));
+  box-shadow: inset 2px 0 0 rgba(150, 130, 255, 0.9);
+}
+
+.game-icon {
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  color: #b9adff;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(152, 130, 255, 0.16), transparent 58%),
+    #202a35;
+}
+
+.game-copy strong {
+  color: var(--moddin-text-soft);
+}
+
+.status,
+.module-state,
+.module-check-state,
+.compatibility-state,
+.research-state,
+.module-update-state {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.details-header {
+  border-color: var(--moddin-line-soft);
+}
+
+.setup-stat {
+  border-color: var(--moddin-line-soft);
+  background:
+    radial-gradient(circle at 100% 0, rgba(138, 112, 255, 0.07), transparent 48%),
+    rgba(7, 11, 16, 0.42);
+}
+
+.setup-stat:hover {
+  border-color: var(--moddin-line);
+  background-color: rgba(12, 18, 25, 0.65);
+}
+
+.module-group {
+  border-color: var(--moddin-line-soft);
+  background: rgba(6, 10, 15, 0.25);
+}
+
+.module-card {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--moddin-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 46%),
+    var(--moddin-surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.018);
+  transition:
+    border-color var(--moddin-normal) var(--moddin-ease),
+    background-color var(--moddin-normal) var(--moddin-ease),
+    transform var(--moddin-normal) var(--moddin-ease),
+    box-shadow var(--moddin-normal) var(--moddin-ease);
+}
+
+.module-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgba(142, 115, 255, 0.75), transparent);
+  transition: opacity var(--moddin-normal) var(--moddin-ease);
+}
+
+.module-card:hover {
+  border-color: #354454;
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transform: translateY(-1px);
+}
+
+.module-card:hover::before {
+  opacity: 0.75;
+}
+
+.module-details,
+.advanced-panel {
+  border-color: var(--moddin-line);
+  background: rgba(4, 8, 12, 0.28);
+}
+
+.module-details summary:hover,
+.advanced-panel > summary:hover {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.module-details summary::after,
+.advanced-panel > summary::after {
+  color: #aa99ff;
+}
+
+.module-update-row {
+  border-color: var(--moddin-line-soft);
+}
+
+.game-running-banner {
+  border-color: rgba(207, 91, 111, 0.38);
+  color: #f2c5cd;
+  background: rgba(52, 24, 31, 0.74);
+}
+
+.transaction-row {
+  border-color: var(--moddin-line);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.014), transparent),
+    var(--moddin-surface-1);
+  transition:
+    border-color var(--moddin-fast) var(--moddin-ease),
+    background-color var(--moddin-fast) var(--moddin-ease),
+    transform var(--moddin-fast) var(--moddin-ease);
+}
+
+.transaction-row:hover {
+  border-color: var(--moddin-line-strong);
+  transform: translateY(-1px);
+}
+
+.modal-backdrop {
+  background: rgba(2, 5, 9, 0.76);
+  backdrop-filter: blur(11px) saturate(0.85);
+}
+
+.modal-card {
+  border-color: var(--moddin-line-strong);
+  border-radius: var(--moddin-radius-lg);
+  background:
+    radial-gradient(circle at 100% 0, rgba(138, 112, 255, 0.08), transparent 32%),
+    var(--moddin-surface-raised);
+  box-shadow: var(--moddin-shadow-lg);
+}
+
+.preview-summary div,
+.metadata-card {
+  border-color: var(--moddin-line);
+  background: rgba(7, 12, 17, 0.6);
+}
+
+/* The two global tools currently live outside App.vue. Visually group their
+   fixed triggers as one utility dock until navigation owns them directly. */
+button.activity-fab.activity-fab,
+button.openxr-fab.openxr-fab {
+  bottom: 20px;
+  min-height: 40px;
+  border-color: rgba(138, 112, 255, 0.24);
+  color: var(--moddin-text-soft);
+  background: rgba(13, 19, 27, 0.94);
+  box-shadow:
+    0 12px 34px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(16px);
+}
+
+button.activity-fab.activity-fab {
+  right: 116px;
+}
+
+button.openxr-fab.openxr-fab {
+  right: 20px;
+}
+
+button.activity-fab.activity-fab:hover,
+button.openxr-fab.openxr-fab:hover {
+  border-color: rgba(138, 112, 255, 0.52);
+  color: #fff;
+  background: rgba(25, 33, 45, 0.97);
+  transform: translateY(-2px);
+}
+
+@media (max-width: 800px) {
+  button.activity-fab.activity-fab,
+  button.openxr-fab.openxr-fab {
+    bottom: 14px;
+  }
+
+  button.activity-fab.activity-fab {
+    right: 108px;
+  }
+
+  button.openxr-fab.openxr-fab {
+    right: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .game-row:hover,
+  .module-card:hover,
+  .transaction-row:hover,
+  .primary-button:hover:not(:disabled),
+  .secondary-button:hover:not(:disabled),
+  .module-button:hover:not(:disabled),
+  button.activity-fab.activity-fab:hover,
+  button.openxr-fab.openxr-fab:hover {
+    transform: none;
+  }
+}
