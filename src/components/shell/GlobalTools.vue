@@ -6,9 +6,12 @@ import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
 <template>
   <!--
     Global utilities intentionally live outside the primary App workspace.
-    Keeping them behind a shell boundary makes it possible to move them into a
-    proper command bar/settings area later without coupling them to a game view.
+    The dock owns trigger positioning; each feature still owns its dialog.
   -->
-  <ActivityLogPanel />
-  <OpenXrManager />
+  <div class="global-tools-dock">
+    <ActivityLogPanel />
+    <OpenXrManager />
+  </div>
 </template>
+
+<style scoped src="./global-tools.css"></style>

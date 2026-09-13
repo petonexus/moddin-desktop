@@ -1,0 +1,29 @@
+.global-tools-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * Activity/OpenXR still own the visual treatment of their triggers. The shell
+ * owns only their placement, replacing the old independent right/bottom magic
+ * numbers from the global polish layer.
+ */
+.global-tools-dock :deep(.activity-fab),
+.global-tools-dock :deep(.openxr-fab) {
+  position: static !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: auto;
+}
+
+@media (max-width: 760px) {
+  .global-tools-dock {
+    right: 16px;
+    bottom: 16px;
+  }
+}
