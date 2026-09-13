@@ -1,116 +1,33 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { openXrCopyForLocale } from '../features/openxr/copy'
-import {
-  detectOpenXrGames,
-  inspectOpenXr,
-  setGameOpenXrRuntime,
-  setSystemOpenXrRuntime,
-} from '../features/openxr/service'
-import { findCatalogGameBySteamAppId } from '../services/catalog'
-import type { InstalledGame } from '../types/game'
-import type { OpenXrRuntimeInfo, OpenXrState } from '../types/openxr'
+import { useOpenXrManager } from '../features/openxr/useOpenXrManager'
 
 const { locale } = useI18n()
-
-const open = ref(false)
-const loading = ref(false)
-const busyAction = ref<string | null>(null)
-const error = ref<string | null>(null)
-const state = ref<OpenXrState | null>(null)
-const installedGames = ref<InstalledGame[]>([])
-const selectedGameId = ref<string>('')
-
 const copy = computed(() => openXrCopyForLocale(locale.value))
 
-const gameChoices = computed(() => installedGames.value.flatMap((game) => {
-  const catalog = findCatalogGameBySteamAppId(game.appId)
-  if (!catalog) return []
-  return [{ gameId: catalog.id, label: game.name }]
-}))
-
-const selectedGameRuntime = computed(() => state.value?.gameOverride ?? null)
-
-function isSelectedForGame(runtime: OpenXrRuntimeInfo) {
-  return selectedGameRuntime.value?.toLowerCase() === runtime.manifestPath.toLowerCase()
-}
-
-function runtimeUsable(runtime: OpenXrRuntimeInfo) {
-  return runtime.enabled && runtime.manifestExists && runtime.libraryExists
-}
+const {
+  open,
+  loading,
+  busyAction,
+  error,
+  state,
+  selectedGameId,
+  gameChoices,
+  isSelectedForGame,
+  runtimeUsable,
+  inspect,
+  openManager,
+  setGameRuntime,
+  setSystemRuntime,
+} = useOpenXrManager()
 
 function effectiveSourceLabel() {
   if (state.value?.effectiveSource === 'game') return copy.value.sourceGame
   if (state.value?.effectiveSource === 'system') return copy.value.sourceSystem
   return copy.value.sourceNone
 }
-
-async function inspect() {
-  loading.value = true
-  error.value = null
-  try {
-    state.value = await inspectOpenXr(selectedGameId.value || null)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadGames() {
-  try {
-    installedGames.value = await detectOpenXrGames()
-    const saved = window.localStorage.getItem('moddin-openxr-game') ?? ''
-    if (saved && gameChoices.value.some((game) => game.gameId === saved)) {
-      selectedGameId.value = saved
-    } else if (!selectedGameId.value && gameChoices.value.length) {
-      selectedGameId.value = gameChoices.value[0].gameId
-    }
-  } catch {
-    installedGames.value = []
-  }
-}
-
-async function openManager() {
-  open.value = true
-  await loadGames()
-  await inspect()
-}
-
-async function setGameRuntime(manifestPath: string | null) {
-  if (!selectedGameId.value) return
-  busyAction.value = `game:${manifestPath ?? 'system'}`
-  error.value = null
-  try {
-    state.value = await setGameOpenXrRuntime(selectedGameId.value, manifestPath)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    busyAction.value = null
-  }
-}
-
-async function setSystemRuntime(manifestPath: string) {
-  busyAction.value = `system:${manifestPath}`
-  error.value = null
-  try {
-    state.value = await setSystemOpenXrRuntime(manifestPath, selectedGameId.value || null)
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    busyAction.value = null
-  }
-}
-
-watch(selectedGameId, async (value) => {
-  try {
-    if (value) window.localStorage.setItem('moddin-openxr-game', value)
-  } catch {
-    // Storage is optional.
-  }
-  if (open.value) await inspect()
-})
 </script>
 
 <template>
