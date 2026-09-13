@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import ActivityLogPanel from '../ActivityLogPanel.vue'
-import OpenXrManager from '../OpenXrManager.vue'
+import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
+import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
 </script>
 
 <template>
