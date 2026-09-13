@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     env, fs,
-    path::{Path, PathBuf},
+    io::Write,
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -50,32 +51,141 @@ fn transaction_root() -> PathBuf {
         .join("transactions")
 }
 
-fn transaction_dir(id: &str) -> PathBuf {
-    transaction_root().join(id)
+fn is_valid_transaction_id(id: &str) -> bool {
+    let Some((timestamp, nonce)) = id.split_once('-') else {
+        return false;
+    };
+
+    !timestamp.is_empty()
+        && timestamp.chars().all(|character| character.is_ascii_digit())
+        && nonce.len() == 32
+        && nonce.chars().all(|character| character.is_ascii_hexdigit())
 }
 
-fn manifest_path(id: &str) -> PathBuf {
-    transaction_dir(id).join("manifest.json")
+fn transaction_dir(id: &str) -> Result<PathBuf, String> {
+    if !is_valid_transaction_id(id) {
+        return Err("Invalid Moddin transaction id.".to_owned());
+    }
+    Ok(transaction_root().join(id))
+}
+
+fn manifest_path(id: &str) -> Result<PathBuf, String> {
+    Ok(transaction_dir(id)?.join("manifest.json"))
+}
+
+fn manifest_backup_path(id: &str) -> Result<PathBuf, String> {
+    Ok(transaction_dir(id)?.join("manifest.json.bak"))
+}
+
+fn validate_record(record: &TransactionRecord, expected_id: &str) -> Result<(), String> {
+    if record.id != expected_id || !is_valid_transaction_id(&record.id) {
+        return Err(format!(
+            "Transaction manifest identity mismatch for '{expected_id}'."
+        ));
+    }
+    if !matches!(record.status.as_str(), "prepared" | "applied" | "rolled_back") {
+        return Err(format!(
+            "Transaction '{}' has an invalid status '{}'.",
+            record.id, record.status
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_target_within_root(target_root: &Path, target: &Path) -> Result<(), String> {
+    let relative = target.strip_prefix(target_root).map_err(|_| {
+        format!(
+            "Transaction target escapes its allowed root: {}",
+            target.display()
+        )
+    })?;
+
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(format!(
+            "Transaction target contains an unsafe path traversal: {}",
+            target.display()
+        ));
+    }
+
+    Ok(())
 }
 
 fn write_record(record: &TransactionRecord) -> Result<(), String> {
-    let directory = transaction_dir(&record.id);
+    validate_record(record, &record.id)?;
+    let directory = transaction_dir(&record.id)?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create transaction directory: {error}"))?;
 
-    let json = serde_json::to_string_pretty(record)
+    let json = serde_json::to_vec_pretty(record)
         .map_err(|error| format!("Could not serialize transaction: {error}"))?;
+    let manifest = manifest_path(&record.id)?;
+    let backup = manifest_backup_path(&record.id)?;
+    let temporary = directory.join(format!(
+        "manifest.json.tmp-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
 
-    fs::write(manifest_path(&record.id), json)
-        .map_err(|error| format!("Could not save transaction manifest: {error}"))
+    let write_result = (|| -> Result<(), String> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("Could not create temporary transaction manifest: {error}"))?;
+        file.write_all(&json)
+            .map_err(|error| format!("Could not write temporary transaction manifest: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not flush temporary transaction manifest: {error}"))?;
+        drop(file);
+
+        if manifest.is_file() {
+            fs::copy(&manifest, &backup)
+                .map_err(|error| format!("Could not preserve previous transaction manifest: {error}"))?;
+            fs::remove_file(&manifest)
+                .map_err(|error| format!("Could not replace transaction manifest: {error}"))?;
+        }
+
+        fs::rename(&temporary, &manifest)
+            .map_err(|error| format!("Could not commit transaction manifest: {error}"))?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    write_result
+}
+
+fn parse_record(contents: &str, id: &str) -> Result<TransactionRecord, String> {
+    let record = serde_json::from_str::<TransactionRecord>(contents)
+        .map_err(|error| format!("Could not parse transaction '{id}': {error}"))?;
+    validate_record(&record, id)?;
+    Ok(record)
 }
 
 fn read_record(id: &str) -> Result<TransactionRecord, String> {
-    let contents = fs::read_to_string(manifest_path(id))
-        .map_err(|error| format!("Could not read transaction '{id}': {error}"))?;
+    let manifest = manifest_path(id)?;
+    let backup = manifest_backup_path(id)?;
 
-    serde_json::from_str(&contents)
-        .map_err(|error| format!("Could not parse transaction '{id}': {error}"))
+    let primary_error = match fs::read_to_string(&manifest) {
+        Ok(contents) => match parse_record(&contents, id) {
+            Ok(record) => return Ok(record),
+            Err(error) => error,
+        },
+        Err(error) => format!("Could not read transaction '{id}': {error}"),
+    };
+
+    if let Ok(contents) = fs::read_to_string(&backup) {
+        if let Ok(record) = parse_record(&contents, id) {
+            return Ok(record);
+        }
+    }
+
+    Err(primary_error)
 }
 
 fn is_process_running(image_name: &str) -> bool {
@@ -165,7 +275,7 @@ pub fn backup_file_with_metadata(
     }
 
     let (id, created_at) = new_transaction_id()?;
-    let directory = transaction_dir(&id);
+    let directory = transaction_dir(&id)?;
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Could not create transaction directory: {error}"))?;
 
@@ -209,7 +319,7 @@ pub fn begin_file_set_transaction(
     metadata: BTreeMap<String, String>,
 ) -> Result<TransactionRecord, String> {
     let (id, created_at) = new_transaction_id()?;
-    let directory = transaction_dir(&id);
+    let directory = transaction_dir(&id)?;
     let backup_directory = directory.join("files");
     fs::create_dir_all(&backup_directory)
         .map_err(|error| format!("Could not create transaction backup directory: {error}"))?;
@@ -220,12 +330,7 @@ pub fn begin_file_set_transaction(
 
     let mut files = Vec::with_capacity(unique_targets.len());
     for (index, target) in unique_targets.iter().enumerate() {
-        if !target.starts_with(target_root) {
-            return Err(format!(
-                "Transaction target escapes the selected game directory: {}",
-                target.display()
-            ));
-        }
+        ensure_target_within_root(target_root, target)?;
 
         let existed_before = target.is_file();
         let backup_path = if existed_before {
@@ -293,6 +398,8 @@ pub fn mark_applied(mut record: TransactionRecord) -> Result<TransactionRecord, 
 }
 
 pub fn restore_record(mut record: TransactionRecord) -> Result<TransactionRecord, String> {
+    validate_record(&record, &record.id)?;
+
     if record.files.is_empty() {
         let backup = PathBuf::from(&record.backup_path);
         let target = PathBuf::from(&record.target_path);
@@ -367,14 +474,12 @@ pub fn list_transactions_sync() -> Result<Vec<TransactionRecord>, String> {
             continue;
         }
 
-        let manifest = entry.path().join("manifest.json");
-        let Ok(contents) = fs::read_to_string(manifest) else {
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Ok(record) = serde_json::from_str::<TransactionRecord>(&contents) else {
-            continue;
-        };
-        records.push(record);
+        if let Ok(record) = read_record(&id) {
+            records.push(record);
+        }
     }
 
     records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -435,4 +540,84 @@ pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
         reopen_obs(obs_path.as_deref());
     }
     restored
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transaction_id_validation_accepts_generated_shape() {
+        assert!(is_valid_transaction_id(
+            "1757720000000-0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn transaction_id_validation_rejects_path_traversal_and_malformed_ids() {
+        for id in [
+            "../manifest",
+            "..-0123456789abcdef0123456789abcdef",
+            "1757720000000/../../escape",
+            "1757720000000-short",
+            "not-a-timestamp-0123456789abcdef0123456789abcdef",
+            "1757720000000-0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(!is_valid_transaction_id(id), "unexpectedly accepted {id}");
+        }
+    }
+
+    #[test]
+    fn target_validation_accepts_descendants() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let target = root.join("subdir").join("plugin.dll");
+        assert!(ensure_target_within_root(&root, &target).is_ok());
+    }
+
+    #[test]
+    fn target_validation_rejects_lexical_parent_escape() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let target = root
+            .join("subdir")
+            .join("..")
+            .join("..")
+            .join("outside.dll");
+        assert!(ensure_target_within_root(&root, &target).is_err());
+    }
+
+    #[test]
+    fn target_validation_rejects_sibling_path() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let sibling = root
+            .parent()
+            .expect("temp child must have a parent")
+            .join("moddin-sibling")
+            .join("outside.dll");
+        assert!(ensure_target_within_root(&root, &sibling).is_err());
+    }
+
+    #[test]
+    fn record_validation_rejects_identity_and_status_corruption() {
+        let id = "1757720000000-0123456789abcdef0123456789abcdef";
+        let mut record = TransactionRecord {
+            id: id.to_owned(),
+            created_at: 1,
+            kind: "test".to_owned(),
+            label: "test".to_owned(),
+            game_id: "game".to_owned(),
+            target_path: "target".to_owned(),
+            backup_path: "backup".to_owned(),
+            status: "applied".to_owned(),
+            files: Vec::new(),
+            created_directories: Vec::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        assert!(validate_record(&record, id).is_ok());
+        assert!(validate_record(&record, "1757720000001-0123456789abcdef0123456789abcdef")
+            .is_err());
+
+        record.status = "mystery".to_owned();
+        assert!(validate_record(&record, id).is_err());
+    }
 }
