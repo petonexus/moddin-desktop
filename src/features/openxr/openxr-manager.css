@@ -7,10 +7,10 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  border: 1px solid #2b3744;
   border-radius: 999px;
-  color: #e5eefc;
-  background: rgba(15, 23, 42, 0.94);
+  color: #e8edf3;
+  background: rgba(16, 23, 32, 0.96);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
   cursor: pointer;
   font: inherit;
@@ -32,7 +32,7 @@
   display: grid;
   place-items: center;
   padding: 28px;
-  background: rgba(2, 6, 23, 0.76);
+  background: rgba(3, 6, 10, 0.76);
   backdrop-filter: blur(8px);
 }
 
@@ -40,12 +40,12 @@
   width: min(900px, 96vw);
   max-height: 90vh;
   overflow: auto;
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid #2b3744;
   border-radius: 18px;
-  background: #0f172a;
-  color: #e5eefc;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.48);
   padding: 22px;
+  color: #e8edf3;
+  background: #101720;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.48);
 }
 
 .openxr-header,
@@ -62,20 +62,18 @@
 .openxr-header small,
 .openxr-toolbar span,
 .openxr-summary span {
-  color: #94a3b8;
+  color: #8996a5;
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.openxr-header h2 {
-  margin: 3px 0 2px;
-}
+.openxr-header h2 { margin: 3px 0 2px; }
 
 .openxr-header p,
 .openxr-note p {
   margin: 0;
-  color: #94a3b8;
+  color: #8996a5;
 }
 
 .openxr-icon-button {
@@ -86,23 +84,21 @@
   cursor: pointer;
 }
 
-.openxr-toolbar {
-  margin: 20px 0;
-}
+.openxr-toolbar { margin: 20px 0; }
 
 .openxr-toolbar label {
   display: grid;
-  gap: 6px;
   flex: 1;
+  gap: 6px;
 }
 
 .openxr-toolbar select {
   width: 100%;
-  padding: 9px 11px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid #2b3744;
   border-radius: 9px;
-  color: #e5eefc;
-  background: #111c31;
+  padding: 9px 11px;
+  color: #e8edf3;
+  background: #0b1118;
 }
 
 .openxr-summary {
@@ -114,13 +110,21 @@
 .openxr-summary > div,
 .openxr-note,
 .openxr-runtime,
-.openxr-error,
-.openxr-warnings,
 .openxr-empty {
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid #2a3642;
   border-radius: 12px;
-  background: rgba(30, 41, 59, 0.42);
   padding: 14px;
+  background: rgba(20, 29, 39, 0.8);
+}
+
+.openxr-error,
+.openxr-warnings {
+  margin-top: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 12px;
+  padding: 14px;
+  color: #fca5a5;
+  background: rgba(30, 41, 59, 0.42);
 }
 
 .openxr-summary > div {
@@ -131,56 +135,37 @@
 .openxr-summary code,
 .openxr-runtime code {
   overflow-wrap: anywhere;
-  color: #93c5fd;
+  color: #c5bcff;
   font-size: 0.75rem;
 }
 
 .openxr-note {
-  margin-top: 12px;
   display: grid;
   gap: 8px;
-}
-
-.openxr-note small {
-  color: #fbbf24;
-}
-
-.openxr-warnings,
-.openxr-error {
   margin-top: 12px;
-  color: #fca5a5;
-  border-color: rgba(239, 68, 68, 0.28);
 }
 
-.openxr-warnings p {
-  margin: 4px 0;
-}
+.openxr-note small { color: #fbbf24; }
+.openxr-warnings p { margin: 4px 0; }
 
 .openxr-section-title {
   margin: 22px 0 10px;
 }
 
-.openxr-section-title h3 {
-  margin: 0;
-}
-
-.openxr-section-title span {
-  color: #94a3b8;
-}
+.openxr-section-title h3 { margin: 0; }
+.openxr-section-title span { color: #8996a5; }
 
 .openxr-runtime-list {
   display: grid;
   gap: 10px;
 }
 
-.openxr-runtime-heading {
-  align-items: flex-start;
-}
+.openxr-runtime-heading { align-items: flex-start; }
 
 .openxr-runtime-heading > div:first-child {
   display: grid;
-  gap: 5px;
   min-width: 0;
+  gap: 5px;
 }
 
 .openxr-badges {
@@ -191,14 +176,14 @@
 }
 
 .openxr-badges span {
-  padding: 3px 7px;
   border-radius: 999px;
+  padding: 3px 7px;
   font-size: 0.7rem;
   font-weight: 700;
 }
 
 .openxr-badges .good { background: rgba(34, 197, 94, 0.15); color: #86efac; }
-.openxr-badges .selected { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+.openxr-badges .selected { background: rgba(130, 104, 255, 0.18); color: #c5bcff; }
 .openxr-badges .warn { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
 .openxr-badges .bad { background: rgba(239, 68, 68, 0.16); color: #fca5a5; }
 
@@ -217,15 +202,15 @@
 }
 
 .openxr-primary {
-  border: 1px solid rgba(59, 130, 246, 0.6);
-  background: #2563eb;
+  border: 1px solid #8268ff;
   color: white;
+  background: #6951df;
 }
 
 .openxr-secondary {
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  background: rgba(30, 41, 59, 0.78);
-  color: #dbeafe;
+  border: 1px solid #394756;
+  color: #e8edf3;
+  background: #18222d;
 }
 
 .openxr-primary:disabled,
@@ -235,6 +220,7 @@
 }
 
 @media (max-width: 720px) {
+  .openxr-fab { right: 16px; bottom: 16px; }
   .openxr-backdrop { padding: 12px; }
   .openxr-panel { padding: 16px; }
   .openxr-toolbar,
@@ -243,36 +229,4 @@
   .openxr-badges { justify-content: flex-start; }
   .openxr-primary,
   .openxr-secondary { width: 100%; }
-}
-
-/* Shared utility styling with the rest of Moddin. */
-.openxr-fab {
-  right: 22px;
-  bottom: 22px;
-  border-color: #2b3744;
-  color: #e8edf3;
-  background: rgba(16, 23, 32, 0.96);
-}
-
-.openxr-backdrop { background: rgba(3, 6, 10, 0.76); }
-.openxr-panel { border-color: #2b3744; background: #101720; color: #e8edf3; }
-.openxr-header small,
-.openxr-toolbar span,
-.openxr-summary span,
-.openxr-header p,
-.openxr-note p,
-.openxr-section-title span { color: #8996a5; }
-.openxr-toolbar select { border-color: #2b3744; color: #e8edf3; background: #0b1118; }
-.openxr-summary > div,
-.openxr-note,
-.openxr-runtime,
-.openxr-empty { border-color: #2a3642; background: rgba(20, 29, 39, 0.8); }
-.openxr-summary code,
-.openxr-runtime code { color: #c5bcff; }
-.openxr-primary { border-color: #8268ff; background: #6951df; }
-.openxr-secondary { border-color: #394756; color: #e8edf3; background: #18222d; }
-.openxr-badges .selected { color: #c5bcff; background: rgba(130, 104, 255, 0.18); }
-
-@media (max-width: 720px) {
-  .openxr-fab { right: 16px; bottom: 16px; }
 }
