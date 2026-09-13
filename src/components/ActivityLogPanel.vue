@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { invokeDebug as invoke } from '../debug'
+import { activityCopyForLocale, activityDateLocale } from '../features/activity/copy'
+import { clearActionLogs, listActionLogs } from '../features/activity/service'
 import type { ActionLogEntry, ActionLogLevel } from '../types/activity'
 
 const { locale } = useI18n()
@@ -15,73 +16,7 @@ const search = ref('')
 const level = ref<'all' | ActionLogLevel>('all')
 const expanded = ref(new Set<string>())
 
-const messages = {
-  'pt-BR': {
-    button: 'Logs',
-    title: 'Histórico de ações',
-    subtitle: 'Registro persistente das alterações executadas pelo Moddin',
-    refresh: 'Atualizar',
-    clear: 'Limpar logs',
-    close: 'Fechar',
-    search: 'Filtrar por ação, jogo ou mensagem…',
-    all: 'Todos',
-    success: 'sucesso',
-    error: 'erro',
-    warning: 'aviso',
-    info: 'info',
-    empty: 'Nenhuma ação registrada ainda.',
-    details: 'Detalhes',
-    transaction: 'Transação',
-    game: 'Jogo',
-    confirmClear: 'Apagar o histórico persistente de ações do Moddin?',
-    storage: 'Os logs ficam em %LOCALAPPDATA%\\Moddin\\logs e rotacionam automaticamente ao atingir 5 MB.',
-  },
-  en: {
-    button: 'Logs',
-    title: 'Action history',
-    subtitle: 'Persistent record of changes performed by Moddin',
-    refresh: 'Refresh',
-    clear: 'Clear logs',
-    close: 'Close',
-    search: 'Filter by action, game, or message…',
-    all: 'All',
-    success: 'success',
-    error: 'error',
-    warning: 'warning',
-    info: 'info',
-    empty: 'No actions have been recorded yet.',
-    details: 'Details',
-    transaction: 'Transaction',
-    game: 'Game',
-    confirmClear: 'Delete Moddin’s persistent action history?',
-    storage: 'Logs live under %LOCALAPPDATA%\\Moddin\\logs and rotate automatically at 5 MB.',
-  },
-  es: {
-    button: 'Logs',
-    title: 'Historial de acciones',
-    subtitle: 'Registro persistente de los cambios ejecutados por Moddin',
-    refresh: 'Actualizar',
-    clear: 'Borrar logs',
-    close: 'Cerrar',
-    search: 'Filtrar por acción, juego o mensaje…',
-    all: 'Todos',
-    success: 'éxito',
-    error: 'error',
-    warning: 'aviso',
-    info: 'info',
-    empty: 'Aún no hay acciones registradas.',
-    details: 'Detalles',
-    transaction: 'Transacción',
-    game: 'Juego',
-    confirmClear: '¿Borrar el historial persistente de acciones de Moddin?',
-    storage: 'Los logs se guardan en %LOCALAPPDATA%\\Moddin\\logs y rotan automáticamente al llegar a 5 MB.',
-  },
-} as const
-
-const copy = computed(() => {
-  const key = locale.value === 'pt-BR' || locale.value === 'es' ? locale.value : 'en'
-  return messages[key]
-})
+const copy = computed(() => activityCopyForLocale(locale.value))
 
 const filteredLogs = computed(() => {
   const term = search.value.trim().toLowerCase()
@@ -95,8 +30,7 @@ const filteredLogs = computed(() => {
 })
 
 function formatDate(timestamp: number) {
-  const currentLocale = locale.value === 'en' ? 'en-US' : locale.value === 'es' ? 'es-ES' : 'pt-BR'
-  return new Intl.DateTimeFormat(currentLocale, {
+  return new Intl.DateTimeFormat(activityDateLocale(locale.value), {
     dateStyle: 'short',
     timeStyle: 'medium',
   }).format(new Date(timestamp))
@@ -113,7 +47,7 @@ async function refresh() {
   loading.value = true
   error.value = null
   try {
-    logs.value = await invoke<ActionLogEntry[]>('list_action_logs', { limit: 500 })
+    logs.value = await listActionLogs()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -131,7 +65,7 @@ async function clearLogs() {
   clearing.value = true
   error.value = null
   try {
-    await invoke<void>('clear_action_logs')
+    await clearActionLogs()
     logs.value = []
     expanded.value = new Set()
   } catch (err) {
