@@ -20,6 +20,7 @@ const {
   toggleDetails,
   refresh,
   openPanel,
+  closePanel,
   clearLogs: clearLogsAction,
 } = useActivityLogPanel()
 
@@ -41,7 +42,7 @@ async function clearLogs() {
     {{ copy.button }}
   </button>
 
-  <div v-if="open" class="activity-backdrop" @click.self="open = false">
+  <div v-if="open" class="activity-backdrop" @click.self="closePanel">
     <section class="activity-panel" role="dialog" aria-modal="true" :aria-label="copy.title">
       <header class="activity-header">
         <div>
@@ -49,7 +50,7 @@ async function clearLogs() {
           <h2>{{ copy.title }}</h2>
           <p>{{ copy.subtitle }}</p>
         </div>
-        <button class="activity-icon-button" type="button" :aria-label="copy.close" @click="open = false">×</button>
+        <button class="activity-icon-button" type="button" :aria-label="copy.close" @click="closePanel">×</button>
       </header>
 
       <div class="activity-toolbar">
