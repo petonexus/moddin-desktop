@@ -13,9 +13,35 @@ struct ProcessSnapshot {
 
 static PROCESS_SNAPSHOT: OnceLock<Mutex<ProcessSnapshot>> = OnceLock::new();
 
+fn tasklist_image_name(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    let quoted = line.strip_prefix('"')?;
+    let end = quoted.find("\",")?;
+    let value = &quoted[..end];
+    (!value.is_empty()).then_some(value)
+}
+
 fn snapshot_contains(tasklist_csv: &str, image_name: &str) -> bool {
-    let image_name = image_name.trim().trim_matches('"').to_ascii_lowercase();
-    !image_name.is_empty() && tasklist_csv.contains(&format!("\"{image_name}\""))
+    let expected = image_name.trim().trim_matches('"');
+    !expected.is_empty()
+        && tasklist_csv.lines().any(|line| {
+            tasklist_image_name(line)
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(expected))
+        })
+}
+
+fn capture_tasklist_csv() -> Option<String> {
+    let output = Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 pub fn is_process_running(image_name: &str) -> bool {
@@ -33,16 +59,8 @@ pub fn is_process_running(image_name: &str) -> bool {
         .captured_at
         .is_some_and(|captured_at| captured_at.elapsed() <= PROCESS_SNAPSHOT_TTL);
     if !fresh {
-        let output = Command::new("tasklist")
-            .args(["/FO", "CSV", "/NH"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
-
-        if let Ok(output) = output {
-            snapshot.tasklist_csv = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-            snapshot.captured_at = Some(Instant::now());
-        }
+        snapshot.tasklist_csv = capture_tasklist_csv().unwrap_or_default();
+        snapshot.captured_at = Some(Instant::now());
     }
 
     snapshot_contains(&snapshot.tasklist_csv, image_name)
@@ -57,5 +75,25 @@ mod tests {
         let csv = "\"game.exe\",\"123\",\"Console\"\n\"helper.exe\",\"456\",\"Console\"";
         assert!(snapshot_contains(csv, "GAME.EXE"));
         assert!(!snapshot_contains(csv, "ame.exe"));
+    }
+
+    #[test]
+    fn does_not_match_values_from_other_csv_columns() {
+        let csv = "\"helper.exe\",\"123\",\"game.exe\"";
+        assert!(!snapshot_contains(csv, "game.exe"));
+    }
+
+    #[test]
+    fn parses_image_names_with_commas() {
+        let csv = "\"game,modded.exe\",\"123\",\"Console\"";
+        assert_eq!(tasklist_image_name(csv), Some("game,modded.exe"));
+        assert!(snapshot_contains(csv, "game,modded.exe"));
+    }
+
+    #[test]
+    fn ignores_malformed_tasklist_rows() {
+        let csv = "not csv\n\"valid.exe\",\"456\",\"Console\"";
+        assert!(snapshot_contains(csv, "valid.exe"));
+        assert!(!snapshot_contains(csv, "not csv"));
     }
 }
