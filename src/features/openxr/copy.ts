@@ -1,35 +1,39 @@
-const openXrMessages = {
-  'pt-BR': {
-    button: 'OpenXR',
-    title: 'Gerenciador OpenXR',
-    subtitle: 'Runtime do Windows e override por jogo',
-    close: 'Fechar',
-    refresh: 'Atualizar',
-    selectGame: 'Jogo para override',
-    systemOnly: 'Somente runtime global',
-    windowsRuntime: 'Runtime ativo do Windows',
-    effectiveRuntime: 'Runtime efetivo para o jogo',
-    noRuntime: 'Nenhum runtime detectado',
-    gameOverride: 'Override por jogo',
-    systemDefault: 'Usar padrão do Windows',
-    runtimes: 'Runtimes detectados',
-    active: 'ativo no Windows',
-    selected: 'selecionado para o jogo',
-    disabled: 'desativado',
-    missingManifest: 'manifest ausente',
-    missingLibrary: 'biblioteca ausente',
-    useForGame: 'Usar neste jogo',
-    makeSystem: 'Tornar padrão do Windows',
-    applying: 'Aplicando…',
-    noRuntimes: 'Nenhum runtime OpenXR foi encontrado pelo registro do Windows ou pelos caminhos conhecidos.',
-    gameHint: 'O override por jogo usa XR_RUNTIME_JSON somente no processo iniciado pelo Moddin. Ele não altera o runtime global do Windows.',
-    systemHint: 'Alterar o runtime global grava HKLM\\SOFTWARE\\Khronos\\OpenXR\\1\\ActiveRuntime e exige UAC de administrador.',
-    uacHint: 'O Windows pode abrir uma janela de confirmação de administrador.',
-    sourceGame: 'override do jogo',
-    sourceSystem: 'Windows',
-    sourceNone: 'nenhum',
-  },
-  en: {
+import { defineLocalizedCopy, localizedCopyFor } from '../../i18n/localizedCopy'
+
+const ptBR = {
+  button: 'OpenXR',
+  title: 'Gerenciador OpenXR',
+  subtitle: 'Runtime do Windows e override por jogo',
+  close: 'Fechar',
+  refresh: 'Atualizar',
+  selectGame: 'Jogo para override',
+  systemOnly: 'Somente runtime global',
+  windowsRuntime: 'Runtime ativo do Windows',
+  effectiveRuntime: 'Runtime efetivo para o jogo',
+  noRuntime: 'Nenhum runtime detectado',
+  gameOverride: 'Override por jogo',
+  systemDefault: 'Usar padrão do Windows',
+  runtimes: 'Runtimes detectados',
+  active: 'ativo no Windows',
+  selected: 'selecionado para o jogo',
+  disabled: 'desativado',
+  missingManifest: 'manifest ausente',
+  missingLibrary: 'biblioteca ausente',
+  useForGame: 'Usar neste jogo',
+  makeSystem: 'Tornar padrão do Windows',
+  applying: 'Aplicando…',
+  noRuntimes: 'Nenhum runtime OpenXR foi encontrado pelo registro do Windows ou pelos caminhos conhecidos.',
+  gameHint: 'O override por jogo usa XR_RUNTIME_JSON somente no processo iniciado pelo Moddin. Ele não altera o runtime global do Windows.',
+  systemHint: 'Alterar o runtime global grava HKLM\\SOFTWARE\\Khronos\\OpenXR\\1\\ActiveRuntime e exige UAC de administrador.',
+  uacHint: 'O Windows pode abrir uma janela de confirmação de administrador.',
+  sourceGame: 'override do jogo',
+  sourceSystem: 'Windows',
+  sourceNone: 'nenhum',
+} as const
+
+const openXrMessages = defineLocalizedCopy(
+  ptBR,
+  {
     button: 'OpenXR',
     title: 'OpenXR Manager',
     subtitle: 'Windows runtime and per-game override',
@@ -59,7 +63,7 @@ const openXrMessages = {
     sourceSystem: 'Windows',
     sourceNone: 'none',
   },
-  es: {
+  {
     button: 'OpenXR',
     title: 'Gestor OpenXR',
     subtitle: 'Runtime de Windows y override por juego',
@@ -89,9 +93,8 @@ const openXrMessages = {
     sourceSystem: 'Windows',
     sourceNone: 'ninguno',
   },
-} as const
+)
 
 export function openXrCopyForLocale(locale: string) {
-  const key = locale === 'pt-BR' || locale === 'es' ? locale : 'en'
-  return openXrMessages[key]
+  return localizedCopyFor(openXrMessages, locale)
 }
