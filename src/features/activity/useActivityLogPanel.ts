@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
-import type { ActionLogEntry, ActionLogLevel } from '../../types/activity'
 import { clearActionLogs, listActionLogs } from './service'
+import type { ActionLogEntry, ActionLogLevel } from './types'
 
 export function useActivityLogPanel() {
   const open = ref(false)

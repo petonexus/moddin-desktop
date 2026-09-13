@@ -1,6 +1,6 @@
 import { invokeDebug as invoke } from '../../debug'
 import type { InstalledGame } from '../../types/game'
-import type { OpenXrState } from '../../types/openxr'
+import type { OpenXrState } from './types'
 
 export function detectOpenXrGames() {
   return invoke<InstalledGame[]>('detect_steam_games')
