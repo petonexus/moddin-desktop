@@ -57,11 +57,15 @@ fn rotated_log_path() -> PathBuf {
     logs_root().join("actions.1.jsonl")
 }
 
+fn should_rotate(current_bytes: u64, incoming_bytes: u64) -> bool {
+    current_bytes.saturating_add(incoming_bytes) > MAX_LOG_FILE_BYTES
+}
+
 fn rotate_if_needed(path: &PathBuf, incoming_bytes: u64) -> Result<(), String> {
     let Ok(metadata) = fs::metadata(path) else {
         return Ok(());
     };
-    if metadata.len().saturating_add(incoming_bytes) <= MAX_LOG_FILE_BYTES {
+    if !should_rotate(metadata.len(), incoming_bytes) {
         return Ok(());
     }
 
@@ -278,9 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn rotation_accounts_for_the_next_entry_size() {
-        assert!(MAX_LOG_FILE_BYTES > 100);
-        let almost_full = MAX_LOG_FILE_BYTES - 10;
-        assert!(almost_full.saturating_add(20) > MAX_LOG_FILE_BYTES);
+    fn rotation_boundary_includes_the_next_entry() {
+        assert!(!should_rotate(0, MAX_LOG_FILE_BYTES));
+        assert!(!should_rotate(MAX_LOG_FILE_BYTES - 10, 10));
+        assert!(should_rotate(MAX_LOG_FILE_BYTES - 10, 11));
+        assert!(should_rotate(u64::MAX, 1));
     }
 }
