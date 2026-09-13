@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { invokeDebug as invoke } from '../debug'
+import { openXrCopyForLocale } from '../features/openxr/copy'
+import {
+  detectOpenXrGames,
+  inspectOpenXr,
+  setGameOpenXrRuntime,
+  setSystemOpenXrRuntime,
+} from '../features/openxr/service'
 import { findCatalogGameBySteamAppId } from '../services/catalog'
 import type { InstalledGame } from '../types/game'
 import type { OpenXrRuntimeInfo, OpenXrState } from '../types/openxr'
@@ -16,103 +22,7 @@ const state = ref<OpenXrState | null>(null)
 const installedGames = ref<InstalledGame[]>([])
 const selectedGameId = ref<string>('')
 
-const messages = {
-  'pt-BR': {
-    button: 'OpenXR',
-    title: 'Gerenciador OpenXR',
-    subtitle: 'Runtime do Windows e override por jogo',
-    close: 'Fechar',
-    refresh: 'Atualizar',
-    selectGame: 'Jogo para override',
-    systemOnly: 'Somente runtime global',
-    windowsRuntime: 'Runtime ativo do Windows',
-    effectiveRuntime: 'Runtime efetivo para o jogo',
-    noRuntime: 'Nenhum runtime detectado',
-    gameOverride: 'Override por jogo',
-    systemDefault: 'Usar padrão do Windows',
-    runtimes: 'Runtimes detectados',
-    active: 'ativo no Windows',
-    selected: 'selecionado para o jogo',
-    disabled: 'desativado',
-    missingManifest: 'manifest ausente',
-    missingLibrary: 'biblioteca ausente',
-    useForGame: 'Usar neste jogo',
-    makeSystem: 'Tornar padrão do Windows',
-    applying: 'Aplicando…',
-    noRuntimes: 'Nenhum runtime OpenXR foi encontrado pelo registro do Windows ou pelos caminhos conhecidos.',
-    gameHint: 'O override por jogo usa XR_RUNTIME_JSON somente no processo iniciado pelo Moddin. Ele não altera o runtime global do Windows.',
-    systemHint: 'Alterar o runtime global grava HKLM\\SOFTWARE\\Khronos\\OpenXR\\1\\ActiveRuntime e exige UAC de administrador.',
-    uacHint: 'O Windows pode abrir uma janela de confirmação de administrador.',
-    sourceGame: 'override do jogo',
-    sourceSystem: 'Windows',
-    sourceNone: 'nenhum',
-  },
-  en: {
-    button: 'OpenXR',
-    title: 'OpenXR Manager',
-    subtitle: 'Windows runtime and per-game override',
-    close: 'Close',
-    refresh: 'Refresh',
-    selectGame: 'Game override',
-    systemOnly: 'System runtime only',
-    windowsRuntime: 'Windows active runtime',
-    effectiveRuntime: 'Effective runtime for game',
-    noRuntime: 'No runtime detected',
-    gameOverride: 'Per-game override',
-    systemDefault: 'Use Windows default',
-    runtimes: 'Detected runtimes',
-    active: 'active in Windows',
-    selected: 'selected for game',
-    disabled: 'disabled',
-    missingManifest: 'manifest missing',
-    missingLibrary: 'runtime library missing',
-    useForGame: 'Use for this game',
-    makeSystem: 'Make Windows default',
-    applying: 'Applying…',
-    noRuntimes: 'No OpenXR runtimes were found in the Windows registry or known runtime locations.',
-    gameHint: 'The per-game override uses XR_RUNTIME_JSON only for games launched by Moddin. It does not change the Windows global runtime.',
-    systemHint: 'Changing the global runtime writes HKLM\\SOFTWARE\\Khronos\\OpenXR\\1\\ActiveRuntime and requires administrator UAC.',
-    uacHint: 'Windows may show an administrator confirmation prompt.',
-    sourceGame: 'game override',
-    sourceSystem: 'Windows',
-    sourceNone: 'none',
-  },
-  es: {
-    button: 'OpenXR',
-    title: 'Gestor OpenXR',
-    subtitle: 'Runtime de Windows y override por juego',
-    close: 'Cerrar',
-    refresh: 'Actualizar',
-    selectGame: 'Override para juego',
-    systemOnly: 'Solo runtime global',
-    windowsRuntime: 'Runtime activo de Windows',
-    effectiveRuntime: 'Runtime efectivo para el juego',
-    noRuntime: 'Ningún runtime detectado',
-    gameOverride: 'Override por juego',
-    systemDefault: 'Usar predeterminado de Windows',
-    runtimes: 'Runtimes detectados',
-    active: 'activo en Windows',
-    selected: 'seleccionado para el juego',
-    disabled: 'desactivado',
-    missingManifest: 'manifiesto ausente',
-    missingLibrary: 'biblioteca ausente',
-    useForGame: 'Usar en este juego',
-    makeSystem: 'Hacer predeterminado de Windows',
-    applying: 'Aplicando…',
-    noRuntimes: 'No se encontraron runtimes OpenXR en el registro de Windows ni en ubicaciones conocidas.',
-    gameHint: 'El override por juego usa XR_RUNTIME_JSON solo para juegos iniciados por Moddin. No cambia el runtime global de Windows.',
-    systemHint: 'Cambiar el runtime global escribe HKLM\\SOFTWARE\\Khronos\\OpenXR\\1\\ActiveRuntime y requiere UAC de administrador.',
-    uacHint: 'Windows puede mostrar una confirmación de administrador.',
-    sourceGame: 'override del juego',
-    sourceSystem: 'Windows',
-    sourceNone: 'ninguno',
-  },
-} as const
-
-const copy = computed(() => {
-  const key = locale.value === 'pt-BR' || locale.value === 'es' ? locale.value : 'en'
-  return messages[key]
-})
+const copy = computed(() => openXrCopyForLocale(locale.value))
 
 const gameChoices = computed(() => installedGames.value.flatMap((game) => {
   const catalog = findCatalogGameBySteamAppId(game.appId)
@@ -140,9 +50,7 @@ async function inspect() {
   loading.value = true
   error.value = null
   try {
-    state.value = await invoke<OpenXrState>('inspect_openxr', {
-      gameId: selectedGameId.value || null,
-    })
+    state.value = await inspectOpenXr(selectedGameId.value || null)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -152,7 +60,7 @@ async function inspect() {
 
 async function loadGames() {
   try {
-    installedGames.value = await invoke<InstalledGame[]>('detect_steam_games')
+    installedGames.value = await detectOpenXrGames()
     const saved = window.localStorage.getItem('moddin-openxr-game') ?? ''
     if (saved && gameChoices.value.some((game) => game.gameId === saved)) {
       selectedGameId.value = saved
@@ -175,10 +83,7 @@ async function setGameRuntime(manifestPath: string | null) {
   busyAction.value = `game:${manifestPath ?? 'system'}`
   error.value = null
   try {
-    state.value = await invoke<OpenXrState>('set_game_openxr_runtime', {
-      gameId: selectedGameId.value,
-      manifestPath,
-    })
+    state.value = await setGameOpenXrRuntime(selectedGameId.value, manifestPath)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -190,10 +95,7 @@ async function setSystemRuntime(manifestPath: string) {
   busyAction.value = `system:${manifestPath}`
   error.value = null
   try {
-    state.value = await invoke<OpenXrState>('set_system_openxr_runtime', {
-      manifestPath,
-      gameId: selectedGameId.value || null,
-    })
+    state.value = await setSystemOpenXrRuntime(manifestPath, selectedGameId.value || null)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
