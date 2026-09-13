@@ -28,11 +28,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Check frontend architecture
-        run: npm run check:architecture
-
-      - name: Typecheck and build frontend
-        run: npm run build
+      - name: Check and build frontend
+        run: |
+          npm run check:architecture
+          npm run build
 
       - name: Setup Rust stable MSVC
         shell: pwsh
