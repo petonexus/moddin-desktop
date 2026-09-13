@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { activityCopyForLocale, activityDateLocale } from './copy'
+import { dateLocaleFor } from '../../i18n/locale'
+import { activityCopyForLocale } from './copy'
 import { useActivityLogPanel } from './useActivityLogPanel'
 
 const { locale } = useI18n()
@@ -26,7 +27,7 @@ const {
 } = useActivityLogPanel()
 
 function formatDate(timestamp: number) {
-  return new Intl.DateTimeFormat(activityDateLocale(locale.value), {
+  return new Intl.DateTimeFormat(dateLocaleFor(locale.value), {
     dateStyle: 'short',
     timeStyle: 'medium',
   }).format(new Date(timestamp))
