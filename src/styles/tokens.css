@@ -1,0 +1,67 @@
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --moddin-bg: #090d12;
+  --moddin-surface-1: #0f151d;
+  --moddin-surface-2: #141c26;
+  --moddin-surface-3: #1a2430;
+  --moddin-surface-raised: #111923;
+  --moddin-surface-overlay: rgba(9, 13, 18, 0.86);
+
+  /* Lines */
+  --moddin-line-soft: #1c2732;
+  --moddin-line: #263442;
+  --moddin-line-strong: #344455;
+
+  /* Text */
+  --moddin-text: #eef2f7;
+  --moddin-text-soft: #c7d0dc;
+  --moddin-text-muted: #8d9aa9;
+  --moddin-text-faint: #647181;
+
+  /* Brand */
+  --moddin-accent: #8a70ff;
+  --moddin-accent-strong: #6f54f2;
+  --moddin-accent-soft: rgba(138, 112, 255, 0.14);
+  --moddin-accent-softer: rgba(138, 112, 255, 0.08);
+  --moddin-accent-ring: rgba(138, 112, 255, 0.3);
+
+  /* Semantic */
+  --moddin-success: #8de2b1;
+  --moddin-success-bg: #13291d;
+  --moddin-warning: #efd093;
+  --moddin-warning-bg: #332817;
+  --moddin-danger: #f0aeb9;
+  --moddin-danger-bg: #341820;
+  --moddin-info: #a8cbff;
+  --moddin-info-bg: #162943;
+
+  /* Geometry */
+  --moddin-radius-xs: 7px;
+  --moddin-radius-sm: 10px;
+  --moddin-radius-md: 13px;
+  --moddin-radius-lg: 17px;
+  --moddin-radius-xl: 22px;
+
+  /* Motion */
+  --moddin-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --moddin-fast: 120ms;
+  --moddin-normal: 180ms;
+
+  /* Shadows */
+  --moddin-shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.18);
+  --moddin-shadow-md: 0 18px 50px rgba(0, 0, 0, 0.25);
+  --moddin-shadow-lg: 0 28px 90px rgba(0, 0, 0, 0.45);
+
+  /* Compatibility aliases while the legacy stylesheet is decomposed. */
+  --surface-0: var(--moddin-bg);
+  --surface-1: var(--moddin-surface-1);
+  --surface-2: var(--moddin-surface-2);
+  --surface-3: var(--moddin-surface-3);
+  --line: var(--moddin-line);
+  --line-subtle: var(--moddin-line-soft);
+  --text-muted: var(--moddin-text-muted);
+  --accent: var(--moddin-accent);
+  --accent-soft: var(--moddin-accent-soft);
+}
