@@ -9,6 +9,7 @@ const copy = computed(() => activityCopyForLocale(locale.value))
 
 const {
   open,
+  dialogElement,
   loading,
   clearing,
   error,
@@ -43,7 +44,14 @@ async function clearLogs() {
   </button>
 
   <div v-if="open" class="activity-backdrop" @click.self="closePanel">
-    <section class="activity-panel" role="dialog" aria-modal="true" :aria-label="copy.title">
+    <section
+      ref="dialogElement"
+      class="activity-panel"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="copy.title"
+      tabindex="-1"
+    >
       <header class="activity-header">
         <div>
           <small>ACTIVITY</small>

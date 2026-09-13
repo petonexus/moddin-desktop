@@ -9,6 +9,7 @@ const copy = computed(() => openXrCopyForLocale(locale.value))
 
 const {
   open,
+  dialogElement,
   loading,
   busyAction,
   error,
@@ -38,7 +39,14 @@ function effectiveSourceLabel() {
   </button>
 
   <div v-if="open" class="openxr-backdrop" @click.self="closeManager">
-    <section class="openxr-panel" role="dialog" aria-modal="true" :aria-label="copy.title">
+    <section
+      ref="dialogElement"
+      class="openxr-panel"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="copy.title"
+      tabindex="-1"
+    >
       <header class="openxr-header">
         <div>
           <small>OPENXR</small>

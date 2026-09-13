@@ -20,7 +20,7 @@ export function useOpenXrManager() {
   const state = ref<OpenXrState | null>(null)
   const installedGames = ref<InstalledGame[]>([])
   const selectedGameId = ref('')
-  const { openDialog, closeDialog } = useDialogLifecycle(open)
+  const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
 
   const gameChoices = computed(() => installedGames.value.flatMap((game) => {
     const catalog = findCatalogGameBySteamAppId(game.appId)
@@ -65,7 +65,7 @@ export function useOpenXrManager() {
   }
 
   async function openManager() {
-    openDialog()
+    await openDialog()
     await loadGames()
     await inspect()
   }
@@ -119,6 +119,7 @@ export function useOpenXrManager() {
 
   return {
     open,
+    dialogElement,
     loading,
     busyAction,
     error,

@@ -12,7 +12,7 @@ export function useActivityLogPanel() {
   const search = ref('')
   const level = ref<'all' | ActionLogLevel>('all')
   const expanded = ref(new Set<string>())
-  const { openDialog, closeDialog } = useDialogLifecycle(open)
+  const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
 
   const filteredLogs = computed(() => {
     const term = search.value.trim().toLowerCase()
@@ -45,7 +45,7 @@ export function useActivityLogPanel() {
   }
 
   async function openPanel() {
-    openDialog()
+    await openDialog()
     await refresh()
   }
 
@@ -66,6 +66,7 @@ export function useActivityLogPanel() {
 
   return {
     open,
+    dialogElement,
     loading,
     clearing,
     error,
