@@ -1,4 +1,5 @@
 import { computed, ref, watch } from 'vue'
+import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { findCatalogGameBySteamAppId } from '../../services/catalog'
 import type { InstalledGame } from '../../types/game'
 import type { OpenXrRuntimeInfo, OpenXrState } from '../../types/openxr'
@@ -19,6 +20,7 @@ export function useOpenXrManager() {
   const state = ref<OpenXrState | null>(null)
   const installedGames = ref<InstalledGame[]>([])
   const selectedGameId = ref('')
+  const { openDialog, closeDialog } = useDialogLifecycle(open)
 
   const gameChoices = computed(() => installedGames.value.flatMap((game) => {
     const catalog = findCatalogGameBySteamAppId(game.appId)
@@ -63,7 +65,7 @@ export function useOpenXrManager() {
   }
 
   async function openManager() {
-    open.value = true
+    openDialog()
     await loadGames()
     await inspect()
   }
@@ -127,6 +129,7 @@ export function useOpenXrManager() {
     runtimeUsable,
     inspect,
     openManager,
+    closeManager: closeDialog,
     setGameRuntime,
     setSystemRuntime,
   }

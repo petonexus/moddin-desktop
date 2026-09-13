@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import type { ActionLogEntry, ActionLogLevel } from '../../types/activity'
 import { clearActionLogs, listActionLogs } from './service'
 
@@ -11,6 +12,7 @@ export function useActivityLogPanel() {
   const search = ref('')
   const level = ref<'all' | ActionLogLevel>('all')
   const expanded = ref(new Set<string>())
+  const { openDialog, closeDialog } = useDialogLifecycle(open)
 
   const filteredLogs = computed(() => {
     const term = search.value.trim().toLowerCase()
@@ -43,7 +45,7 @@ export function useActivityLogPanel() {
   }
 
   async function openPanel() {
-    open.value = true
+    openDialog()
     await refresh()
   }
 
@@ -75,6 +77,7 @@ export function useActivityLogPanel() {
     toggleDetails,
     refresh,
     openPanel,
+    closePanel: closeDialog,
     clearLogs,
   }
 }

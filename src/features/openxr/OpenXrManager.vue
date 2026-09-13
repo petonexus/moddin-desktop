@@ -19,6 +19,7 @@ const {
   runtimeUsable,
   inspect,
   openManager,
+  closeManager,
   setGameRuntime,
   setSystemRuntime,
 } = useOpenXrManager()
@@ -36,7 +37,7 @@ function effectiveSourceLabel() {
     {{ copy.button }}
   </button>
 
-  <div v-if="open" class="openxr-backdrop" @click.self="open = false">
+  <div v-if="open" class="openxr-backdrop" @click.self="closeManager">
     <section class="openxr-panel" role="dialog" aria-modal="true" :aria-label="copy.title">
       <header class="openxr-header">
         <div>
@@ -44,7 +45,7 @@ function effectiveSourceLabel() {
           <h2>{{ copy.title }}</h2>
           <p>{{ copy.subtitle }}</p>
         </div>
-        <button class="openxr-icon-button" type="button" :aria-label="copy.close" @click="open = false">×</button>
+        <button class="openxr-icon-button" type="button" :aria-label="copy.close" @click="closeManager">×</button>
       </header>
 
       <div class="openxr-toolbar">
