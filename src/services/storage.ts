@@ -1,20 +1,27 @@
-function storageAvailable() {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+function localStorageOrNull() {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
 }
 
 export function readLocalValue(key: string) {
-  if (!storageAvailable()) return null
+  const storage = localStorageOrNull()
+  if (!storage) return null
   try {
-    return window.localStorage.getItem(key)
+    return storage.getItem(key)
   } catch {
     return null
   }
 }
 
 export function writeLocalValue(key: string, value: string) {
-  if (!storageAvailable()) return false
+  const storage = localStorageOrNull()
+  if (!storage) return false
   try {
-    window.localStorage.setItem(key, value)
+    storage.setItem(key, value)
     return true
   } catch {
     return false
@@ -22,9 +29,10 @@ export function writeLocalValue(key: string, value: string) {
 }
 
 export function removeLocalValue(key: string) {
-  if (!storageAvailable()) return false
+  const storage = localStorageOrNull()
+  if (!storage) return false
   try {
-    window.localStorage.removeItem(key)
+    storage.removeItem(key)
     return true
   } catch {
     return false
