@@ -3,6 +3,7 @@ import { isLocale, localeFromBrowserLanguage, localeOptions, type Locale } from 
 import ptBR from './i18n/locales/pt-BR'
 import en from './i18n/locales/en'
 import es from './i18n/locales/es'
+import { readLocalValue } from './services/storage'
 
 export { localeOptions }
 export type { Locale }
@@ -16,12 +17,8 @@ const messages = {
 } satisfies Record<Locale, TranslationMessages>
 
 export function getInitialLocale(): Locale {
-  try {
-    const saved = window.localStorage.getItem('moddin-locale')
-    if (isLocale(saved)) return saved
-  } catch {
-    // Ignore unavailable storage, such as privacy-restricted browser contexts.
-  }
+  const saved = readLocalValue('moddin-locale')
+  if (isLocale(saved)) return saved
 
   const browserLanguage = typeof navigator !== 'undefined' ? navigator.language : ''
   return localeFromBrowserLanguage(browserLanguage)

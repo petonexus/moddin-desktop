@@ -2,6 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import type { App } from 'vue'
 import { persistActionLog, type PersistentActionLevel } from './services/activity-log'
 import { hideDebugErrorPanel, showDebugErrorPanel } from './services/debug-panel'
+import { readLocalValue, removeLocalValue, writeLocalValue } from './services/storage'
 
 type DebugLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -33,13 +34,7 @@ const MAX_LOG_ENTRIES = 300
 const entries: DebugEntry[] = []
 
 function isDebugEnabled() {
-  if (import.meta.env.DEV) return true
-
-  try {
-    return window.localStorage.getItem('moddin-debug') === '1'
-  } catch {
-    return false
-  }
+  return import.meta.env.DEV || readLocalValue('moddin-debug') === '1'
 }
 
 function errorDetails(error: unknown) {
@@ -138,11 +133,11 @@ export function installDebugInstrumentation(app: App) {
 
   window.__MODDIN_DEBUG__ = {
     enable() {
-      window.localStorage.setItem('moddin-debug', '1')
+      writeLocalValue('moddin-debug', '1')
       debug.info('debug', 'Verbose logging enabled')
     },
     disable() {
-      window.localStorage.removeItem('moddin-debug')
+      removeLocalValue('moddin-debug')
       debug.info('debug', 'Verbose logging disabled')
     },
     clear() {

@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { findCatalogGameBySteamAppId } from '../../services/catalog'
+import { readLocalValue, writeLocalValue } from '../../services/storage'
 import type { InstalledGame } from '../../types/game'
 import {
   detectOpenXrGames,
@@ -53,7 +54,7 @@ export function useOpenXrManager() {
   async function loadGames() {
     try {
       installedGames.value = await detectOpenXrGames()
-      const saved = readSelectedGame()
+      const saved = readLocalValue(SELECTED_GAME_STORAGE_KEY) ?? ''
       if (saved && gameChoices.value.some((game) => game.gameId === saved)) {
         selectedGameId.value = saved
       } else if (!selectedGameId.value && gameChoices.value.length) {
@@ -95,25 +96,8 @@ export function useOpenXrManager() {
     }
   }
 
-  function readSelectedGame() {
-    try {
-      return window.localStorage.getItem(SELECTED_GAME_STORAGE_KEY) ?? ''
-    } catch {
-      return ''
-    }
-  }
-
-  function persistSelectedGame(value: string) {
-    if (!value) return
-    try {
-      window.localStorage.setItem(SELECTED_GAME_STORAGE_KEY, value)
-    } catch {
-      // Storage is optional.
-    }
-  }
-
   watch(selectedGameId, async (value) => {
-    persistSelectedGame(value)
+    if (value) writeLocalValue(SELECTED_GAME_STORAGE_KEY, value)
     if (open.value) await inspect()
   })
 
