@@ -29,6 +29,12 @@ const catalogFiles = import.meta.glob('../catalog/games/*.yaml', {
   query: '?raw',
 }) as Record<string, string>
 
+interface LoadedCatalog {
+  entries: GameCatalogEntry[]
+  byId: Map<string, GameCatalogEntry>
+  bySteamAppId: Map<string, GameCatalogEntry>
+}
+
 function readCatalogEntry(raw: string, source: string): GameCatalogEntry {
   try {
     return gameSchema.parse(parse(raw))
@@ -38,31 +44,48 @@ function readCatalogEntry(raw: string, source: string): GameCatalogEntry {
   }
 }
 
-function loadGameCatalog(): GameCatalogEntry[] {
+function assertUniqueModuleIds(game: GameCatalogEntry) {
+  const moduleIds = new Set<string>()
+  for (const module of game.modules) {
+    if (moduleIds.has(module.id)) {
+      throw new Error(`Duplicate Moddin module id "${module.id}" in game "${game.id}"`)
+    }
+    moduleIds.add(module.id)
+  }
+}
+
+function loadGameCatalog(): LoadedCatalog {
   const entries = Object.entries(catalogFiles)
     .map(([source, raw]) => readCatalogEntry(raw, source))
     .sort((left, right) => left.name.localeCompare(right.name))
 
-  const ids = new Set<string>()
-  const steamAppIds = new Set<string>()
+  const byId = new Map<string, GameCatalogEntry>()
+  const bySteamAppId = new Map<string, GameCatalogEntry>()
 
   for (const game of entries) {
-    if (ids.has(game.id)) {
+    if (byId.has(game.id)) {
       throw new Error(`Duplicate Moddin game catalog id: ${game.id}`)
     }
-    if (steamAppIds.has(game.steamAppId)) {
+    if (bySteamAppId.has(game.steamAppId)) {
       throw new Error(`Duplicate Moddin Steam App ID: ${game.steamAppId}`)
     }
 
-    ids.add(game.id)
-    steamAppIds.add(game.steamAppId)
+    assertUniqueModuleIds(game)
+    byId.set(game.id, game)
+    bySteamAppId.set(game.steamAppId, game)
   }
 
-  return entries
+  return { entries, byId, bySteamAppId }
 }
 
-export const gameCatalog: GameCatalogEntry[] = loadGameCatalog()
+const catalog = loadGameCatalog()
+
+export const gameCatalog: GameCatalogEntry[] = catalog.entries
+
+export function findCatalogGameById(gameId: string) {
+  return catalog.byId.get(gameId)
+}
 
 export function findCatalogGameBySteamAppId(appId: string) {
-  return gameCatalog.find((game) => game.steamAppId === appId)
+  return catalog.bySteamAppId.get(appId)
 }
