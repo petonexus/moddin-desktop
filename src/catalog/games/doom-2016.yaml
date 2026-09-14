@@ -1,0 +1,15 @@
+id: doom-2016
+name: DOOM (2016)
+steamAppId: "379720"
+executable: DOOMx64.exe
+modules:
+  - id: desktop-shortcut
+    name: Criar atalho na Area de Trabalho
+    description: Cria um atalho do Windows para o executavel do jogo, usando o icone real do DOOM e com opcao de Desfazer.
+    category: system
+    status: available
+  - id: kharvox-vr
+    name: KHARVOX VR
+    description: O KHARVOX 0.8 Beta foi preparado externamente. A integracao gerenciada do launcher externo no Moddin ainda esta planejada.
+    category: vr
+    status: planned

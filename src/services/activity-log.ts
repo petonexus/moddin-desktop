@@ -18,6 +18,7 @@ const PERSISTENT_ACTION_COMMANDS = new Set([
   'rollback_latest_module_transaction',
   'rollback_transaction',
   'launch_vr_game',
+  'create_desktop_shortcut',
   'set_game_openxr_runtime',
   'set_system_openxr_runtime',
 ])

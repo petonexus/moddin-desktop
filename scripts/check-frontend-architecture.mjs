@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -20,6 +20,12 @@ function fail(message) {
   failures.push(message)
 }
 
+// Measure with normalized line endings so a byte budget means the same thing on
+// a Windows checkout (CRLF) as it does in CI (LF).
+function sizeInBytes(file) {
+  return Buffer.byteLength(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'utf8')
+}
+
 const srcDir = path.join(root, 'src')
 const srcFiles = walk(srcDir)
 const vueFiles = srcFiles.filter((file) => file.endsWith('.vue'))
@@ -28,7 +34,7 @@ const vueFiles = srcFiles.filter((file) => file.endsWith('.vue'))
 // all new/other Vue views must stay small enough to remain reviewable.
 for (const file of vueFiles) {
   const rel = relative(file)
-  const size = statSync(file).size
+  const size = sizeInBytes(file)
   const maxBytes = rel === 'src/App.vue' ? 115_000 : 30_000
   if (size > maxBytes) {
     fail(`${rel} is ${size} bytes; budget is ${maxBytes}. Split responsibilities before adding more.`)
@@ -53,7 +59,7 @@ if (existsSync(path.join(srcDir, 'style.css'))) {
 
 // Keep the i18n bootstrap small; translation payloads belong in locale modules.
 const i18nBootstrap = path.join(srcDir, 'i18n.ts')
-if (existsSync(i18nBootstrap) && statSync(i18nBootstrap).size > 5_000) {
+if (existsSync(i18nBootstrap) && sizeInBytes(i18nBootstrap) > 5_000) {
   fail('src/i18n.ts exceeded 5 KB. Translation payloads belong in src/i18n/locales/.')
 }
 

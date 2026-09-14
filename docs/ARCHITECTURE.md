@@ -144,6 +144,12 @@ If a per-game OpenXR override exists, the launch preflight reports it as the eff
 
 Cyberpunk's current VR Port owns its first-launch `UserSettings.json` migration, so Moddin intentionally does not compete with it. Elden Ring's ERVR recipe applies the documented conservative starting values when the existing `Game/ERVR/ERVR.ini` contains those keys.
 
+### Desktop shortcuts
+
+catalogued game -> shortcut preview -> Windows Desktop .lnk -> transaction history -> Undo
+
+The reusable Desktop Shortcut module only accepts a catalogued executable resolved below the selected game directory. The Windows shortcut targets that executable, uses it as the icon source, and has the executable directory as its working directory. Before an existing Moddin shortcut is replaced, Moddin creates a transaction backup; Undo restores the previous shortcut or removes the newly created one.
+
 ### Engine-aware UEVR
 
 `selected game -> local engine detection -> backend/release resolution -> safe ZIP extraction -> tool transaction`

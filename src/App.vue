@@ -13,6 +13,8 @@ import type { CheekyFoveatedDlssPreview, CheekyFoveatedDlssRequest, CheekyFoveat
 import type { UevrBackend, UevrBackendCompatibility, UevrPreview, UevrRequest, UevrResult } from './types/uevr'
 import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
+import DesktopShortcutDialog from './features/desktop-shortcut/DesktopShortcutDialog.vue'
+import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortcut'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
 import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
@@ -76,6 +78,15 @@ const compatibilityDialog = ref<{ module: ToolModuleDefinition; gameName: string
 const compatibilityDraftStatus = ref<CompatibilityStatus>('unverified')
 const compatibilityDraftNote = ref('')
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
+const desktopShortcut = useDesktopShortcut({
+  busy: moduleBusy,
+  actionError,
+  success,
+  onCreated: async (module) => {
+    await refreshTransactions()
+    await verifyModule(module, true)
+  },
+})
 const uevrBackendSelections = ref<Record<string, UevrBackend>>({})
 
 const compatibilityStatuses: CompatibilityStatus[] = [
@@ -490,6 +501,7 @@ function verificationStatusLabel(status: ModuleVerification['status']) {
 function moduleActionLabel(module: ToolModuleDefinition) {
   const verification = moduleVerification(module)
   if (module.id === 'vr-launch') return t('reviewAndLaunch')
+  if (module.id === 'desktop-shortcut') return module.name
   if (verification?.status === 'installed') {
     return module.id === 'optiscaler' || module.id === 'uevr' ? t('reinstall') : t('applyAgain')
   }
@@ -503,6 +515,7 @@ function moduleTransactionKind(module: ToolModuleDefinition) {
   if (module.id === 'cheeky-foveated-dlss') return 'cheeky-foveated-dlss'
   if (module.id === 'uevr') return 'uevr'
   if (module.id === 'vr-launch') return 'vr-launch'
+  if (module.id === 'desktop-shortcut') return 'desktop-shortcut'
   return null
 }
 
@@ -761,6 +774,8 @@ async function configureModule(module: ToolModuleDefinition) {
     actionError.value = t('gameRunningActionBlocked')
     return
   }
+
+  if (await desktopShortcut.open(module, selectedGame.value)) return
 
   const vrRequest = buildVrLaunchRequest(module)
   if (vrRequest) {
@@ -1295,6 +1310,12 @@ async function verifyModule(
         check(t('checkOpenXrRuntime'), Boolean(preview.activeOpenXrRuntime)),
         check(t('checkGameClosed'), !preview.gameRunning),
       ], preview.gameRunning, expectedAppId, expectedGeneration)
+    } else if (module.id === 'desktop-shortcut') {
+      const preview = await desktopShortcut.preview(module, selectedGame.value)
+      const status: ModuleVerification['status'] = preview.canApply ? 'ready' : 'attention'
+      saveModuleVerification(module, status, verificationSummary(status), [
+        check(t('checkExecutable'), preview.canApply),
+      ], false, expectedAppId, expectedGeneration)
     } else if (module.id === 'ofxr-framegen') {
       const request = buildOfxrRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
@@ -2596,6 +2617,16 @@ onUnmounted(() => {
         </div>
       </section>
     </div>
+
+    <DesktopShortcutDialog
+      v-if="desktopShortcut.dialog.value"
+      :module-name="desktopShortcut.dialog.value.module.name"
+      :preview="desktopShortcut.dialog.value.preview"
+      :busy="moduleBusy"
+      :disabled="inspectionLoading || selectedGameRunning"
+      @close="desktopShortcut.close"
+      @confirm="desktopShortcut.confirm"
+    />
 
     <div v-if="vrLaunchDialog" class="modal-backdrop" @click.self="vrLaunchDialog = null">
       <section class="modal-card">
