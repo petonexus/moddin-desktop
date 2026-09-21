@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Moddin",
+  "productName": "Moddin Desktop",
   "version": "0.1.0",
-  "identifier": "com.moddin.desktop",
+  "identifier": "dev.petonexus.moddin-desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Moddin",
+        "title": "Moddin Desktop",
         "width": 1180,
         "height": 760,
         "minWidth": 900,

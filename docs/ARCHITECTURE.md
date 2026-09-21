@@ -1,8 +1,8 @@
-# Moddin architecture
+# Moddin Desktop architecture
 
 ## Goal
 
-Moddin should behave like a small declarative package manager for game mods and tooling, not as a collection of per-game scripts.
+Moddin Desktop should behave like a small declarative package manager for game mods and tooling, not as a collection of per-game scripts.
 
 A game definition describes **what is supported**. Reusable modules describe **how a capability is applied**. The native desktop layer performs privileged/local operations and records destructive changes so they can be reversed.
 

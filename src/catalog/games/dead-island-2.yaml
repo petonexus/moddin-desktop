@@ -1,0 +1,75 @@
+﻿id: dead-island-2
+name: Dead Island 2
+epicAppId: Crow
+executable: DeadIsland/Binaries/Win64/DeadIsland-Win64-Shipping.exe
+enginePreset: re-engine
+modules:
+  - id: desktop-shortcut
+    name: Create Desktop Shortcut
+    description: Create a Windows shortcut for Dead Island 2 using the catalogued executable as target and icon.
+    category: system
+    status: available
+  - id: obs-vr
+    name: OBS VR Capture
+    description: Create or update a dedicated OBS Game Capture source for the UEVR session with automatic backup and rollback.
+    category: vr
+    status: available
+    config:
+      collectionName: Sem nome
+      sceneName: vr
+      sourceName: Dead Island 2 VR
+      executableName: DeadIsland-Win64-Shipping.exe
+  - id: optiscaler
+    name: OptiScaler
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
+    category: graphics
+    status: available
+    config:
+      version: 0.9.4
+      downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/OptiScaler_0.9.4-final.20260718._MM.7z
+      updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
+      sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxyCandidates: dxgi.dll,version.dll
+  - id: ofxr-framegen
+    name: OFXR FrameGen
+    description: Install and prepare the OFXR Bridge for an OpenXR session while preserving configuration and rollback.
+    category: vr
+    status: available
+    config:
+      version: 0.2.0
+      implementationVersion: 68
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
+      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      backend: fidelityfx
+      nvidiaPreset: medium
+      nvidiaInputScale: 50
+      nvidiaBidirectional: 0
+      safetyNotes:
+        - OFXR Bridge is experimental and may produce artifacts, freezes, or crashes depending on the game, VR mod, GPU, and runtime.
+        - The tray requires the Microsoft Visual C++ Redistributable x64; keep the game non-elevated so user OpenXR layers apply.
+  - id: uevr
+    name: UEVR Engine-Aware Installer
+    description: Detect Unreal Engine, resolve the official UEVR release, and keep Nightly, JoeyHodge, and AFW variants separate and reversible.
+    category: vr
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
+      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
+      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
+      defaultBackend: nightly
+      backendCandidates:
+        - nightly|available
+        - joey|available
+        - afw|experimental
+        - joey-afw|experimental
+      safetyNotes:
+        - Dead Island 2 uses Unreal Engine; local engine detection enables the workflow but does not replace testing a compatible UEVR profile.
+        - Close Dead Island 2 and UEVRInjector.exe before installing or switching a variant.
+        - Do not run Epic Games Launcher, UEVR, or the game as administrator.
+  - id: cheeky-foveated-dlss-uevr
+    name: Cheeky Foveated DLSS for UEVR
+    description: Install the Cheeky UEVR profile plugin and its DLSS path after the game-specific transaction flow is implemented in Moddin.
+    category: graphics
+    status: planned

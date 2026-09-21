@@ -1,0 +1,31 @@
+id: re-engine
+displayName: RE Engine (Resident Evil, Dead Island, Dragon's Dogma)
+description: Default module set for games built on Capcom's RE Engine. UEVR does not target RE Engine; Moddin currently ships OptiScaler, OpenXR helpers, OBS VR and the desktop shortcut for these titles.
+modules:
+  - id: desktop-shortcut
+    name: Desktop shortcut
+    description: Create a Windows Desktop .lnk for the selected executable with transaction-backed rollback.
+    category: qol
+    status: available
+  - id: obs-vr
+    name: OBS VR Capture
+    description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.
+    category: vr
+    status: available
+    config:
+      sceneName: vr
+  - id: openxr
+    name: OpenXR tools
+    description: Manage OpenXR-related helpers and per-game VR configuration.
+    category: vr
+    status: planned
+  - id: optiscaler
+    name: OptiScaler
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
+    category: graphics
+    status: available
+  - id: reframework
+    name: REFramework
+    description: Install REFramework for RE Engine games with engine-detection gating, anti-cheat refusal and transactional rollback.
+    category: qol
+    status: planned

@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-title Moddin - Windows Setup
+title Moddin Desktop - Windows Setup
 
 echo ==============================================================
 echo  Moddin - Setup completo do ambiente Windows

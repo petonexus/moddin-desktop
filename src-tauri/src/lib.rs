@@ -1,14 +1,20 @@
 mod activity;
+mod bepinex;
 mod cheeky;
 mod desktop_shortcut;
 mod inspection;
+mod module;
 mod obs;
 mod ofxr;
+mod ofxr_module;
 mod openxr;
 mod optiscaler;
 mod process;
+mod reframework;
+mod reshade;
 mod steam;
 mod transaction;
+mod ue4ss;
 mod uevr;
 mod updates;
 mod vr_launch;
@@ -87,6 +93,18 @@ pub fn run() {
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
+            reshade::preview_reshade,
+            reshade::install_reshade,
+            reshade::uninstall_reshade,
+            ue4ss::preview_ue4ss,
+            ue4ss::install_ue4ss,
+            ue4ss::uninstall_ue4ss,
+            bepinex::preview_bepinex,
+            bepinex::install_bepinex,
+            bepinex::uninstall_bepinex,
+            reframework::preview_reframework,
+            reframework::install_reframework,
+            reframework::uninstall_reframework,
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,

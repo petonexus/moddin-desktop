@@ -1,8 +1,13 @@
-# Moddin
+# Moddin Desktop
 
-**Moddin** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
+[![Repository](https://img.shields.io/badge/github-petonexus%2Fmoddin--desktop-181717?logo=github)](https://github.com/petonexus/moddin-desktop)
+[![License: GPL-3.0](https://img.shields.io/github/license/petonexus/moddin-desktop)](https://github.com/petonexus/moddin-desktop/blob/main/LICENSE)
 
-Instead of keeping one-off PowerShell installers per game, Moddin detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
+**Moddin Desktop** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
+
+Instead of keeping one-off PowerShell installers per game, Moddin Desktop detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
+
+See [`docs/SCOPE.md`](docs/SCOPE.md) for what is and isn't inside this project, and [`tools/README.md`](tools/README.md) for the standalone Windows tools that ship alongside the app.
 
 ## Stack
 

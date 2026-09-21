@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-title Moddin - Dev
+title Moddin Desktop - Dev
 
 echo ==============================================================
 echo  Moddin - iniciando modo desenvolvimento

@@ -1,6 +1,6 @@
-# Moddin frontend architecture
+# Moddin Desktop frontend architecture
 
-This document describes the current Vue frontend boundaries and the remaining decomposition work as Moddin grows into a reusable game tooling manager.
+This document describes the current Vue frontend boundaries and the remaining decomposition work as Moddin Desktop grows into a reusable game tooling manager.
 
 ## Design rule
 

@@ -201,7 +201,7 @@ pub async fn check_module_update(
     }
 
     let client = Client::builder()
-        .user_agent("Moddin/0.1 (+https://github.com/marcoasjunior/moddin)")
+        .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(30))
         .build()

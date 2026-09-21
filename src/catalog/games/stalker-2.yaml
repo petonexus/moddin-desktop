@@ -1,0 +1,64 @@
+﻿id: stalker-2
+name: "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
+steamAppId: "1643320"
+executable: Stalker2/Binaries/Win64/Stalker2-Win64-Shipping.exe
+enginePreset: unreal5
+modules:
+  - id: desktop-shortcut
+    name: Criar atalho na Área de Trabalho
+    description: Criar um atalho do Windows para STALKER 2 usando o executável catalogado como destino e ícone.
+    category: system
+    status: available
+  - id: obs-vr
+    name: Captura OBS VR
+    description: Criar ou atualizar a captura Game Capture da sessão UEVR com backup automático e rollback.
+    category: vr
+    status: available
+    config:
+      collectionName: Sem nome
+      sceneName: vr
+      sourceName: STALKER 2 VR
+      executableName: Stalker2-Win64-Shipping.exe
+  - id: ofxr-framegen
+    name: OFXR FrameGen
+    description: Instalar e preparar o OFXR Bridge para uma sessão OpenXR, mantendo a configuração e o rollback transacionais.
+    category: vr
+    status: available
+    config:
+      version: 0.2.0
+      implementationVersion: 68
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
+      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      backend: fidelityfx
+      nvidiaPreset: medium
+      nvidiaInputScale: 50
+      nvidiaBidirectional: 0
+      safetyNotes:
+        - OFXR Bridge é experimental e pode produzir artefatos, travamentos ou crashes dependendo do jogo, plugin UEVR, GPU e runtime.
+        - O tray exige o Microsoft Visual C++ Redistributable x64; mantenha o jogo sem elevação para que as camadas OpenXR do usuário sejam aplicadas.
+  - id: uevr
+    name: Instalador UEVR com detecção de engine
+    description: Detectar Unreal Engine, resolver a release oficial do UEVR e manter variantes Nightly, JoeyHodge e AFW separadas e reversíveis.
+    category: vr
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
+      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
+      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
+      defaultBackend: nightly
+      backendCandidates:
+        - nightly|available
+        - joey|available
+        - afw|experimental
+        - joey-afw|experimental
+      safetyNotes:
+        - O scanner local confirmou um perfil UEVR e o caminho Native Stereo deve ser validado primeiro dentro do jogo.
+        - Feche STALKER 2 e UEVRInjector.exe antes de instalar ou trocar uma variante.
+        - Não execute Steam, UEVR ou o jogo como administrador.
+  - id: cheeky-foveated-dlss-uevr
+    name: Cheeky Foveated DLSS para UEVR
+    description: Instalar o plugin Cheeky no perfil UEVR, configurar a camada OpenXR correspondente e validar o pipeline com DLSS. O fluxo seguro ainda está em planejamento no Moddin.
+    category: graphics
+    status: planned

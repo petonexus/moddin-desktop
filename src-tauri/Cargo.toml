@@ -1,17 +1,21 @@
 [package]
-name = "moddin"
+name = "moddin-desktop"
 version = "0.1.0"
-description = "Windows-first PC game mod and tooling manager"
+description = "Moddin Desktop — Windows-first PC game mod and tooling manager"
 authors = ["Marco Antonio da Silva Junior"]
 edition = "2021"
 license = "GPL-3.0"
+repository = "https://github.com/petonexus/moddin-desktop"
 
 [lib]
-name = "moddin_lib"
+name = "moddin_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

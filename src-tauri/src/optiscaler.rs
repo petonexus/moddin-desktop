@@ -519,7 +519,7 @@ pub async fn install_optiscaler(request: OptiScalerRequest) -> Result<Transactio
     }
 
     let client = reqwest::Client::builder()
-        .user_agent("Moddin/0.1 (+https://github.com/marcoasjunior/moddin)")
+        .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
         .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(300))
         .build()

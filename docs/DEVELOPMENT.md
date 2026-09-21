@@ -41,7 +41,7 @@ Install Visual Studio Build Tools 2022 and select **Desktop development with C++
 
 Modern Windows 10/11 systems normally already include Microsoft Edge WebView2. Tauri uses it to render the desktop UI.
 
-## Run Moddin
+## Run Moddin Desktop
 
 ```powershell
 npm install
