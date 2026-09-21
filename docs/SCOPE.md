@@ -65,9 +65,38 @@ If a capability is **reusable across games** and benefits from native code
 (registry, filesystem, process, hash, archive), it goes here.
 
 Today: `obs`, `optiscaler`, `openxr`, `ofxr`, `uevr`, `cheeky`, `vr_launch`,
-`desktop_shortcut`.
+`desktop_shortcut`, `reshade` (stub).
 
-Planned per `ROADMAP.md`: `reshade`, `ue4ss`, `bepinex`, `reframework`.
+Planned per `ROADMAP.md`: `reshade` (full implementation), `ue4ss`,
+`bepinex`, `reframework`. Design notes for each live in
+[`docs/MODULES.md`](MODULES.md).
+
+Every module is expected to eventually implement the shared lifecycle
+trait in [`src-tauri/src/module.rs`](../src-tauri/src/module.rs):
+
+```rust
+pub trait Module: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn name(&self) -> &'static str;
+    fn category(&self) -> ModuleCategory;
+    fn preview(&self, context: &ModuleContext) -> Result<PreviewReport, String>;
+    fn apply(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
+    fn verify(&self, context: &ModuleContext) -> Result<VerificationReport, String>;
+    fn rollback(&self, transaction_id: &str) -> Result<TransactionRecord, String>;
+    fn remove(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
+    fn update_check(&self, context: &ModuleContext) -> Result<UpdateInfo, String>;
+}
+```
+
+The trait is the source of truth for the per-module lifecycle; existing
+modules still ship their bespoke Tauri commands and will adopt the trait
+incrementally.
+
+`update_check` is the shared hook every module that ships against a
+versioned upstream feed (`updateUrl` in the catalog recipe) must
+implement. The existing `check_module_update` Tauri command
+(`src-tauri/src/updates.rs`) already understands the GitHub release-API
+shape and is the implementation all modules reuse.
 
 ### 2.3 Tool (`tools/<topic>/`)
 

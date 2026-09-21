@@ -1,0 +1,85 @@
+﻿id: dawnwalker
+name: The Blood of Dawnwalker
+steamAppId: "3751260"
+executable: Dawnwalker/Binaries/Win64/Dawnwalker.exe
+enginePreset: unreal5
+modules:
+  - id: desktop-shortcut
+    name: Criar atalho na Área de Trabalho
+    description: Criar um atalho do Windows para Dawnwalker usando o executável catalogado como destino e ícone.
+    category: system
+    status: available
+  - id: obs-vr
+    name: Captura OBS VR
+    description: Criar ou atualizar a captura Game Capture da versão VR com backup automático e rollback.
+    category: vr
+    status: available
+    config:
+      collectionName: Sem nome
+      sceneName: vr
+      sourceName: The Blood of Dawnwalker VR
+      executableName: Dawnwalker.exe
+  - id: optiscaler
+    name: OptiScaler
+    description: Instalar a release oficial do OptiScaler com verificação SHA-256, seleção segura de proxy e rollback.
+    category: graphics
+    status: available
+    config:
+      version: 0.9.4
+      downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/OptiScaler_0.9.4-final.20260718._MM.7z
+      updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
+      sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxyCandidates: dxgi.dll,version.dll
+  - id: ofxr-framegen
+    name: OFXR FrameGen
+    description: Instalar e preparar o OFXR Bridge para uma sessão OpenXR, mantendo a configuração e o rollback transacionais.
+    category: vr
+    status: available
+    config:
+      version: 0.2.0
+      implementationVersion: 68
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
+      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      backend: fidelityfx
+      nvidiaPreset: medium
+      nvidiaInputScale: 50
+      nvidiaBidirectional: 0
+      safetyNotes:
+        - OFXR Bridge é experimental e pode produzir artefatos, travamentos ou crashes dependendo do jogo, mod VR, GPU e runtime.
+        - O tray exige o Microsoft Visual C++ Redistributable x64; mantenha o jogo sem elevação para que as camadas OpenXR do usuário sejam aplicadas.
+  - id: uevr
+    name: Instalador UEVR com detecção de engine
+    description: Detectar Unreal Engine, resolver a release oficial do UEVR e manter variantes Nightly, JoeyHodge e AFW separadas e reversíveis.
+    category: vr
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
+      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
+      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
+      defaultBackend: nightly
+      backendCandidates:
+        - nightly|available
+        - joey|available
+        - afw|experimental
+        - joey-afw|experimental
+      safetyNotes:
+        - Dawnwalker usa Unreal Engine 5; a detecção local habilita o fluxo, mas não substitui o teste de compatibilidade do perfil UEVR.
+        - Feche Dawnwalker e UEVRInjector.exe antes de instalar ou trocar uma variante.
+        - Não execute Steam, UEVR ou o jogo como administrador.
+  - id: ue4ss
+    name: UE4SS e pacote QoL
+    description: Gerenciar o UE4SS e os mods QoL do Dawnwalker — Inventory and Journal, Nax-AutoLoot, More Markers, Where Did My Time Go e Uncapped Cutscenes — por uma instalação transacional do Moddin.
+    category: qol
+    status: planned
+  - id: graphics-profile
+    name: Perfil gráfico MFG + Ray Reconstruction
+    description: Aplicar os presets Dawnwalker de MFG 3X recomendado, fallback 2X e DLSS 5 NR com backup dos INIs, quarentena reversível e restauração do estado anterior.
+    category: graphics
+    status: planned
+  - id: vortex-migration
+    name: Migração de mods manuais para Vortex
+    description: Mover a instalação manual de UE4SS para um backup seguro antes de deixar o Vortex assumir o gerenciamento dos mods.
+    category: system
+    status: planned

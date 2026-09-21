@@ -1,0 +1,31 @@
+id: redengine
+displayName: REDengine (Cyberpunk 2077, The Witcher 3)
+description: Default module set for games built on CD Projekt Red's REDengine. REDengine has its own VR Port; Moddin does not bundle UEVR-style VR injection for it.
+modules:
+  - id: desktop-shortcut
+    name: Desktop shortcut
+    description: Create a Windows Desktop .lnk for the selected executable with transaction-backed rollback.
+    category: qol
+    status: available
+  - id: obs-vr
+    name: OBS VR Capture
+    description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.
+    category: vr
+    status: available
+    config:
+      sceneName: vr
+  - id: openxr
+    name: OpenXR tools
+    description: Manage OpenXR-related helpers and per-game VR configuration.
+    category: vr
+    status: planned
+  - id: optiscaler
+    name: OptiScaler
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
+    category: graphics
+    status: available
+  - id: cheeky-foveated-dlss
+    name: Cheeky Foveated DLSS
+    description: Install the ReShade add-on that concentrates DLSS quality in the center of the image for lower GPU cost.
+    category: graphics
+    status: available

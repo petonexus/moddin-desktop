@@ -1,0 +1,52 @@
+id: unreal5
+displayName: Unreal Engine (4.8 - 5.4)
+description: Default module set for games built on Unreal Engine. UEVR eligibility is automatically re-checked at install time against the local engine version.
+modules:
+  - id: desktop-shortcut
+    name: Desktop shortcut
+    description: Create a Windows Desktop .lnk for the selected executable with transaction-backed rollback.
+    category: qol
+    status: available
+  - id: obs-vr
+    name: OBS VR Capture
+    description: Create or update a dedicated OBS Game Capture source for the VR scene with automatic backup and rollback.
+    category: vr
+    status: available
+    config:
+      sceneName: vr
+  - id: openxr
+    name: OpenXR tools
+    description: Manage OpenXR-related helpers and per-game VR configuration.
+    category: vr
+    status: planned
+  - id: uevr
+    name: UEVR engine-aware installer
+    description: Detect the game engine, resolve the newest compatible UEVR build, and keep Nightly, JoeyHodge, and AFW variants separate and reversible.
+    category: vr
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
+      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
+      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
+      defaultBackend: nightly
+  - id: ofxr-framegen
+    name: OFXR FrameGen
+    description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
+    category: vr
+    status: available
+  - id: optiscaler
+    name: OptiScaler
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
+    category: graphics
+    status: available
+  - id: cheeky-foveated-dlss
+    name: Cheeky Foveated DLSS
+    description: Install the ReShade add-on that concentrates DLSS quality in the center of the image for lower GPU cost.
+    category: graphics
+    status: available
+  - id: reshade
+    name: ReShade host
+    description: Install a ReShade build compatible with the selected game, with proxy-DLL selection and transactional rollback. Required as a host by the Cheeky add-on above.
+    category: graphics
+    status: planned

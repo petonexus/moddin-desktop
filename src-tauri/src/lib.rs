@@ -2,11 +2,13 @@ mod activity;
 mod cheeky;
 mod desktop_shortcut;
 mod inspection;
+mod module;
 mod obs;
 mod ofxr;
 mod openxr;
 mod optiscaler;
 mod process;
+mod reshade;
 mod steam;
 mod transaction;
 mod uevr;
@@ -87,6 +89,9 @@ pub fn run() {
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
+            reshade::preview_reshade,
+            reshade::install_reshade,
+            reshade::uninstall_reshade,
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
