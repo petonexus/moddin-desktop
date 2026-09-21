@@ -24,3 +24,8 @@ modules:
     description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
     category: graphics
     status: available
+  - id: reframework
+    name: REFramework
+    description: Install REFramework for RE Engine games with engine-detection gating, anti-cheat refusal and transactional rollback.
+    category: qol
+    status: planned

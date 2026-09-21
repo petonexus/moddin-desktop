@@ -50,3 +50,8 @@ modules:
     description: Install a ReShade build compatible with the selected game, with proxy-DLL selection and transactional rollback. Required as a host by the Cheeky add-on above.
     category: graphics
     status: planned
+  - id: ue4ss
+    name: UE4SS scripting framework
+    description: Install the UE4SS scripting runtime (UE 4.20-5.4) with engine-version gating, transactional rollback and optional QoL mod bundles per recipe.
+    category: qol
+    status: planned

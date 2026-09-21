@@ -162,6 +162,14 @@ pub struct ApplyResult {
 /// are free to hold their own state through the existing `*_marker.json`
 /// files under `%LOCALAPPDATA%/Moddin/tools/<module>/`.
 ///
+/// ## Async
+///
+/// `preview`, `apply`, `verify`, `remove`, and `update_check` are async
+/// to match the existing `#[tauri::command]` shape — most modules need
+/// to hit the network (download, update check) or the filesystem in a
+/// non-blocking fashion. `rollback` stays sync because the transaction
+/// store is fully synchronous.
+///
 /// ## Errors
 ///
 /// Every method returns `Result<_, String>` because the existing Tauri
@@ -182,15 +190,24 @@ pub trait Module: Send + Sync {
 
     /// Dry-run: verify preconditions and list the planned changes.
     /// Must not mutate state.
-    fn preview(&self, context: &ModuleContext) -> Result<PreviewReport, String>;
+    fn preview(
+        &self,
+        context: &ModuleContext,
+    ) -> impl std::future::Future<Output = Result<PreviewReport, String>> + Send;
 
     /// Apply the module: install, configure, or launch as appropriate.
     /// Must record a `TransactionRecord` so the action is reversible.
-    fn apply(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
+    fn apply(
+        &self,
+        context: &ModuleContext,
+    ) -> impl std::future::Future<Output = Result<ApplyResult, String>> + Send;
 
     /// Read-only state snapshot. Drives the verification checklist.
     /// Must not mutate state.
-    fn verify(&self, context: &ModuleContext) -> Result<VerificationReport, String>;
+    fn verify(
+        &self,
+        context: &ModuleContext,
+    ) -> impl std::future::Future<Output = Result<VerificationReport, String>> + Send;
 
     /// Undo a previously-recorded transaction. The default implementation
     /// delegates to the transaction store, which already knows how to
@@ -203,19 +220,28 @@ pub trait Module: Send + Sync {
     /// Reversibly tear the module down. Distinct from `rollback`: it
     /// removes everything the module installed, not just the latest
     /// transaction. Must also record a `TransactionRecord`.
-    fn remove(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
+    fn remove(
+        &self,
+        context: &ModuleContext,
+    ) -> impl std::future::Future<Output = Result<ApplyResult, String>> + Send;
 
     /// Optional upstream-version check. The default returns
     /// `UpdateStatus::Unknown` so modules without a public release feed
     /// don't have to implement anything.
-    fn update_check(&self, _context: &ModuleContext) -> Result<UpdateInfo, String> {
-        Ok(UpdateInfo {
-            status: UpdateStatus::Unknown,
-            current_version: None,
-            latest_version: None,
-            release_url: None,
-            detail: None,
-        })
+    fn update_check(
+        &self,
+        context: &ModuleContext,
+    ) -> impl std::future::Future<Output = Result<UpdateInfo, String>> + Send {
+        let _ = context;
+        async move {
+            Ok(UpdateInfo {
+                status: UpdateStatus::Unknown,
+                current_version: None,
+                latest_version: None,
+                release_url: None,
+                detail: None,
+            })
+        }
     }
 }
 
@@ -235,17 +261,17 @@ mod tests {
         fn category(&self) -> ModuleCategory {
             ModuleCategory::System
         }
-        fn preview(&self, _context: &ModuleContext) -> Result<PreviewReport, String> {
+        async fn preview(&self, _context: &ModuleContext) -> Result<PreviewReport, String> {
             Ok(PreviewReport {
                 can_apply: true,
                 changes: Vec::new(),
                 warnings: Vec::new(),
             })
         }
-        fn apply(&self, _context: &ModuleContext) -> Result<ApplyResult, String> {
+        async fn apply(&self, _context: &ModuleContext) -> Result<ApplyResult, String> {
             Err("apply not implemented in test stub".to_owned())
         }
-        fn verify(&self, _context: &ModuleContext) -> Result<VerificationReport, String> {
+        async fn verify(&self, _context: &ModuleContext) -> Result<VerificationReport, String> {
             Ok(VerificationReport {
                 status: ModuleStatus::Unknown,
                 summary: "test stub".to_owned(),
@@ -255,7 +281,7 @@ mod tests {
                 installed_version: None,
             })
         }
-        fn remove(&self, _context: &ModuleContext) -> Result<ApplyResult, String> {
+        async fn remove(&self, _context: &ModuleContext) -> Result<ApplyResult, String> {
             Err("remove not implemented in test stub".to_owned())
         }
     }
@@ -269,8 +295,8 @@ mod tests {
         assert_eq!(module.category().as_str(), "system");
     }
 
-    #[test]
-    fn dummy_module_defaults_update_check_to_unknown() {
+    #[tokio::test]
+    async fn dummy_module_defaults_update_check_to_unknown() {
         let module = DummyModule;
         let context = ModuleContext {
             game_id: "test".to_owned(),
@@ -279,7 +305,7 @@ mod tests {
             executable: "test.exe".to_owned(),
             work_dir: PathBuf::from("C:/Users/me/AppData/Local/Moddin/tools/dummy"),
         };
-        let info = module.update_check(&context).expect("default update_check");
+        let info = module.update_check(&context).await.expect("default update_check");
         assert_eq!(info.status, UpdateStatus::Unknown);
         assert!(info.latest_version.is_none());
     }
