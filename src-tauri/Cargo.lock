@@ -1957,7 +1957,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "moddin"
+name = "moddin-desktop"
 version = "0.1.0"
 dependencies = [
  "reqwest 0.12.28",
