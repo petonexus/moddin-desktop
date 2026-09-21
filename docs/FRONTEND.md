@@ -1,6 +1,6 @@
-# Moddin Desktop frontend architecture
+# Moddin frontend architecture
 
-This document describes the current Vue frontend boundaries and the remaining decomposition work as Moddin Desktop grows into a reusable game tooling manager.
+This document describes the current Vue frontend boundaries and the remaining decomposition work as Moddin grows into a reusable game tooling manager.
 
 ## Design rule
 
@@ -191,9 +191,9 @@ Game recipes under `src/catalog/games/*.yaml` are auto-discovered.
 
 - validates each YAML with Zod;
 - rejects duplicate game ids;
-- rejects duplicate Steam App IDs;
+- rejects duplicate Steam App IDs or Epic App IDs;
 - rejects duplicate module ids inside one game;
-- indexes entries by game id and Steam App ID.
+- indexes entries by game id and store-specific App ID.
 
 Adding a normal game recipe should not require registering it manually in TypeScript.
 

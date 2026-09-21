@@ -79,7 +79,7 @@ pub fn run() {
             cheeky::uninstall_cheeky_foveated_dlss,
             desktop_shortcut::preview_desktop_shortcut,
             desktop_shortcut::create_desktop_shortcut,
-            steam::detect_steam_games,
+            steam::detect_installed_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,
             ofxr::install_ofxr,

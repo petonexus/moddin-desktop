@@ -1,13 +1,8 @@
-# Moddin Desktop
+# Moddin
 
-[![Repository](https://img.shields.io/badge/github-petonexus%2Fmoddin--desktop-181717?logo=github)](https://github.com/petonexus/moddin-desktop)
-[![License: GPL-3.0](https://img.shields.io/github/license/petonexus/moddin-desktop)](https://github.com/petonexus/moddin-desktop/blob/main/LICENSE)
+**Moddin** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
 
-**Moddin Desktop** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
-
-Instead of keeping one-off PowerShell installers per game, Moddin Desktop detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
-
-See [`docs/SCOPE.md`](docs/SCOPE.md) for what is and isn't inside this project, and [`tools/README.md`](tools/README.md) for the standalone Windows tools that ship alongside the app.
+Instead of keeping one-off PowerShell installers per game, Moddin detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
 
 ## Stack
 
@@ -21,10 +16,10 @@ See [`docs/SCOPE.md`](docs/SCOPE.md) for what is and isn't inside this project, 
 
 The first vertical slice already includes:
 
-- Steam install discovery, including Windows Registry fallback
-- multiple Steam libraries
+- Steam and Epic install discovery, including Windows Registry fallback and Epic `.item` manifests
+- multiple Steam libraries plus Epic Games Launcher manifests
 - installed-game scanning
-- Elden Ring and Cyberpunk 2077 catalog entries
+- Elden Ring, Cyberpunk 2077, Dawnwalker, STALKER 2, and Dead Island 2 catalog entries
 - reusable OBS VR Capture module
 - preview before applying OBS changes
 - automatic backup transaction before mutation
@@ -95,7 +90,7 @@ or:
 npm run tauri dev
 ```
 
-Game recipes under `src/catalog/games/*.yaml` are loaded automatically. Adding support for another game should not require registering a new TypeScript import; the catalog loader also rejects duplicate catalog IDs and Steam App IDs.
+Game recipes under `src/catalog/games/*.yaml` are loaded automatically. Adding support for another game should not require registering a new TypeScript import; the catalog loader also rejects duplicate catalog IDs and store-specific App IDs.
 
 For the complete local validation and frontend conventions, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) and [`docs/FRONTEND.md`](docs/FRONTEND.md).
 

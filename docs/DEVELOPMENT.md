@@ -41,7 +41,7 @@ Install Visual Studio Build Tools 2022 and select **Desktop development with C++
 
 Modern Windows 10/11 systems normally already include Microsoft Edge WebView2. Tauri uses it to render the desktop UI.
 
-## Run Moddin Desktop
+## Run Moddin
 
 ```powershell
 npm install
@@ -71,13 +71,13 @@ CI uses `npm ci` so `package-lock.json` is the dependency source of truth. Commi
 
 Game catalog files live under `src/catalog/games/*.yaml` and are discovered automatically at build time. Do **not** add a matching TypeScript import when creating a game recipe.
 
-A new game should normally require only a YAML entry containing its stable catalog id, Steam App ID, executable path and module declarations.
+A new game should normally require only a YAML entry containing its stable catalog id, a Steam or Epic App ID, executable path and module declarations.
 
 The catalog loader validates every YAML entry and fails fast when:
 
 - the YAML does not match the catalog schema;
 - two games use the same catalog `id`;
-- two games use the same Steam App ID.
+- two games use the same Steam App ID or Epic App ID.
 
 This keeps game support declarative and prevents the frontend from becoming a list of hard-coded game imports.
 
@@ -91,4 +91,4 @@ See [`FRONTEND.md`](FRONTEND.md) for component boundaries, state rules and the i
 
 ## Why Cargo is required if most code is TypeScript
 
-The Vue/TypeScript side is the UI and application layer. Tauri compiles a small native Rust host that exposes filesystem, Steam detection, process, Windows, backup, and other privileged local operations to the frontend. You should not need to work in Rust for ordinary UI/catalog development, but the Rust toolchain is still required to build/run the desktop app locally.
+The Vue/TypeScript side is the UI and application layer. Tauri compiles a small native Rust host that exposes filesystem, Steam/Epic detection, process, Windows, backup, and other privileged local operations to the frontend. You should not need to work in Rust for ordinary UI/catalog development, but the Rust toolchain is still required to build/run the desktop app locally.

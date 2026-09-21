@@ -3,7 +3,7 @@ import type { InstalledGame } from '../../types/game'
 import type { OpenXrState } from './types'
 
 export function detectOpenXrGames() {
-  return invoke<InstalledGame[]>('detect_steam_games')
+  return invoke<InstalledGame[]>('detect_installed_games')
 }
 
 export function inspectOpenXr(gameId: string | null) {

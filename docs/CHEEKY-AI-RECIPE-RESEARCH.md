@@ -63,7 +63,7 @@ Cada seta deve persistir resultado. A IA não deve pular de “executável encon
 
 ### 1. Identidade, confiança e versão
 
-Campos imutáveis: `game_id`, Steam App ID, caminho relativo do executável, arquitetura, versão do Cheeky, URL oficial, SHA-256, tipo de artefato e versão do provedor de DLSS. O executor aceita download apenas do release oficial e valida hash antes da cópia.
+Campos imutáveis: `game_id`, store e App ID, caminho relativo do executável, arquitetura, versão do Cheeky, URL oficial, SHA-256, tipo de artefato e versão do provedor de DLSS. O executor aceita download apenas do release oficial e valida hash antes da cópia.
 
 Para atualizações, a IA precisa saber qual artefato será trocado. Em `v0.3.4`, o ReShade troca apenas o add-on; o UEVR requer ZIP completo, com `plugins/`, `scripts/` e DLLs atualizados; OpenXR exige executar o instalador correspondente.[^1]
 

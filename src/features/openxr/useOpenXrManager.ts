@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
-import { findCatalogGameBySteamAppId } from '../../services/catalog'
+import { findCatalogGameByInstalledGame } from '../../services/catalog'
 import { readLocalValue, writeLocalValue } from '../../services/storage'
 import type { InstalledGame } from '../../types/game'
 import {
@@ -24,7 +24,7 @@ export function useOpenXrManager() {
   const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
 
   const gameChoices = computed(() => installedGames.value.flatMap((game) => {
-    const catalog = findCatalogGameBySteamAppId(game.appId)
+    const catalog = findCatalogGameByInstalledGame(game)
     if (!catalog) return []
     return [{ gameId: catalog.id, label: game.name }]
   }))

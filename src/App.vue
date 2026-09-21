@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
-import { findCatalogGameBySteamAppId, gameCatalog } from './services/catalog'
+import { findCatalogGameByInstalledGame, gameCatalog } from './services/catalog'
 import { localeOptions } from './i18n'
 import type { InstalledGame, ModuleCategory, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
@@ -101,21 +101,25 @@ const moduleCategories: ModuleCategory[] = ['vr', 'graphics', 'qol', 'system']
 
 const { t, locale } = useI18n()
 
+function storeLabel(store: InstalledGame['store']) {
+  return store === 'epic' ? t('storeEpic') : t('storeSteam')
+}
+
 const supportedInstalledGames = computed(() =>
-  installedGames.value.filter((game) => findCatalogGameBySteamAppId(game.appId)),
+  installedGames.value.filter((game) => findCatalogGameByInstalledGame(game)),
 )
 
 const filteredGames = computed(() => {
   const term = search.value.trim().toLowerCase()
   const ordered = [...installedGames.value].sort((a, b) => {
-    const aSupported = Boolean(findCatalogGameBySteamAppId(a.appId))
-    const bSupported = Boolean(findCatalogGameBySteamAppId(b.appId))
+    const aSupported = Boolean(findCatalogGameByInstalledGame(a))
+    const bSupported = Boolean(findCatalogGameByInstalledGame(b))
     if (aSupported !== bSupported) return aSupported ? -1 : 1
     return a.name.localeCompare(b.name)
   })
 
   return ordered.filter((game) => {
-    const matchesSupport = !supportedOnly.value || Boolean(findCatalogGameBySteamAppId(game.appId))
+    const matchesSupport = !supportedOnly.value || Boolean(findCatalogGameByInstalledGame(game))
     const matchesSearch = !term || game.name.toLowerCase().includes(term)
     return matchesSupport && matchesSearch
   })
@@ -126,7 +130,7 @@ const selectedGame = computed(() => {
   if (!installed) return null
   return {
     installed,
-    catalog: findCatalogGameBySteamAppId(installed.appId),
+    catalog: findCatalogGameByInstalledGame(installed),
   }
 })
 
@@ -134,7 +138,7 @@ function gameContextForAppId(appId: string | null) {
   if (!appId) return null
   const installed = installedGames.value.find((game) => game.appId === appId)
   if (!installed) return null
-  const catalog = findCatalogGameBySteamAppId(installed.appId)
+  const catalog = findCatalogGameByInstalledGame(installed)
   return catalog ? { installed, catalog } : null
 }
 
@@ -572,7 +576,7 @@ async function refreshGames() {
   loading.value = true
   error.value = null
   try {
-    installedGames.value = await invoke<InstalledGame[]>('detect_steam_games')
+    installedGames.value = await invoke<InstalledGame[]>('detect_installed_games')
     if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
       selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
     } else {
@@ -1709,7 +1713,7 @@ onUnmounted(() => {
             </p>
           </div>
           <button class="secondary-button" :class="{ 'is-loading': loading }" :disabled="loading" @click="refreshGames">
-            {{ loading ? t('scanning') : t('rescanSteam') }}
+            {{ loading ? t('scanning') : t('rescanLibraries') }}
           </button>
         </header>
 
@@ -1736,7 +1740,7 @@ onUnmounted(() => {
         </div>
 
         <div v-if="error" class="error-banner">
-          <strong>{{ t('steamScanFailed') }}</strong>
+          <strong>{{ t('libraryScanFailed') }}</strong>
           <span>{{ error }}</span>
         </div>
 
@@ -1768,7 +1772,7 @@ onUnmounted(() => {
                 <strong>{{ game.name }}</strong>
                 <span>{{ game.installDir }}</span>
               </div>
-              <span v-if="findCatalogGameBySteamAppId(game.appId)" class="status supported">{{ t('supported') }}</span>
+              <span v-if="findCatalogGameByInstalledGame(game)" class="status supported">{{ t('supported') }}</span>
               <span v-else class="status unsupported">{{ t('detected') }}</span>
             </button>
           </div>
@@ -1781,7 +1785,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="details-header">
                 <div>
-                  <p class="eyebrow">{{ t('steamApp', { id: selectedGame.installed.appId }) }}</p>
+                  <p class="eyebrow">{{ t('storeApp', { store: storeLabel(selectedGame.installed.store), id: selectedGame.installed.appId }) }}</p>
                   <h2>{{ selectedGame.installed.name }}</h2>
                   <p class="path">{{ selectedGame.installed.installDir }}</p>
                 </div>
@@ -2100,7 +2104,7 @@ onUnmounted(() => {
                     <strong>{{ selectedGame.catalog.executable }}</strong>
                   </div>
                   <div>
-                    <span>{{ t('steamLibrary') }}</span>
+                    <span>{{ t('storeLibrary') }}</span>
                     <strong>{{ selectedGame.installed.libraryPath }}</strong>
                   </div>
                 </div>

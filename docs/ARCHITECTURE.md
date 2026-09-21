@@ -1,8 +1,8 @@
-# Moddin Desktop architecture
+# Moddin architecture
 
 ## Goal
 
-Moddin Desktop should behave like a small declarative package manager for game mods and tooling, not as a collection of per-game scripts.
+Moddin should behave like a small declarative package manager for game mods and tooling, not as a collection of per-game scripts.
 
 A game definition describes **what is supported**. Reusable modules describe **how a capability is applied**. The native desktop layer performs privileged/local operations and records destructive changes so they can be reversed.
 
@@ -22,7 +22,7 @@ The UI must not contain game-specific installation logic. It dispatches module a
 
 ### 2. Declarative catalog
 
-Game entries live as YAML and contain stable identifiers such as Steam App IDs, executable paths, enabled modules, and small module-specific overrides.
+Game entries live as YAML and contain stable store identifiers (`steamAppId` and/or `epicAppId`), executable paths, enabled modules, and small module-specific overrides.
 
 Example:
 
@@ -42,13 +42,13 @@ modules:
       executableName: eldenring.exe
 ```
 
-The catalog will later grow into versioned module recipes with compatibility metadata, checksums, conflicts, and per-game overrides.
+Epic installations use the same shape with `epicAppId`; the installed game's store determines which identifier is used for matching. The catalog will later grow into versioned module recipes with compatibility metadata, checksums, conflicts, and per-game overrides.
 
 ### 3. Tauri native layer
 
 Rust is intentionally kept narrow. It owns operations that benefit from native/local access:
 
-- Steam/library discovery;
+- Steam and Epic library discovery;
 - Windows Registry discovery fallbacks;
 - filesystem operations;
 - process inspection/lifecycle integration;
@@ -117,7 +117,9 @@ The Activity panel can search/filter this history independently from the transac
 
 ### Library discovery
 
-`Windows Registry / Steam roots -> Steam libraries -> installed games -> catalog match -> game detail UI`
+`Windows Registry / Steam roots + Epic manifest directory -> installed games -> store-specific catalog match -> game detail UI`
+
+Epic discovery reads installed `.item` manifests from `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests` and uses each manifest's `AppName` as the Epic App ID (falling back to `CatalogItemId` when needed).
 
 The environment inspection also reads bounded executable bytes and checks engine-specific game layout markers. It returns the engine, a coarse confidence level, and the evidence used. UEVR consumes this result as a hard Unreal Engine gate; an unknown engine is never treated as Unreal.
 

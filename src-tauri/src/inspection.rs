@@ -288,8 +288,7 @@ fn detect_engine_uncached(root: &Path, executable_path: &Path) -> EngineDetectio
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("game.exe");
-    let unreal_layout =
-        root.join("Binaries").join("Win64").is_dir() && root.join("Content").join("Paks").is_dir();
+    let unreal_layout = has_unreal_layout(root, executable_path);
     let unity_layout = root.join("UnityPlayer.dll").is_file()
         || fs::read_dir(root).ok().is_some_and(|entries| {
             entries.flatten().any(|entry| {
@@ -301,7 +300,7 @@ fn detect_engine_uncached(root: &Path, executable_path: &Path) -> EngineDetectio
         || root.join("re_chunk_000.pak.patch_001.pak").is_file();
     let red_engine_layout = root.join("archive").join("pc").join("content").is_dir()
         && root.join("bin").join("x64").is_dir();
-    let bytes = if unity_layout || re_engine_layout || red_engine_layout {
+    let bytes = if unreal_layout || unity_layout || re_engine_layout || red_engine_layout {
         Vec::new()
     } else {
         scan_executable(executable_path)
@@ -315,6 +314,30 @@ fn detect_engine_uncached(root: &Path, executable_path: &Path) -> EngineDetectio
         re_engine_layout,
         red_engine_layout,
     )
+}
+
+fn has_unreal_layout(root: &Path, executable_path: &Path) -> bool {
+    let mut candidate = Some(root);
+    while let Some(path) = candidate {
+        if path.join("Binaries").join("Win64").is_dir()
+            && path.join("Content").join("Paks").is_dir()
+        {
+            return true;
+        }
+        candidate = path.parent();
+    }
+
+    let mut candidate = executable_path.parent();
+    while let Some(path) = candidate {
+        if path.join("Binaries").join("Win64").is_dir()
+            && path.join("Content").join("Paks").is_dir()
+        {
+            return true;
+        }
+        candidate = path.parent();
+    }
+
+    false
 }
 
 fn detect_engine(root: &Path, executable_path: &Path) -> EngineDetection {
@@ -427,6 +450,26 @@ mod tests {
         let root = Path::new(r"D:\SteamLibrary\steamapps\common\Example");
         let joined = safe_join_relative(root, r"bin\x64\game.exe").expect("safe path");
         assert_eq!(joined, root.join(r"bin\x64\game.exe"));
+    }
+
+    #[test]
+    fn detects_unreal_layout_below_install_root() {
+        let suffix = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("moddin-inspection-{suffix}"));
+        let nested_root = root.join("DeadIsland");
+        fs::create_dir_all(nested_root.join("Binaries").join("Win64")).expect("binaries");
+        fs::create_dir_all(nested_root.join("Content").join("Paks")).expect("content");
+
+        let executable = nested_root
+            .join("Binaries")
+            .join("Win64")
+            .join("DeadIsland-Win64-Shipping.exe");
+        assert!(has_unreal_layout(&root, &executable));
+
+        fs::remove_dir_all(root).expect("temporary inspection fixture cleanup");
     }
 
     #[test]

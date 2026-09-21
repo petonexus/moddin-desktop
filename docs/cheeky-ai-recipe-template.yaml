@@ -4,7 +4,7 @@ schemaVersion: 1
 
 game:
   id: example-game
-  steamAppId: "000000"
+  steamAppId: "000000" # or epicAppId: "example-epic-app"
   executable: path/to/game.exe
   build: unknown
 

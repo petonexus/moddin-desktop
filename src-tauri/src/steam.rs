@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     env, fs,
@@ -9,13 +9,28 @@ use std::{
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledGame {
+    pub store: String,
     pub app_id: String,
     pub name: String,
     pub install_dir: String,
     pub library_path: String,
 }
 
-fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
+#[derive(Debug, Deserialize)]
+struct EpicManifest {
+    #[serde(rename = "AppName")]
+    app_name: Option<String>,
+    #[serde(rename = "DisplayName")]
+    display_name: Option<String>,
+    #[serde(rename = "InstallLocation")]
+    install_location: Option<String>,
+    #[serde(rename = "CatalogItemId")]
+    catalog_item_id: Option<String>,
+    #[serde(rename = "bIsIncompleteInstall")]
+    is_incomplete_install: Option<bool>,
+}
+
+fn detect_installed_games_sync() -> Result<Vec<InstalledGame>, String> {
     let steam_roots = discover_steam_roots();
     let mut libraries = Vec::new();
 
@@ -38,7 +53,7 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
     }
 
     let mut games = Vec::new();
-    let mut seen_app_ids = HashSet::new();
+    let mut seen_games = HashSet::new();
 
     for library in libraries {
         let steamapps = library.join("steamapps");
@@ -80,11 +95,12 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
                 continue;
             };
 
-            if !seen_app_ids.insert(app_id.clone()) {
+            if !seen_games.insert(format!("steam:{app_id}")) {
                 continue;
             }
 
             games.push(InstalledGame {
+                store: "steam".to_owned(),
                 app_id,
                 name,
                 install_dir: path_to_string(&install_dir),
@@ -93,15 +109,113 @@ fn detect_steam_games_sync() -> Result<Vec<InstalledGame>, String> {
         }
     }
 
-    games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    for manifest_dir in discover_epic_manifest_dirs() {
+        let Ok(entries) = fs::read_dir(&manifest_dir) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("item"))
+            {
+                continue;
+            }
+
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(manifest) = serde_json::from_str::<EpicManifest>(&contents) else {
+                continue;
+            };
+            let Some(game) = epic_manifest_game(&manifest, &manifest_dir) else {
+                continue;
+            };
+
+            let key = format!("epic:{}", game.app_id.to_lowercase());
+            if seen_games.insert(key) {
+                games.push(game);
+            }
+        }
+    }
+
+    games.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.store.cmp(&b.store))
+    });
     Ok(games)
 }
 
 #[tauri::command]
-pub async fn detect_steam_games() -> Result<Vec<InstalledGame>, String> {
-    tauri::async_runtime::spawn_blocking(detect_steam_games_sync)
+pub async fn detect_installed_games() -> Result<Vec<InstalledGame>, String> {
+    tauri::async_runtime::spawn_blocking(detect_installed_games_sync)
         .await
-        .map_err(|error| format!("Steam library scan task failed: {error}"))?
+        .map_err(|error| format!("Game library scan task failed: {error}"))?
+}
+
+fn discover_epic_manifest_dirs() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+
+    if let Ok(explicit) = env::var("EPIC_MANIFEST_DIR") {
+        push_existing_unique_path(&mut directories, PathBuf::from(explicit));
+    }
+
+    if let Ok(program_data) = env::var("ProgramData") {
+        push_existing_unique_path(
+            &mut directories,
+            PathBuf::from(program_data)
+                .join("Epic")
+                .join("EpicGamesLauncher")
+                .join("Data")
+                .join("Manifests"),
+        );
+    }
+
+    push_existing_unique_path(
+        &mut directories,
+        PathBuf::from(r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests"),
+    );
+
+    directories
+}
+
+fn epic_manifest_game(manifest: &EpicManifest, manifest_dir: &Path) -> Option<InstalledGame> {
+    if manifest.is_incomplete_install == Some(true) {
+        return None;
+    }
+
+    let app_id = epic_manifest_app_id(manifest)?;
+    let name = manifest.display_name.as_deref()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let install_dir = PathBuf::from(manifest.install_location.as_deref()?.trim());
+    if !install_dir.is_absolute() || !install_dir.is_dir() {
+        return None;
+    }
+
+    Some(InstalledGame {
+        store: "epic".to_owned(),
+        app_id,
+        name: name.to_owned(),
+        install_dir: path_to_string(&install_dir),
+        library_path: path_to_string(manifest_dir),
+    })
+}
+
+fn epic_manifest_app_id(manifest: &EpicManifest) -> Option<String> {
+    manifest
+        .app_name
+        .as_deref()
+        .or(manifest.catalog_item_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn discover_steam_roots() -> Vec<PathBuf> {
@@ -303,5 +417,36 @@ HKEY_CURRENT_USER\Software\Valve\Steam
         assert!(!valid_install_dir_name("/tmp/game"));
         assert!(!valid_install_dir_name("."));
         assert!(!valid_install_dir_name(""));
+    }
+
+    #[test]
+    fn reads_epic_manifest_identity() {
+        let manifest = serde_json::from_str::<EpicManifest>(
+            r#"{
+                "AppName": "Crow",
+                "DisplayName": "Dead Island 2",
+                "InstallLocation": "C:\\Program Files\\Epic Games\\DeadIsland2",
+                "CatalogItemId": "75a5bee8052f4e2498094b2faaea8c11",
+                "bIsIncompleteInstall": false
+            }"#,
+        )
+        .expect("Epic manifest should parse");
+
+        assert_eq!(epic_manifest_app_id(&manifest).as_deref(), Some("Crow"));
+        assert_eq!(manifest.display_name.as_deref(), Some("Dead Island 2"));
+        assert_eq!(manifest.is_incomplete_install, Some(false));
+    }
+
+    #[test]
+    fn falls_back_to_epic_catalog_item_id() {
+        let manifest = EpicManifest {
+            app_name: None,
+            display_name: Some("Example".to_owned()),
+            install_location: None,
+            catalog_item_id: Some("catalog-id".to_owned()),
+            is_incomplete_install: None,
+        };
+
+        assert_eq!(epic_manifest_app_id(&manifest).as_deref(), Some("catalog-id"));
     }
 }
