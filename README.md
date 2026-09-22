@@ -1,116 +1,94 @@
-# Moddin
+# Moddin Desktop
 
-**Moddin** is a Windows-first desktop mod and tooling manager focused on making PC game modding repeatable, reversible, and easy to maintain.
+**Manage the mods that power your games — VR mods, performance mods, overlays, and tweaks — from one Windows app that knows how to undo what it did.**
 
-Instead of keeping one-off PowerShell installers per game, Moddin detects installed games, matches them against a declarative catalog, previews supported actions, creates a backup transaction, applies the change, and lets the user undo it later.
+Moddin Desktop detects your installed Steam and Epic games, matches them against a catalog of supported titles, and walks you through installing the right mods. Every change is previewed, backed up, and reversible. No more sticky notes with "what did I install last time?" — Moddin remembers and undoes it for you.
 
-## Stack
+> 🔎 **New here?** Start with the [User Guide](docs/USER-GUIDE.md). It assumes nothing about your background.
+>
+> 🛠️ **Want to write a capability?** Read [CONTRIBUTING.md](docs/CONTRIBUTING.md) and look at the [community catalog](https://github.com/petonexus/moddin-community-capabilities).
+>
+> 🏗️ **Building Moddin itself?** See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup, tests, and the catalog schema.
 
-- Tauri 2
-- Vue 3
-- TypeScript
-- Rust only for native Windows/filesystem/process integration
-- YAML game catalog validated with Zod and discovered automatically at build time
+---
 
-## Current MVP
+## What you can do with Moddin today
 
-The first vertical slice already includes:
+- **Detect** every Steam and Epic game installed on your PC.
+- **Apply** mod recipes (OBS VR capture, OptiScaler, OFXR Bridge, UEVR, ReShade, Cheeky DLSS, OpenXR helpers, desktop shortcuts, …) to the games you own.
+- **Preview** every change before it touches your files. Moddin shows the exact files and registry keys it will touch.
+- **Undo** any change. Moddin remembers the original state and can roll it back — even weeks later.
+- **Install community capabilities** — a verified catalog of recipes maintained by the Moddin community. Verified by Ed25519 signature pinned in the app binary.
+- **Track** every install / uninstall / rollback in a structured activity log.
 
-- Steam and Epic install discovery, including Windows Registry fallback and Epic `.item` manifests
-- multiple Steam libraries plus Epic Games Launcher manifests
-- installed-game scanning
-- Elden Ring, Cyberpunk 2077, Dawnwalker, STALKER 2, and Dead Island 2 catalog entries
-- reusable OBS VR Capture module
-- preview before applying OBS changes
-- automatic backup transaction before mutation
-- transaction history and Undo
-- graceful OBS close/reopen when needed
-- read-only verification checklist for each available module
-- idempotent reapply and transaction-backed removal for OBS VR, OptiScaler, and VR profiles
-- VR-ready launch profiles for Elden Ring and Cyberpunk 2077
-- OFXR Bridge FrameGen integration: verified install, tray startup, recommended optical-flow configuration, OpenXR arm confirmation, and safe removal
-- engine-aware UEVR installer: local engine detection, live official Nightly resolution, optional JoeyHodge/AFW variants, SHA-256 verification where upstream publishes it, and rollback
-- one-click Windows development bootstrap
-- Windows CI for frontend build and Rust tests
+Moddin is **Windows-first** and supports the games listed below out of the box:
 
-### OBS VR workflow
+| Game | What's available |
+| --- | --- |
+| Elden Ring | OBS VR Capture, OFXR Bridge FrameGen, UEVR engine-aware installer, OptiScaler, Cheeky DLSS, OpenXR helpers, VR-ready launch profile |
+| Cyberpunk 2077 | OBS VR Capture, OptiScaler, Cheeky DLSS, OpenXR helpers, VR-ready launch profile |
+| Dawnwalker | All Unreal5-default modules (UEVR, OFXR, OBS VR, OptiScaler, Cheeky DLSS, ReShade, UE4SS) |
+| STALKER 2 | All Unreal5-default modules |
+| Dead Island 2 | OBS VR, OptiScaler, OFXR, OpenXR helpers |
+| DOOM 2016 | Desktop shortcut |
 
-For the first supported module, Moddin looks for the configured OBS scene (`vr` by default), clones an existing Game Capture source to preserve its transform/settings, targets the game executable, and stores a full backup of the scene collection before writing anything.
+You can also drop your own YAML capability into `%LOCALAPPDATA%\Moddin\capabilities\` — see [USER-GUIDE.md](docs/USER-GUIDE.md#adding-your-own-capabilities).
 
-The initial catalog recipes are:
+---
 
-- **Elden Ring** → `Elden Ring VR` / `eldenring.exe`
-- **Cyberpunk 2077** → `Cyberpunk 2077 VR` / `Cyberpunk2077.exe`
+## Getting Moddin
 
-The defaults currently target the OBS collection `Sem nome` and scene `vr`; the backend falls back to a unique collection containing that scene when possible. These values will become user-editable presets later.
+1. **Download** the latest release from [Releases](https://github.com/petonexus/moddin-desktop/releases). Beta releases are tagged `vX.Y.Z-beta.N`.
+2. **Install** by running the `.msi` (Windows 10/11 x64).
+3. **Open** the app. Moddin scans your Steam + Epic libraries automatically.
+4. **Pick a game**, see which mods apply, and install what you need.
 
-### VR-ready launch workflow
+### System requirements
 
-The game detail view now exposes a VR launch profile for Elden Ring and Cyberpunk 2077. Moddin checks the executable, required VR files, active Windows OpenXR runtime, and whether the game is already running before launch. It then applies only catalog-declared INI changes with a backup. Cyberpunk leaves the VR Port first-launch settings to the mod itself; Elden Ring uses the documented full-stereo baseline with `GameResScale=1.0`, `FpsTarget=60`, `CameraBob=0`, quad/body HUD, and debug logging.
+- Windows 10 or 11 (x64)
+- ~200 MB free disk space for the app + caches
+- .NET runtime is **not** required — Moddin ships its own (Tauri + WebView2)
+- No admin rights needed for most installs; the app uses per-user paths and HKCU registry keys
 
-The standalone reversible baseline package is available under [`tools/elden-ring-ervr-ofxr-baseline`](tools/elden-ring-ervr-ofxr-baseline). It verifies the existing ReShade/ERVR/OpenXR/OFXR chain, quarantines identified experimental extras without deleting them, and restores the previous state through `02-RESTAURAR-ESTADO-ANTERIOR.cmd`. It never updates or reconfigures OFXR and never changes anti-cheat.
+---
 
-The launcher does not disable Easy Anti-Cheat or select an OpenXR runtime on the user's behalf. Elden Ring must be started through the user's existing offline, EAC-disabled mod setup.
+## Try the community catalog
 
-### UEVR workflow
+Moddin ships with a set of built-in capabilities for the most popular games. The **community catalog** adds more, contributed by other users and verified by the Moddin maintainers.
 
-The UEVR module inspects the selected executable and game layout before it resolves a release. Only games detected as Unreal Engine can proceed; Unity, RE Engine, REDengine, and unknown engines remain blocked. The selected backend is resolved at install time: official UEVR Nightly, Nightly plus JoeyHodge's backend, PureDark AFW, or the combined JoeyHodge/AFW archive. Nightly archives are checked against the upstream `.sha256` asset. Each variant lives in its own `%LOCALAPPDATA%/Moddin/tools/uevr` folder and is transaction-backed.
+1. Click the **Community** button in the top dock.
+2. Press **Refresh now** to fetch the latest catalog.
+3. Browse the list — every entry shows whether the author signed their YAML.
+4. Click **Install** on any capability to add it to your game.
 
-Per-game recipes can pin the only known-good build with `versionPolicy: pinned` and `releaseTag`, or keep `versionPolicy: latest` to follow the newest release. Backend compatibility labels in the catalog are evidence/status metadata, not a claim that Moddin has tested the game; a local VR test is still required.
+The fingerprint of the pinned signing key is shown in the panel header so you can verify the catalog is legitimate. See [USER-GUIDE.md → Community catalog](docs/USER-GUIDE.md#community-catalog) for details.
 
-### OFXR FrameGen workflow
+---
 
-The explicit OFXR module can prepare OFXR Bridge before starting either supported game. It downloads the pinned official pre-release archive, verifies its SHA-256, installs it under the user profile instead of the game directory, writes the recommended FidelityFX configuration, starts `OFXRBridgeTray.exe`, and confirms that the manual OpenXR layer is armed for the current Windows user. If activation cannot be confirmed, the game is not launched. The module can also be configured and armed from its own preview, checked for new pre-releases, and removed through the transaction history. The Elden Ring baseline package deliberately does not invoke this install/update path; it only inspects the existing OFXR state.
+## Where to go next
 
-OFXR Bridge is experimental. It requires the Microsoft Visual C++ Redistributable x64 and the game must run without administrator privileges because Windows OpenXR does not apply per-user implicit layers to elevated processes. The tray can remain in the notification area while the game is running; Moddin disables configuration, verification, update, removal, undo, and launch actions until the game closes.
+| You want to … | Read this |
+| --- | --- |
+| Install Moddin and use it | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) |
+| Add a capability to a game you maintain | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) |
+| Build Moddin from source | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
+| Understand the architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Help the project | [CONTRIBUTING.md → Other ways to help](docs/CONTRIBUTING.md#other-ways-to-help) |
+| Report a bug or request a feature | [GitHub Issues](https://github.com/petonexus/moddin-desktop/issues) |
+| Stay updated | [Releases](https://github.com/petonexus/moddin-desktop/releases) · [Roadmap](ROADMAP.md) |
 
-### Module lifecycle
+---
 
-Available modules are checked automatically when a game is selected and can be checked again manually at any time. The checklist distinguishes a module that is ready to apply from one that is already configured, reports individual failed prerequisites, and is refreshed after every apply, reinstall, launch, or removal. Removal is transaction-backed: OBS removes only the Moddin-created source, OptiScaler restores its managed files, and VR profiles restore the last declared INI changes.
+## Safety and trust
 
-The module cards also check configured update sources. Versioned tools such as OptiScaler are compared with the latest official GitHub release, while recipes without a trustworthy local version signal remain explicitly marked as unable to identify the installed version instead of claiming they are current.
+Moddin never asks for admin rights and never disables your game anti-cheat. Every action runs in your user account, writes only to the game directory or per-user registry paths, and is recorded in an activity log so you can audit what changed.
 
-## Development
+For community capabilities, the catalog is signed with Ed25519 by the maintainers. Moddin verifies the signature against a public key **pinned in the app binary** before installing anything. Unsigned capabilities are accepted only when you tick a confirmation box in the UI.
 
-On Windows, after cloning the repository, run:
+See [SECURITY.md](docs/CAPABILITY-CONTRACT.md#threat-model) for the full threat model.
 
-```bat
-SETUP-WINDOWS.bat
-```
+---
 
-The bootstrap checks or installs Node.js, Rust/Cargo using the MSVC toolchain, Microsoft C++ Build Tools, npm dependencies, and validates the Tauri project. After the environment is ready, use:
+## License
 
-```bat
-RODAR-MODDIN.bat
-```
-
-or:
-
-```powershell
-npm run tauri dev
-```
-
-Game recipes under `src/catalog/games/*.yaml` are loaded automatically. Adding support for another game should not require registering a new TypeScript import; the catalog loader also rejects duplicate catalog IDs and store-specific App IDs.
-
-For the complete local validation and frontend conventions, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) and [`docs/FRONTEND.md`](docs/FRONTEND.md).
-
-### Debugging
-
-During development, Moddin logs lifecycle events and every Tauri `invoke` call to the WebView console. Runtime errors and rejected promises are also captured in an on-screen diagnostic panel instead of leaving a blank window.
-
-The diagnostic API is available from the WebView console:
-
-```js
-window.__MODDIN_DEBUG__.logs()
-window.__MODDIN_DEBUG__.enable()
-window.__MODDIN_DEBUG__.disable()
-window.__MODDIN_DEBUG__.clear()
-```
-
-`enable()` persists verbose logging in the current WebView profile. Each log entry includes an ISO timestamp, scope, duration for native calls, and the related error or payload.
-
-## Project direction
-
-Game-specific support should live in catalog recipes rather than hard-coded UI branches. Reusable modules such as OBS, OptiScaler, OpenXR, ReShade, UE4SS, BepInEx, and REFramework will be shared across games and composed from declarative configuration.
-
-See [`ROADMAP.md`](ROADMAP.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/FRONTEND.md`](docs/FRONTEND.md) for the current plan.
+[GPL-3.0](LICENSE) — the same copyleft license as the community catalog. Moddin and the catalog stay a single source of truth.

@@ -1,246 +1,120 @@
-# Moddin Desktop — Scope
+# Moddin Desktop — Project Scope
 
-This document defines **what is and isn't** inside the Moddin Desktop project,
-and where each piece of work belongs. It is the source of truth for new
-contributions and refactors; if reality drifts from this document, update it
-in the same change.
-
-Moddin Desktop is **Windows-first**. Cross-platform support is explicitly out
-of scope for the foreseeable future.
+Moddin Desktop is a small, opinionated Windows app. This document is a one-page summary of what the project **does**, what it **does not do**, and where it is heading. For the deeper architecture and rationale, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 1. The app
+## What Moddin Desktop is
 
-`Moddin Desktop` is a small **declarative package manager for PC game mods
-and tooling**. It is not a collection of per-game scripts.
+Moddin Desktop is a **declarative package manager for PC game mods and tools**. It detects your installed Steam and Epic games, matches them against a catalog of supported titles, and walks you through installing mod recipes with a full preview + undo support.
 
-### What the app does
-
-- Discovers installed Steam and Epic games (Windows Registry, `.item`
-  manifests, multi-library Steam installs).
-- Matches each installed game against a declarative catalog.
-- Shows which reusable modules are supported for each game.
-- Previews the planned changes before applying anything.
-- Records a transaction before any mutation so it can be undone.
-- Keeps a structured per-action history (separate from in-memory diagnostics).
-- Launches the game through a catalog-declared VR / graphics profile when the
-  user wants to.
-
-### What the app is not
-
-- It is **not** a launcher. It launches games only as part of a profile the
-  user explicitly configured, never as the default play loop.
-- It is **not** an anti-cheat bypass tool. Mods that require EAC/BE to be
-  disabled must already be disabled by the user's own setup. Moddin never
-  flips that switch on the user's behalf.
-- It is **not** a generic script runner. Game-specific PowerShell does not
-  belong in the app — it belongs in `tools/`.
-- It is **not** a catalog provider for third parties. The catalog ships with
-  the app and is the source of truth for what Moddin can do locally.
+The catalog is **declarative**, not code. Adding support for a new game is a single YAML file — no Rust, no Vue, no recompile. The same model powers both built-in recipes and the community catalog at [petonexus/moddin-community-capabilities](https://github.com/petonexus/moddin-community-capabilities).
 
 ---
 
-## 2. The three layers
+## What you can do with it
 
-Every change must live in exactly one layer.
+- **VR-ready launch profiles** for Elden Ring, Cyberpunk 2077, Dawnwalker, STALKER 2, Dead Island 2
+- **OBS VR Capture** — clone a Game Capture source, back it up, target the game
+- **OFXR Bridge FrameGen** — download the pinned pre-release, verify SHA-256, configure and start the tray
+- **UEVR engine-aware installer** — supports Nightly, JoeyHodge, and PureDark AFW backends
+- **OptiScaler** — DLSS upscaler installer with conflict-aware proxy selection
+- **Cheeky Foveated DLSS** — ReShade add-on installer
+- **OpenXR helpers** — per-game OpenXR runtime override (no admin needed)
+- **ReShade host** — full installer with proxy rename
+- **Desktop shortcut creator** — `.lnk` next to the game executable
 
-### 2.1 Catalog (`src/catalog/games/*.yaml`)
+Plus the **community catalog**: data-driven capabilities maintained by the community, signed with Ed25519, automatically visible to every Moddin user.
 
-Stable game identity (Steam App ID, Epic App Name, executable path) plus the
-list of enabled modules and small per-module overrides. Auto-discovered at
-build time through `import.meta.glob` — adding a new game **must not** require
-registering a new TypeScript import. The catalog schema is validated by Zod
-in `src/services/catalog.ts`.
+---
 
-If something is **game-specific**, it goes here as declarative config.
+## What Moddin Desktop is not
 
-### 2.2 Reusable module (Rust, `src-tauri/src/<module>.rs`)
+- **Not cross-platform.** Windows 10/11 x64 only. Steam Deck mode is out of scope.
+- **Not an anti-cheat bypass.** EAC / BattlEye / Vanguard must already be disabled by the user's own setup. Moddin never flips that switch.
+- **Not a Nexus Mods client.** Moddin is a local manager. It does not host mods.
+- **Not a cloud service.** No telemetry, no analytics, no account. The app is 100% local; the only network it does is fetching the community catalog.
 
-A module describes **how a capability is applied**. Each native module owns
-its download, verification, install, verification pass, and rollback through
-the shared transaction store.
+---
 
-If a capability is **reusable across games** and benefits from native code
-(registry, filesystem, process, hash, archive), it goes here.
+## How the pieces fit
 
-Today: `obs`, `optiscaler`, `openxr`, `ofxr`, `uevr`, `cheeky`, `vr_launch`,
-`desktop_shortcut`, `reshade` (stub).
-
-Planned per `ROADMAP.md`: `reshade` (full implementation), `ue4ss`,
-`bepinex`, `reframework`. Design notes for each live in
-[`docs/MODULES.md`](MODULES.md).
-
-Every module is expected to eventually implement the shared lifecycle
-trait in [`src-tauri/src/module.rs`](../src-tauri/src/module.rs):
-
-```rust
-pub trait Module: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn name(&self) -> &'static str;
-    fn category(&self) -> ModuleCategory;
-    fn preview(&self, context: &ModuleContext) -> Result<PreviewReport, String>;
-    fn apply(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
-    fn verify(&self, context: &ModuleContext) -> Result<VerificationReport, String>;
-    fn rollback(&self, transaction_id: &str) -> Result<TransactionRecord, String>;
-    fn remove(&self, context: &ModuleContext) -> Result<ApplyResult, String>;
-    fn update_check(&self, context: &ModuleContext) -> Result<UpdateInfo, String>;
-}
+```
+┌─────────────────────────────┐
+│ Moddin Desktop (this repo)  │  Windows app (Tauri + Vue)
+│                             │
+│ • Built-in capabilities     │   https://github.com/petonexus/moddin-desktop
+│ • Capability pipeline       │
+│ • Community catalog fetcher │
+│ • Settings → Community UI   │
+└─────────────────────────────┘
+                ▲
+                │ reads signed catalog.json + .sig
+                │
+┌─────────────────────────────┐
+│ Community Capabilities       │   Catalog + CI
+│ (separate repo)             │
+│                             │   https://github.com/petonexus/moddin-community-capabilities
+│ • capability.yaml per game  │
+│ • Signed by maintainer key  │
+│ • Validated by Ed25519      │
+└─────────────────────────────┘
 ```
 
-The trait is the source of truth for the per-module lifecycle; existing
-modules still ship their bespoke Tauri commands and will adopt the trait
-incrementally.
-
-`update_check` is the shared hook every module that ships against a
-versioned upstream feed (`updateUrl` in the catalog recipe) must
-implement. The existing `check_module_update` Tauri command
-(`src-tauri/src/updates.rs`) already understands the GitHub release-API
-shape and is the implementation all modules reuse.
-
-### 2.3 Tool (`tools/<topic>/`)
-
-A tool is a **standalone Windows-first package** that runs **without the
-app**. It uses `.cmd` shims + a `scripts/<core>.ps1` engine and may be
-invoked by the user directly, by another tool, or by the app in a future
-integration.
-
-If a workflow is best expressed as a Windows script with its own state
-directory, backups, and restore flow — and is not yet a good fit for a
-reusable Rust module — it goes here.
-
-Today: `elden-ring-ervr-ofxr-baseline/`, `cheeky-foveated-dlss/`.
+The app ships with the built-ins; the community catalog extends the list.
 
 ---
 
-## 3. Decision rules
+## How "data-driven" works
 
-Use these to decide where new work goes.
+Every capability is a single YAML file declaring:
 
-### "I want to support a new game"
+1. **Checks** to run before install (game present, archive reachable, hash matches, …)
+2. **Install steps** to execute (download, extract, write INI, spawn tray, …)
+3. **Uninstall steps** to reverse the install
+4. **Safety notes** to display to the user
 
-1. Add `src/catalog/games/<id>.yaml` with verified `id`, `name`, store App
-   ID, executable path, and the modules to enable.
-2. If a module's `config` cannot express what you need, escalate to a real
-   module gap (see below). Do **not** add `if gameId === ...` branches.
-3. Update `references/game-support-matrix.md` with the verified identity.
+The app loads the YAML, runs the checks, shows a preview, runs the steps, and records a transaction for Undo. The exact same pipeline serves both built-in recipes and the community catalog — adding a new mod is one YAML file.
 
-### "I want to add a new capability for several games"
-
-1. Check if a Rust module already covers it with a new `config` key.
-2. If not, design a new reusable module: `src-tauri/src/<capability>.rs`,
-   exposed through `lib.rs` commands, with preview / apply / verify /
-   rollback following the transaction model.
-3. Add the corresponding entry to the catalog schema in
-   `src/types/game.ts` and the Zod validator in `src/services/catalog.ts`.
-4. Only then add the YAML entries for the games that need it.
-
-### "I want a Windows script with its own state directory"
-
-Put it under `tools/<topic>/` with the layout described in
-[`tools/README.md`](../tools/README.md). The tool must document:
-
-- what it does and does **not** do;
-- what files it touches;
-- how it backs up and restores state;
-- any preconditions (admin rights, runtime installed, etc.).
-
-If a tool's logic is small and self-contained, consider promoting it into a
-Rust module instead. Tools exist for workflows that genuinely need Windows
-shell semantics, quarantine directories, or one-off state that does not
-belong in the transaction store.
-
-### "I want to add a new VR / graphics primitive"
-
-Same rule as a new capability: declarative config first, native module
-second, and only escalate to a `tool` if Windows shell semantics make a
-module the wrong shape.
+For the full schema, see [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md). For the implementation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 4. Engine → typical modules
+## Current status
 
-The catalog today does **not** inherit modules from an engine preset. The
-table below describes the canonical mapping a future preset layer should
-respect; until then, copy the right modules per game YAML.
-
-| Engine | Typical module set |
+| Capability | Status |
 | --- | --- |
-| Unreal Engine 4.8–5.4 | `uevr` (if VR), `obs-vr`, `ofxr-framegen`, `openxr`, `optiscaler`, `cheeky-foveated-dlss` |
-| REDengine (Cyberpunk) | `obs-vr`, `openxr`, `optiscaler`, `cheeky-foveated-dlss`; Cyberpunk VR Port owns its own first-launch settings |
-| RE Engine (Resident Evil / Dead Island) | `obs-vr`, `uevr` is **not** applicable, `openxr` is engine-specific |
-| Unity | `optiscaler`, `cheeky-foveated-dlss`, mod loaders per game |
-| id Tech (DOOM 2016) | `desktop-shortcut`; external VR launchers (KHARVOX) are managed outside Moddin until a managed launcher capability exists |
+| Steam + Epic install discovery | Stable |
+| Game scanning and catalog matching | Stable |
+| OBS VR Capture (Elden Ring, Cyberpunk 2077) | Stable |
+| OFXR Bridge FrameGen | Stable |
+| UEVR (Nightly + Joey + AFW) | Stable |
+| OptiScaler | Stable |
+| Cheeky Foveated DLSS | Stable |
+| ReShade host | Stable |
+| OpenXR per-game runtime override | Stable |
+| Community catalog (Ed25519-signed) | Stable |
+| Local override directory | Stable |
+| Transactional Undo | Stable |
+| Activity log | Stable |
+| Auto-update | Beta |
+| 100+ catalog games | In progress |
+| Mac / Linux | Out of scope |
 
 ---
 
-## 5. VR / DLSS roadmap coverage
+## Where to read more
 
-VR-related tooling is treated as **first-class** in the catalog. The
-explicit VR-relevant capabilities and where they live:
-
-| Capability | Where |
-| --- | --- |
-| OBS VR capture | Rust module `obs` + catalog `obs-vr` |
-| OpenXR helpers, per-game runtime override | Rust module `openxr` + feature UI |
-| OFXR Bridge FrameGen | Rust module `ofxr` + catalog `ofxr-framegen` |
-| UEVR engine-aware installer | Rust module `uevr` + catalog `uevr` |
-| VR-ready launch profile | Rust module `vr_launch` + catalog `vr-launch` |
-| ERVR + VDXR + OFXR baseline (Elden Ring, reversible) | `tools/elden-ring-ervr-ofxr-baseline/` |
-| Cheeky Foveated DLSS (ReShade + UEVR paths) | Rust module `cheeky` + `tools/cheeky-foveated-dlss/` |
-| DLSS SR via OptiScaler | Rust module `optiscaler` + catalog `optiscaler` |
-| DLSS FG / RR (planned unified module) | not yet; tracked in `ROADMAP.md` under v0.4 |
-| ReShade full add-on host (planned) | tracked in `ROADMAP.md` |
-| UE4SS, BepInEx, REFramework (planned) | tracked in `ROADMAP.md` |
-
-DLSS itself is **not** a single product in Moddin's vocabulary. Moddin covers
-DLSS-SR through `optiscaler` (when the game lacks native DLSS), DLSS-SR
-natively when the game ships with `nvngx_dlss.dll`, and DLSS-FG / DLSS-RR
-through upstream runtime layers (OFXR / ReShade add-ons / Streamline).
-Per-game recipes state which path is in use; a future unified "DLSS" module
-must not duplicate that.
+- [USER-GUIDE.md](USER-GUIDE.md) — how to install and use Moddin
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to add a capability
+- [DEVELOPMENT.md](DEVELOPMENT.md) — how to build Moddin from source
+- [ARCHITECTURE.md](ARCHITECTURE.md) — how the code fits together
+- [MODULES.md](MODULES.md) — design notes for the future module work
+- [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md) — full capability schema
+- [ROADMAP.md](../ROADMAP.md) — what is shipping next
 
 ---
 
-## 6. Repository layout
+## License
 
-```
-moddin-desktop/
-├── app/                  # Tauri + Vue + Rust source (the desktop app)
-│   ├── src/              # Vue + TypeScript UI, catalog loader, i18n
-│   ├── src-tauri/        # Rust modules, capabilities, config
-│   └── src-tauri/gen/    # Generated Tauri schemas (do not edit)
-├── tools/                # Standalone Windows tools (run without the app)
-│   ├── README.md
-│   └── <topic>/          # Per-tool: README + MODDIN-AGENT-CONTEXT + .cmd + scripts/
-├── docs/                 # Cross-cutting documentation
-│   ├── ARCHITECTURE.md
-│   ├── DEVELOPMENT.md
-│   ├── FRONTEND.md
-│   ├── SCOPE.md          # this file
-│   └── ...
-├── references/           # Stable reference tables (game-support-matrix)
-├── scripts/              # Repository-level helper scripts (setup, lint)
-├── ROADMAP.md            # What ships next
-├── README.md             # Entry point
-├── package.json
-├── Cargo.toml            # exists at root only if a workspace is added
-└── src-tauri/Cargo.toml
-```
-
-The `app/` prefix is a future reorg. Today the app lives at the repo root
-(`src/`, `src-tauri/`); this scope document records the target layout so
-each refactor step is incremental.
-
----
-
-## 7. Out of scope
-
-- **Linux/macOS support.** Steam Deck mode is not a target.
-- **Anti-cheat bypass.** Moddin will never bundle, recommend, or automate
-  disabling EAC, BattlEye, Vanguard, or similar.
-- **Mod hosting.** Moddin is not a Nexus/Thunderstore client.
-- **Cloud profiles.** No remote account, no telemetry.
-- **Auto-update of the app itself** beyond the existing GitHub Releases
-  updater (`src-tauri/src/updates.rs`). Hot-reload of recipes from the
-  network is **not** in scope; the catalog ships with the binary.
+[GPL-3.0](../LICENSE) — same license as the catalog. One source of truth.
