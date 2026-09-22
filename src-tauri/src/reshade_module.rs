@@ -203,7 +203,7 @@ impl Module for ReshadeModule {
 
         let mut checks = Vec::new();
         checks.push(CheckOutcome {
-            id: Some("game-executable-present"),
+            id: Some("game-executable-present".to_owned()),
             category: CheckCategory::Global,
             label: "Game executable present".to_owned(),
             passed: preview.executable_exists,
@@ -211,7 +211,7 @@ impl Module for ReshadeModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("game-not-running"),
+            id: Some("game-not-running".to_owned()),
             category: CheckCategory::Global,
             severity: CheckSeverity::Blocker,
             label: "Game not running".to_owned(),
@@ -222,7 +222,7 @@ impl Module for ReshadeModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("proxy-available"),
+            id: Some("proxy-available".to_owned()),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Blocker,
             label: format!("Proxy '{}' available", preview.proxy_chosen),
@@ -242,7 +242,7 @@ impl Module for ReshadeModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("archive-reachable"),
+            id: Some("archive-reachable".to_owned()),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Warning,
             label: "Archive reachable".to_owned(),

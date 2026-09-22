@@ -75,7 +75,7 @@ impl Module for OpenXrModule {
             status: ModuleStatus::Unknown,
             summary: "OpenXR verification: see openxr::inspect_openxr".to_owned(),
             checks: vec![CheckOutcome {
-                id: Some("runtime-registry-reachable"),
+                id: Some("runtime-registry-reachable".to_owned()),
                 category: CheckCategory::Category,
                 label: "Runtime registry reachable".to_owned(),
                 passed: true,

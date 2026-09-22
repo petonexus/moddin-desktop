@@ -154,9 +154,9 @@ pub struct CheckDefinition {
     /// Stable id, e.g. `"game-not-running"`, `"proxy-available"`. The
     /// UI keys the rendered row on this so re-evaluation does not
     /// flicker the layout.
-    pub id: &'static str,
+    pub id: String,
     /// Human-readable label, e.g. `"Game not running"`.
-    pub label: &'static str,
+    pub label: String,
     /// Where the row belongs in the UI three-layer layout.
     #[serde(default)]
     pub category: CheckCategory,
@@ -167,7 +167,7 @@ pub struct CheckDefinition {
     /// default state. Use this to explain *what* the check means so the
     /// user is not surprised by failure detail.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<&'static str>,
+    pub description: Option<String>,
 }
 
 /// A single line item inside a `VerificationReport`. Mirrors the
@@ -185,7 +185,7 @@ pub struct CheckDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct CheckOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<&'static str>,
+    pub id: Option<String>,
     pub label: String,
     pub passed: bool,
     pub detail: Option<String>,
@@ -469,11 +469,11 @@ mod tests {
     #[test]
     fn check_definition_carries_static_metadata() {
         let definition = CheckDefinition {
-            id: "proxy-available",
-            label: "Proxy DLL available",
+            id: "proxy-available".to_owned(),
+            label: "Proxy DLL available".to_owned(),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Blocker,
-            description: Some("The chosen proxy DLL must not already exist in the game directory."),
+            description: Some("The chosen proxy DLL must not already exist in the game directory.".to_owned()),
         };
         let serialized = serde_json::to_string(&definition).expect("serialize");
         assert!(serialized.contains("\"id\":\"proxy-available\""));

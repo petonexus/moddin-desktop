@@ -207,7 +207,7 @@ impl Module for OfxrModule {
 
         let mut checks = Vec::new();
         checks.push(CheckOutcome {
-            id: Some("game-executable-present"),
+            id: Some("game-executable-present".to_owned()),
             category: CheckCategory::Global,
             label: "Game executable present".to_owned(),
             passed: preview.executable_exists,
@@ -215,7 +215,7 @@ impl Module for OfxrModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("game-not-running"),
+            id: Some("game-not-running".to_owned()),
             category: CheckCategory::Global,
             severity: CheckSeverity::Blocker,
             label: "Game not running".to_owned(),
@@ -226,7 +226,7 @@ impl Module for OfxrModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("tray-path-present"),
+            id: Some("tray-path-present".to_owned()),
             category: CheckCategory::ModuleSpecific,
             label: format!("Tray path present ({})", preview.tray_path),
             passed: preview.tray_installed,
@@ -235,7 +235,7 @@ impl Module for OfxrModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("tray-configured"),
+            id: Some("tray-configured".to_owned()),
             category: CheckCategory::ModuleSpecific,
             label: "Tray configured".to_owned(),
             passed: preview.configured,
@@ -244,7 +244,7 @@ impl Module for OfxrModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("tray-running"),
+            id: Some("tray-running".to_owned()),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Warning,
             label: "Tray running".to_owned(),

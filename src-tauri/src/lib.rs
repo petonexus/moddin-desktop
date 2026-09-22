@@ -1,21 +1,36 @@
 mod activity;
+mod archive;
 mod bepinex;
+mod builtin_checks;
+mod builtin_steps;
+mod capability;
+mod capability_runner;
+mod path_guard;
+mod compat_report;
 mod cheeky;
 mod desktop_shortcut;
+mod gog;
 mod inspection;
+mod library_state;
 mod module;
+mod pcgw_cache;
 mod obs;
+mod obs_module;
 mod ofxr;
 mod ofxr_module;
 mod openxr;
+mod openxr_module;
 mod optiscaler;
+mod optiscaler_module;
 mod process;
 mod reframework;
 mod reshade;
+mod reshade_module;
 mod steam;
 mod transaction;
 mod ue4ss;
 mod uevr;
+mod uevr_module;
 mod updates;
 mod vr_launch;
 
@@ -70,8 +85,13 @@ fn open_external_url(url: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(library_state::LibraryCache::new())
         .invoke_handler(tauri::generate_handler![
             activity::record_ui_action_log,
+            capability_runner::capability_install,
+            capability_runner::capability_uninstall,
+            capability_runner::capability_evaluate,
+            capability_runner::capability_list,
             activity::list_action_logs,
             activity::clear_action_logs,
             cheeky::preview_cheeky_foveated_dlss,
@@ -80,6 +100,7 @@ pub fn run() {
             desktop_shortcut::preview_desktop_shortcut,
             desktop_shortcut::create_desktop_shortcut,
             steam::detect_installed_games,
+            gog::detect_gog_installed_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,
             ofxr::install_ofxr,
@@ -108,6 +129,10 @@ pub fn run() {
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
+            transaction::create_snapshot,
+            transaction::list_snapshots,
+            transaction::rollback_snapshot,
+            transaction::delete_snapshot,
             updates::check_module_update,
             open_external_url,
             uevr::preview_uevr,
@@ -115,6 +140,12 @@ pub fn run() {
             uevr::uninstall_uevr,
             vr_launch::preview_vr_launch,
             vr_launch::launch_vr_game,
+            compat_report::get_compat_report,
+            library_state::refresh_installed_games_async,
+            library_state::get_cached_installed_games,
+            pcgw_cache::lookup_pcgw_summary,
+            pcgw_cache::get_pcgw_cache,
+            pcgw_cache::clear_pcgw_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moddin");

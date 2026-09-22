@@ -1,0 +1,104 @@
+id: ofxr-bridge
+displayName: OFXR Bridge FrameGen
+category: vr
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the OFXR-Bridge archive (zip).
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream version tag.
+  - name: implementationVersion
+    type: number
+    required: true
+    description: OFXR-Bridge internal implementation version.
+  - name: backend
+    type: enum
+    enumValues: [fidelityfx, nvidia]
+    required: true
+    description: OFXR Bridge optical-flow backend.
+  - name: nvidiaPreset
+    type: enum
+    enumValues: [fast, medium, slow]
+    default: medium
+    description: NVIDIA preset when backend is nvidia.
+  - name: nvidiaInputScale
+    type: number
+    enumValues: [50, 75, 100]
+    default: 50
+    description: NVIDIA input scale percentage.
+  - name: trayIni
+    type: path
+    required: true
+    description: Absolute path of the tray.ini that should be written.
+checks:
+  - id: archive-reachable
+    label: Archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the configured download URL responds before any install step runs.
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches recipe
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    description: Compares the downloaded archive against the declared digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+  - id: tray-process-running
+    label: OFXRBridgeTray.exe is running
+    kind: process-running
+    severity: warning
+    category: modulespecific
+    description: OFXR Bridge cannot apply frame generation unless the tray is alive.
+    params:
+      processName: OFXRBridgeTray.exe
+install:
+  - kind: extract-zip
+    description: Extract OFXR-Bridge archive into the game's executable directory.
+    params:
+      archivePathField: downloadUrl
+  - kind: write-text-file
+    description: Render and write tray.ini with the configured backend / preset.
+    params:
+      pathField: trayIni
+      template: |
+        [tray]
+        backend={backend}
+        nvidia_preset={nvidiaPreset}
+        nvidia_input_scale={nvidiaInputScale}
+        diagnostics=0
+
+verify:
+  - id: tray-process-running
+    label: OFXRBridgeTray.exe is running
+    kind: process-running
+    severity: warning
+    category: modulespecific
+    params:
+      processName: OFXRBridgeTray.exe
+
+uninstall:
+  - kind: file-delete
+    description: Remove the local tray.ini written by install.
+    params:
+      pathField: trayIni
+
+safetyNotes:
+  - OFXR Bridge is an experimental pre-release; it may produce artifacts, freezes, or crashes depending on the game, VR mod, GPU and runtime.
+  - The tray requires the Microsoft Visual C++ Redistributable x64; keep the game non-elevated because Windows OpenXR does not apply per-user layers to elevated processes.
+  - Requires the Game executable to be closed before install.
