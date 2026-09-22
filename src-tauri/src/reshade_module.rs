@@ -1,14 +1,15 @@
-//! `Module` trait adapter for the OFXR FrameGen module.
+//! `Module` trait adapter for the ReShade host installer.
 //!
-//! Mirrors [`crate::reshade_module::ReshadeModule`]: the catalog config
-//! travels through `ModuleContext.config` and the adapter builds a
-//! fully-populated [`crate::ofxr::OfxrRequest`] before delegating to
-//! the existing [`crate::ofxr`] Tauri commands.
+//! This adapter is the **first** real adoption of [`crate::module::Module`]:
+//! the catalog config travels through the `ReShadeRequest` that the
+//! existing [`crate::reshade`] commands already accept, so we can build the
+//! request from the [`ModuleContext`] + the catalog config payload
+//! without waiting for a generic config-plumbing refactor.
 //!
 //! When the dispatcher hands us a context without a config the adapter
 //! returns a stub preview / explicit "missing config" error instead of
-//! silently applying a default recipe — the existing Tauri commands
-//! remain the supported entry point in that mode.
+//! silently applying a default recipe — the existing Tauri commands remain
+//! the supported entry point in that mode.
 
 use std::path::PathBuf;
 
@@ -18,44 +19,39 @@ use crate::{
         ModuleContext, ModuleStatus, PreviewReport, UpdateInfo, UpdateStatus,
         VerificationReport,
     },
-    ofxr::{self, OfxrRequest},
+    reshade::{self, ReshadeRequest},
     transaction::TransactionRecord,
 };
 
-pub struct OfxrModule;
+pub struct ReshadeModule;
 
-impl OfxrModule {
-    /// Build an [`OfxrRequest`] from the [`ModuleContext`] and the
-    /// merged catalog config. Required fields: `version`,
-    /// `implementationVersion`, `downloadUrl`, `sha256`, `backend`,
-    /// `nvidiaPreset`, `nvidiaInputScale`.
-    fn build_request(context: &ModuleContext, config: &serde_json::Value) -> Option<OfxrRequest> {
-        let version = config.get("version")?.as_str()?.to_owned();
-        let implementation_version = config
-            .get("implementationVersion")
-            .and_then(|v| v.as_u64())
-            .map(|value| value as u32)?;
-        let download_url = config.get("downloadUrl")?.as_str()?.to_owned();
-        let sha256 = config.get("sha256")?.as_str()?.to_owned();
-        let backend = config.get("backend")?.as_str()?.to_owned();
-        let nvidia_preset = config
-            .get("nvidiaPreset")
+impl ReshadeModule {
+    /// Build a [`ReshadeRequest`] from the [`ModuleContext`] and the
+    /// merged catalog config. Requires the recipe to declare a `proxy`
+    /// (the only field the request validation refuses to default).
+    fn build_request(context: &ModuleContext, config: &serde_json::Value) -> Option<ReshadeRequest> {
+        let proxy = config.get("proxy")?.as_str()?.to_owned();
+        let version_policy = config
+            .get("versionPolicy")
             .and_then(|v| v.as_str())
-            .unwrap_or("medium")
+            .unwrap_or("pinned")
             .to_owned();
-        let nvidia_input_scale = config
-            .get("nvidiaInputScale")
-            .and_then(|v| v.as_u64())
-            .map(|value| value as u32)
-            .unwrap_or(50);
-        let nvidia_bidirectional = config
-            .get("nvidiaBidirectional")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let force_reinstall = config
-            .get("forceReinstall")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let pinned_tag = config
+            .get("pinnedTag")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let archive_url = config
+            .get("archiveUrl")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let local_archive = config
+            .get("localArchive")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let sha256 = config
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
         let safety_notes = config
             .get("safetyNotes")
             .and_then(|v| v.as_array())
@@ -66,37 +62,39 @@ impl OfxrModule {
                     .collect()
             })
             .unwrap_or_default();
+        let update_url = config
+            .get("updateUrl")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
 
-        Some(OfxrRequest {
+        Some(ReshadeRequest {
             game_id: context.game_id.clone(),
             game_name: context.game_name.clone(),
             install_dir: context.install_dir.to_string_lossy().into_owned(),
             executable: context.executable.clone(),
-            version,
-            implementation_version,
-            download_url,
+            version_policy,
+            pinned_tag,
+            archive_url,
+            local_archive,
             sha256,
-            backend,
-            nvidia_preset,
-            nvidia_input_scale,
-            nvidia_bidirectional,
-            force_reinstall,
+            proxy,
             safety_notes,
+            update_url,
         })
     }
 }
 
-impl Module for OfxrModule {
+impl Module for ReshadeModule {
     fn id(&self) -> &'static str {
-        "ofxr-framegen"
+        "reshade"
     }
 
     fn name(&self) -> &'static str {
-        "OFXR FrameGen"
+        "ReShade host"
     }
 
     fn category(&self) -> ModuleCategory {
-        ModuleCategory::Vr
+        ModuleCategory::Graphics
     }
 
     async fn preview(&self, context: &ModuleContext) -> Result<PreviewReport, String> {
@@ -104,20 +102,20 @@ impl Module for OfxrModule {
             return Ok(PreviewReport {
                 can_apply: false,
                 changes: vec![
-                    "Forward to ofxr::preview_ofxr to see the planned changes.".to_owned(),
+                    "Forward to reshade::preview_reshade to see the planned changes.".to_owned(),
                 ],
                 warnings: vec![
-                    "OfxrModule needs the catalog recipe config (version, implementationVersion, \
-                     downloadUrl, sha256, backend, nvidiaPreset, nvidiaInputScale) on \
-                     ModuleContext.config. Use the existing ofxr::preview_ofxr Tauri command for now."
+                    "ReshadeModule needs the catalog recipe config (proxy, versionPolicy, \
+                     archiveUrl, sha256) on ModuleContext.config. Use the existing \
+                     reshade::preview_reshade Tauri command for now."
                         .to_owned(),
                 ],
             });
         };
 
         let request = Self::build_request(context, &config)
-            .ok_or_else(|| "OfxrModule config is missing required fields.".to_owned())?;
-        let preview = ofxr::preview_ofxr(request).await?;
+            .ok_or_else(|| "ReshadeModule config is missing required fields.".to_owned())?;
+        let preview = reshade::preview_reshade(request).await?;
         Ok(PreviewReport {
             can_apply: preview.can_apply,
             changes: preview.changes,
@@ -127,20 +125,21 @@ impl Module for OfxrModule {
 
     async fn apply(&self, context: &ModuleContext) -> Result<ApplyResult, String> {
         let config = context.config.clone().ok_or_else(|| {
-            "OfxrModule.apply needs the catalog recipe config on ModuleContext.config.".to_owned()
+            "ReshadeModule.apply needs the catalog recipe config on ModuleContext.config."
+                .to_owned()
         })?;
         let request = Self::build_request(context, &config)
-            .ok_or_else(|| "OfxrModule config is missing required fields.".to_owned())?;
-        let result = ofxr::install_ofxr(request).await?;
+            .ok_or_else(|| "ReshadeModule config is missing required fields.".to_owned())?;
+        let result = reshade::install_reshade(request).await?;
         Ok(ApplyResult {
             transaction: result.transaction.ok_or_else(|| {
-                "OFXR install completed but did not return a transaction record.".to_owned()
+                "ReShade install completed but did not return a transaction record.".to_owned()
             })?,
             installed: result.installed,
-            started: result.started,
-            armed: result.armed,
-            version: Some(result.version),
-            backend: Some(result.backend),
+            started: false,
+            armed: false,
+            version: result.version,
+            backend: Some(result.proxy),
         })
     }
 
@@ -151,7 +150,7 @@ impl Module for OfxrModule {
         let Some(config) = context.config.clone() else {
             return Ok(VerificationReport {
                 status: ModuleStatus::Unknown,
-                summary: "OFXR: see ofxr::preview_ofxr for preconditions.".to_owned(),
+                summary: "ReShade: see reshade::preview_reshade for preconditions.".to_owned(),
                 checks: Vec::new(),
                 game_running: false,
                 installed: false,
@@ -165,14 +164,11 @@ impl Module for OfxrModule {
             None => {
                 return Ok(VerificationReport {
                     status: ModuleStatus::Attention,
-                    summary: "OFXR recipe is missing required fields.".to_owned(),
+                    summary: "ReShade recipe is missing required fields.".to_owned(),
                     checks: vec![CheckOutcome {
                         label: "Recipe config".to_owned(),
                         passed: false,
-                        detail: Some(
-                            "version/implementationVersion/downloadUrl/sha256/backend/nvidiaPreset/nvidiaInputScale required"
-                                .to_owned(),
-                        ),
+                        detail: Some("proxy/versionPolicy/archiveUrl/sha256 required".to_owned()),
                         ..Default::default()
                     }],
                     game_running: false,
@@ -183,7 +179,7 @@ impl Module for OfxrModule {
             }
         };
 
-        let preview = ofxr::preview_ofxr(request).await?;
+        let preview = reshade::preview_reshade(request).await?;
         let status = if preview.game_running {
             ModuleStatus::Attention
         } else if preview.installed {
@@ -196,13 +192,13 @@ impl Module for OfxrModule {
 
         let summary = if preview.installed {
             format!(
-                "OFXR Bridge is installed ({}).",
+                "ReShade is installed ({}).",
                 preview.installed_version.as_deref().unwrap_or("pinned")
             )
         } else if preview.can_apply {
-            "OFXR Bridge is ready to install.".to_owned()
+            "ReShade is ready to install.".to_owned()
         } else {
-            "OFXR Bridge cannot be applied yet; see checklist.".to_owned()
+            "ReShade cannot be applied yet; see checklist.".to_owned()
         };
 
         let mut checks = Vec::new();
@@ -226,31 +222,33 @@ impl Module for OfxrModule {
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("tray-path-present"),
+            id: Some("proxy-available"),
             category: CheckCategory::ModuleSpecific,
-            label: format!("Tray path present ({})", preview.tray_path),
-            passed: preview.tray_installed,
-            detail: (!preview.tray_installed)
-                .then(|| "Tray executable was not found at the expected path.".to_owned()),
+            severity: CheckSeverity::Blocker,
+            label: format!("Proxy '{}' available", preview.proxy_chosen),
+            passed: preview.proxy_available,
+            detail: (!preview.proxy_available).then(|| {
+                if preview.conflicts.is_empty() {
+                    "Proxy DLL is already in place.".to_owned()
+                } else {
+                    preview
+                        .conflicts
+                        .iter()
+                        .map(|c| format!("'{}' held by {}", c.proxy, c.held_by))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+            }),
             ..Default::default()
         });
         checks.push(CheckOutcome {
-            id: Some("tray-configured"),
-            category: CheckCategory::ModuleSpecific,
-            label: "Tray configured".to_owned(),
-            passed: preview.configured,
-            detail: (!preview.configured)
-                .then(|| "OFXR tray.ini does not match the recommended preset.".to_owned()),
-            ..Default::default()
-        });
-        checks.push(CheckOutcome {
-            id: Some("tray-running"),
+            id: Some("archive-reachable"),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Warning,
-            label: "Tray running".to_owned(),
-            passed: preview.tray_running,
-            detail: (!preview.tray_running)
-                .then(|| "OFXRBridgeTray.exe is not running; start it from the system tray.".to_owned()),
+            label: "Archive reachable".to_owned(),
+            passed: preview.archive_reachable,
+            detail: (!preview.archive_reachable)
+                .then(|| "Set archiveUrl or localArchive in the recipe.".to_owned()),
             ..Default::default()
         });
 
@@ -266,13 +264,9 @@ impl Module for OfxrModule {
     }
 
     async fn remove(&self, context: &ModuleContext) -> Result<ApplyResult, String> {
-        let config = context
-            .config
-            .clone()
-            .ok_or_else(|| "OfxrModule.remove needs the catalog recipe config.".to_owned())?;
-        let request = Self::build_request(context, &config)
-            .ok_or_else(|| "OfxrModule.remove config is missing required fields.".to_owned())?;
-        let record = ofxr::uninstall_ofxr(request)?;
+        let transaction_id = None;
+        let record: TransactionRecord =
+            reshade::uninstall_reshade(context.game_id.clone(), transaction_id).await?;
         Ok(ApplyResult {
             transaction: record,
             installed: false,
@@ -294,13 +288,13 @@ impl Module for OfxrModule {
                 latest_version: None,
                 release_url: None,
                 detail: Some(
-                    "OFXR update_check needs ModuleContext.config.updateUrl.".to_owned(),
+                    "ReShade update_check needs ModuleContext.config.updateUrl.".to_owned(),
                 ),
             });
         };
         let update_url = config.get("updateUrl").and_then(|v| v.as_str());
         let current_version = config
-            .get("version")
+            .get("pinnedTag")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
         let request = crate::updates::ModuleUpdateRequest {
@@ -342,22 +336,22 @@ mod tests {
             game_name: "Elden Ring".to_owned(),
             install_dir: PathBuf::from("C:/Games/EldenRing"),
             executable: "Game/eldenring.exe".to_owned(),
-            work_dir: PathBuf::from("C:/Users/me/AppData/Local/Moddin/tools/ofxr"),
+            work_dir: PathBuf::from("C:/Users/me/AppData/Local/Moddin/tools/reshade"),
             config,
         }
     }
 
     #[tokio::test]
-    async fn ofxr_module_reports_its_identity() {
-        let module = OfxrModule;
-        assert_eq!(module.id(), "ofxr-framegen");
-        assert_eq!(module.name(), "OFXR FrameGen");
-        assert_eq!(module.category(), ModuleCategory::Vr);
+    async fn reshade_module_reports_its_identity() {
+        let module = ReshadeModule;
+        assert_eq!(module.id(), "reshade");
+        assert_eq!(module.name(), "ReShade host");
+        assert_eq!(module.category(), ModuleCategory::Graphics);
     }
 
     #[tokio::test]
-    async fn ofxr_module_preview_without_config_returns_stub() {
-        let module = OfxrModule;
+    async fn reshade_module_preview_without_config_returns_stub() {
+        let module = ReshadeModule;
         let preview = module
             .preview(&context_with_config(None))
             .await
@@ -369,36 +363,34 @@ mod tests {
     #[test]
     fn build_request_pulls_every_field_from_config() {
         let config = serde_json::json!({
-            "version": "0.2.0",
-            "implementationVersion": 68,
-            "downloadUrl": "https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR.zip",
-            "sha256": "3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4",
-            "backend": "fidelityfx",
-            "nvidiaPreset": "medium",
-            "nvidiaInputScale": 50,
-            "nvidiaBidirectional": false,
-            "forceReinstall": false,
-            "safetyNotes": ["experimental"]
+            "proxy": "version.dll",
+            "versionPolicy": "pinned",
+            "pinnedTag": "6.0.0",
+            "archiveUrl": "https://github.com/crosire/reshade/releases/download/v6.0.0/ReShade.zip",
+            "sha256": "0".repeat(64),
+            "updateUrl": "https://api.github.com/repos/crosire/reshade/releases/latest",
+            "safetyNotes": ["Note A", "Note B"]
         });
-        let request = OfxrModule::build_request(&context_with_config(Some(config.clone())), &config)
-            .expect("complete config should build");
-        assert_eq!(request.version, "0.2.0");
-        assert_eq!(request.implementation_version, 68);
-        assert_eq!(request.download_url.starts_with("https://github.com/"), true);
-        assert_eq!(request.backend, "fidelityfx");
-        assert_eq!(request.nvidia_preset, "medium");
-        assert_eq!(request.nvidia_input_scale, 50);
-        assert!(!request.nvidia_bidirectional);
-        assert_eq!(request.safety_notes, vec!["experimental".to_owned()]);
+        let request = ReshadeModule::build_request(&context_with_config(Some(config.clone())), &config)
+            .expect("config has all required fields");
+        assert_eq!(request.proxy, "version.dll");
+        assert_eq!(request.version_policy, "pinned");
+        assert_eq!(request.pinned_tag.as_deref(), Some("6.0.0"));
+        assert_eq!(request.sha256.as_deref(), Some("0".repeat(64).as_str()));
+        assert_eq!(request.update_url.as_deref(), Some(
+            "https://api.github.com/repos/crosire/reshade/releases/latest"
+        ));
+        assert_eq!(request.safety_notes.len(), 2);
     }
 
     #[test]
-    fn build_request_rejects_missing_required_field() {
-        let config = serde_json::json!({
-            "version": "0.2.0"
-            // implementationVersion, downloadUrl, sha256, backend missing
-        });
-        let request = OfxrModule::build_request(&context_with_config(Some(config)), &serde_json::json!({}));
-        assert!(request.is_none());
+    fn build_request_requires_proxy_field() {
+        let config = serde_json::json!({});
+        assert!(ReshadeModule::build_request(
+            &context_with_config(Some(config)),
+            &serde_json::json!({})
+        )
+        .is_none());
     }
 }
+
