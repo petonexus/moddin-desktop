@@ -5,6 +5,7 @@ mod builtin_checks;
 mod builtin_steps;
 mod capability;
 mod capability_runner;
+mod community_catalog;
 mod path_guard;
 mod compat_report;
 mod cheeky;
@@ -93,6 +94,8 @@ pub fn run() {
             capability_runner::capability_evaluate,
             capability_runner::capability_list,
             capability_runner::capability_reload,
+            community_catalog::community_catalog_fetch,
+            community_catalog::community_catalog_set_ttl,
             activity::list_action_logs,
             activity::clear_action_logs,
             cheeky::preview_cheeky_foveated_dlss,
