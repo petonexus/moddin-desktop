@@ -94,6 +94,7 @@ pub fn run() {
             capability_runner::capability_evaluate,
             capability_runner::capability_list,
             capability_runner::capability_reload,
+            capability_runner::community_capability_install,
             community_catalog::community_catalog_fetch,
             community_catalog::community_catalog_set_ttl,
             activity::list_action_logs,

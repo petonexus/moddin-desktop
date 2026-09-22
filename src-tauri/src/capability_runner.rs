@@ -239,21 +239,17 @@ pub struct InstallResult {
     pub affected_paths: Vec<String>,
 }
 
-/// Run the `install` section of a capability against the supplied
-/// config and game paths.
-pub fn run_install(
-    registry: &CapabilityRegistry,
-    capability_id: &str,
+/// Internal install worker. Called by `run_install` (registry lookup)
+/// and `run_install_with_spec` (community YAML the caller already
+/// fetched + verified). Same transaction store, same step dispatch.
+fn execute_install(
+    spec: &CapabilitySpec,
     game_id: &str,
     game_name: &str,
     config: &ResolvedConfig,
     install_directory: &Path,
     executable_directory: &Path,
 ) -> Result<InstallResult, String> {
-    let spec = registry
-        .get(capability_id)
-        .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
-
     let step_context = StepContext {
         spec,
         config,
@@ -292,6 +288,51 @@ pub fn run_install(
         steps: step_results,
         affected_paths: affected,
     })
+}
+
+/// Run the `install` section of a capability that lives in the registry.
+pub fn run_install(
+    registry: &CapabilityRegistry,
+    capability_id: &str,
+    game_id: &str,
+    game_name: &str,
+    config: &ResolvedConfig,
+    install_directory: &Path,
+    executable_directory: &Path,
+) -> Result<InstallResult, String> {
+    let spec = registry
+        .get(capability_id)
+        .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
+    execute_install(
+        spec,
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+    )
+}
+
+/// Run the `install` section of a capability whose `CapabilitySpec`
+/// was supplied directly (no registry lookup). Used by
+/// `community_capability_install` after the caller has downloaded
+/// and signature-verified the YAML.
+pub fn run_install_with_spec(
+    spec: &CapabilitySpec,
+    game_id: &str,
+    game_name: &str,
+    config: &ResolvedConfig,
+    install_directory: &Path,
+    executable_directory: &Path,
+) -> Result<InstallResult, String> {
+    execute_install(
+        spec,
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+    )
 }
 
 /// Run the `uninstall` section (or fall back to rolling back the
@@ -417,7 +458,10 @@ fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collec
 
 // === Tauri command surface =====================================================
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
+use serde_yaml;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -559,6 +603,146 @@ pub fn capability_reload(
             }
         })
         .collect())
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignedBy {
+    algorithm: String,
+    public_key: String,
+    signature: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct SignedByFile {
+    signed_by: SignedBy,
+}
+
+fn verify_signed_by(yaml_text: &str, signed_by_text: &str) -> Result<(), String> {
+    let payload = yaml_text.as_bytes();
+    let parsed: SignedByFile = serde_yaml::from_str(signed_by_text)
+        .map_err(|error| format!("SIGNED-BY is not valid YAML: {error}"))?;
+    let signed_by = &parsed.signed_by;
+    if signed_by.algorithm != "ed25519" {
+        return Err(format!(
+            "SIGNED-BY uses unsupported algorithm '{}' (expected 'ed25519').",
+            signed_by.algorithm
+        ));
+    }
+    let public_bytes = BASE64
+        .decode(signed_by.public_key.as_bytes())
+        .map_err(|error| format!("SIGNED-BY publicKey is not valid base64: {error}"))?;
+    if public_bytes.len() != 32 {
+        return Err(format!(
+            "SIGNED-BY publicKey must be 32 bytes (got {}).",
+            public_bytes.len()
+        ));
+    }
+    let public_array: [u8; 32] = public_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|error: std::array::TryFromSliceError| error.to_string())?;
+    let public_key = VerifyingKey::from_bytes(&public_array)
+        .map_err(|error| format!("SIGNED-BY publicKey is not a valid Ed25519 key: {error}"))?;
+    let signature_bytes = BASE64
+        .decode(signed_by.signature.as_bytes())
+        .map_err(|error| format!("SIGNED-BY signature is not valid base64: {error}"))?;
+    if signature_bytes.len() != 64 {
+        return Err(format!(
+            "SIGNED-BY signature must be 64 bytes (got {}).",
+            signature_bytes.len()
+        ));
+    }
+    let signature_array: [u8; 64] = signature_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|error: std::array::TryFromSliceError| error.to_string())?;
+    let signature = Signature::from_bytes(&signature_array);
+    public_key
+        .verify(payload, &signature)
+        .map_err(|error| format!("SIGNED-BY signature verification failed: {error}"))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunityInstallRequest {
+    pub capability_id: String,
+    pub game_id: String,
+    pub game_name: String,
+    pub install_dir: String,
+    pub executable_dir: String,
+    pub config: ResolvedConfig,
+    /// When false, an unsigned community capability aborts with an
+    /// error. When true, the caller has already confirmed the install
+    /// in the UI and the runner accepts unsigned capabilities.
+    #[serde(default)]
+    pub accept_unsigned: bool,
+}
+
+#[tauri::command]
+pub async fn community_capability_install(
+    request: CommunityInstallRequest,
+) -> Result<InstallResult, String> {
+    let catalog = crate::community_catalog::read_cached_catalog_only()
+        .ok_or_else(|| {
+            "Community catalog has not been fetched yet. Call community_catalog_fetch first."
+                .to_owned()
+        })?;
+    let entry = catalog
+        .capabilities
+        .iter()
+        .find(|candidate| candidate.id == request.capability_id)
+        .ok_or_else(|| {
+            format!(
+                "Community catalog does not list a capability named '{}'.",
+                request.capability_id
+            )
+        })?;
+    let download_url = entry.download_url.clone().ok_or_else(|| {
+        format!(
+            "Community catalog entry '{}' has no downloadUrl.",
+            request.capability_id
+        )
+    })?;
+
+    let (yaml_text, signed_by_text) =
+        crate::community_catalog::fetch_capability_yaml(&download_url).await?;
+
+    if let Some(signed_by) = signed_by_text.as_deref() {
+        if let Err(error) = verify_signed_by(&yaml_text, signed_by) {
+            return Err(format!(
+                "Community capability '{}' signature invalid: {error}",
+                request.capability_id
+            ));
+        }
+    } else if !request.accept_unsigned {
+        return Err(format!(
+            "Community capability '{}' is not signed. Re-run with acceptUnsigned=true after the UI confirmation.",
+            request.capability_id
+        ));
+    }
+
+    let spec: CapabilitySpec = serde_yaml::from_str(&yaml_text)
+        .map_err(|error| format!("could not parse community capability YAML: {error}"))?;
+    if spec.id != request.capability_id {
+        return Err(format!(
+            "Community capability id mismatch: catalog says '{}' but the downloaded YAML says '{}'.",
+            request.capability_id,
+            spec.id
+        ));
+    }
+
+    let install_directory = PathBuf::from(&request.install_dir);
+    let executable_directory = PathBuf::from(&request.executable_dir);
+    run_install_with_spec(
+        &spec,
+        &request.game_id,
+        &request.game_name,
+        &request.config,
+        &install_directory,
+        &executable_directory,
+    )
 }
 
 #[cfg(test)]

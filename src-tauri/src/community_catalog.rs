@@ -397,6 +397,59 @@ pub fn set_ttl(ttl_seconds: u64) -> u64 {
     ttl_seconds.clamp(MIN_TTL_SECONDS, MAX_TTL_SECONDS)
 }
 
+/// Read the most recently cached community catalog without triggering
+/// a network refresh. Returns `None` when no catalog has been fetched
+/// yet (the UI should call `community_catalog_fetch` first).
+pub fn read_cached_catalog_only() -> Option<CommunityCatalog> {
+    let dir = community_dir()?;
+    let raw = std::fs::read_to_string(dir.join("catalog.json")).ok()?;
+    serde_json::from_str::<CommunityCatalog>(&raw).ok()
+}
+
+/// Download a single capability YAML from a community download URL,
+/// and the sibling `SIGNED-BY` when present. Returns `(yaml_text,
+/// signed_by_text_or_none)`. Network errors are surfaced as `Err(String)`
+/// verbatim — the caller decides whether to fail-closed or fall back.
+pub async fn fetch_capability_yaml(
+    download_url: &str,
+) -> Result<(String, Option<String>), String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
+        .build()
+        .map_err(|error| format!("community: could not build HTTP client: {error}"))?;
+
+    let yaml = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|error| format!("community: YAML GET failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("community: YAML GET returned an error: {error}"))?
+        .text()
+        .await
+        .map_err(|error| format!("community: YAML read failed: {error}"))?;
+
+    let signed_by_url = sibling_url(download_url, "SIGNED-BY");
+    let signed_by = match signed_by_url {
+        Some(url) => match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => response
+                .text()
+                .await
+                .ok()
+                .filter(|text| !text.trim().is_empty()),
+            _ => None,
+        },
+        None => None,
+    };
+
+    Ok((yaml, signed_by))
+}
+
+fn sibling_url(download_url: &str, sibling: &str) -> Option<String> {
+    let last_slash = download_url.rfind('/')?;
+    Some(format!("{}{}", &download_url[..=last_slash], sibling))
+}
+
 // === Tauri command surface =====================================================
 
 #[derive(Debug, serde::Deserialize)]
@@ -473,5 +526,21 @@ mod tests {
         let value = fingerprint(&key);
         assert_eq!(value.len(), 16);
         assert!(value.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sibling_url_strips_filename_only() {
+        let url = "https://raw.githubusercontent.com/petonexus/moddin-community-capabilities/main/capabilities/community-fps-unlocker/capability.yaml";
+        let sibling = sibling_url(url, "SIGNED-BY").expect("sibling");
+        assert_eq!(
+            sibling,
+            "https://raw.githubusercontent.com/petonexus/moddin-community-capabilities/main/capabilities/community-fps-unlocker/SIGNED-BY"
+        );
+    }
+
+    #[test]
+    fn sibling_url_rejects_strings_without_a_slash() {
+        assert!(sibling_url("not-a-url", "X").is_none());
+        assert!(sibling_url("", "X").is_none());
     }
 }
