@@ -34,6 +34,11 @@ pub fn known_kinds() -> &'static [&'static str] {
         "file-delete",
         "write-text-file",
         "spawn-process",
+        "write-binary-file",
+        "move-file",
+        "kill-process",
+        "registry-write",
+        "registry-delete",
     ]
 }
 
@@ -69,6 +74,11 @@ pub fn execute_step(
         "file-delete" => run_file_delete(step, context),
         "write-text-file" => run_write_text_file(step, context),
         "spawn-process" => run_spawn_process(step, context),
+        "write-binary-file" => run_write_binary_file(step, context),
+        "move-file" => run_move_file(step, context),
+        "kill-process" => run_kill_process(step, context),
+        "registry-write" => run_registry_write(step, context),
+        "registry-delete" => run_registry_delete(step, context),
         other => Err(format!("Unknown step kind: {other}")),
     }
 }
@@ -309,6 +319,222 @@ fn run_spawn_process(
     })
 }
 
+fn run_write_binary_file(
+    step: &StepSpec,
+    context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    let path_field = param_string(step, "pathField")
+        .ok_or_else(|| "write-binary-file: pathField is required.".to_owned())?;
+    let path = context
+        .config
+        .get_string(path_field)
+        .ok_or_else(|| format!("write-binary-file: config field '{path_field}' is missing."))?;
+    let resolved = resolve_path(context.executable_directory, &path);
+    if let Some(parent) = resolved.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("write-binary-file: could not create parent dir: {error}")
+        })?;
+    }
+    let bytes = param_string(step, "base64")
+        .and_then(|value| base64_decode(value))
+        .ok_or_else(|| "write-binary-file: base64 param with required hex.".to_owned())?;
+    fs::write(&resolved, &bytes)
+        .map_err(|error| format!("write-binary-file: could not write '{path}': {error}"))?;
+    Ok(StepResult {
+        kind: step.kind.clone(),
+        description: step.description.clone(),
+        affected_paths: vec![resolved.to_string_lossy().into_owned()],
+    })
+}
+
+fn run_move_file(
+    step: &StepSpec,
+    context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    let from_field = param_string(step, "fromField")
+        .ok_or_else(|| "move-file: fromField is required.".to_owned())?;
+    let to_field = param_string(step, "toField")
+        .ok_or_else(|| "move-file: toField is required.".to_owned())?;
+    let from_path = context
+        .config
+        .get_string(from_field)
+        .ok_or_else(|| format!("move-file: config field '{from_field}' is missing."))?;
+    let to_path = context
+        .config
+        .get_string(to_field)
+        .ok_or_else(|| format!("move-file: config field '{to_field}' is missing."))?;
+    let from = resolve_path(context.executable_directory, &from_path);
+    let to = resolve_path(context.executable_directory, &to_path);
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("move-file: could not create destination parent: {error}")
+        })?;
+    }
+    fs::rename(&from, &to)
+        .map_err(|error| format!("move-file: could not move '{from_path}' -> '{to_path}': {error}"))?;
+    Ok(StepResult {
+        kind: step.kind.clone(),
+        description: step.description.clone(),
+        affected_paths: vec![
+            from.to_string_lossy().into_owned(),
+            to.to_string_lossy().into_owned(),
+        ],
+    })
+}
+
+fn run_kill_process(
+    step: &StepSpec,
+    _context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    let process_name = param_string(step, "processName")
+        .or_else(|| param_string(step, "processNameField"))
+        .ok_or_else(|| "kill-process: processName or processNameField is required.".to_owned())?;
+    let force = param(step, "force")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let mut command = std::process::Command::new("taskkill");
+    command.arg("/IM").arg(process_name).arg("/T");
+    if force {
+        command.arg("/F");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("kill-process: could not spawn taskkill: {error}"))?;
+    let code = output.status.code().unwrap_or(-1);
+    if code != 0 && code != 128 {
+        // 128 == ERROR_NOT_FOUND, which is fine for an idempotent kill.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "kill-process: taskkill exited {code}: {stderr}"
+        ));
+    }
+    Ok(StepResult {
+        kind: step.kind.clone(),
+        description: step.description.clone(),
+        affected_paths: Vec::new(),
+    })
+}
+
+fn run_registry_write(
+    step: &StepSpec,
+    _context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    let key = param_string(step, "key")
+        .ok_or_else(|| "registry-write: key is required.".to_owned())?;
+    let value = param_string(step, "value")
+        .ok_or_else(|| "registry-write: value is required.".to_owned())?;
+    let value_kind = param_string(step, "type")
+        .unwrap_or("REG_SZ");
+    let force = param(step, "force")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+
+    let mut command = std::process::Command::new("reg.exe");
+    command.arg("add").arg(key);
+    if value_kind == "REG_SZ" || value_kind == "REG_EXPAND_SZ" || value_kind == "REG_DWORD" {
+        command.arg("/v").arg(value).arg("/t").arg(value_kind);
+    } else if value_kind == "REG_BINARY" || value_kind == "REG_MULTI_SZ" {
+        command.arg("/v").arg(value).arg("/t").arg(value_kind).arg("/d").arg("");
+    } else {
+        return Err(format!(
+            "registry-write: unsupported value type '{value_kind}'."
+        ));
+    }
+    if force {
+        command.arg("/f");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("registry-write: could not spawn reg.exe: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "registry-write: reg.exe failed ({}): {stderr}",
+            output.status
+        ));
+    }
+    Ok(StepResult {
+        kind: step.kind.clone(),
+        description: step.description.clone(),
+        affected_paths: vec![format!("registry:{key}")],
+    })
+}
+
+fn run_registry_delete(
+    step: &StepSpec,
+    _context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    let key = param_string(step, "key")
+        .ok_or_else(|| "registry-delete: key is required.".to_owned())?;
+    let value = param_string(step, "value");
+    let force = param(step, "force")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+
+    let mut command = std::process::Command::new("reg.exe");
+    command.arg("delete").arg(key);
+    if let Some(name) = value {
+        command.arg("/v").arg(name);
+    }
+    if force {
+        command.arg("/f");
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("registry-delete: could not spawn reg.exe: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "registry-delete: reg.exe failed ({}): {stderr}",
+            output.status
+        ));
+    }
+    Ok(StepResult {
+        kind: step.kind.clone(),
+        description: step.description.clone(),
+        affected_paths: vec![format!("registry:{key}")],
+    })
+}
+
+fn base64_decode(value: &str) -> Option<Vec<u8>> {
+    // Minimal RFC 4648 base64 decoder so we don't pull a new dep just
+    // for the write-binary-file step. Returns None on any malformed
+    // character so the step fails loudly. Accepts both padded and
+    // unpadded inputs.
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut cleaned: Vec<u8> = value
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect();
+    if cleaned.is_empty() {
+        return Some(Vec::new());
+    }
+    match cleaned.len() % 4 {
+        0 => {}
+        2 => cleaned.extend_from_slice(b"=="),
+        3 => cleaned.push(b'='),
+        _ => return None,
+    }
+    let mut output = Vec::with_capacity(cleaned.len() / 4 * 3);
+    let mut buffer: u32 = 0;
+    let mut bits: u32 = 0;
+    for byte in &cleaned {
+        let sextet = match ALPHABET.iter().position(|candidate| *candidate == *byte) {
+            Some(index) => index as u32,
+            None if *byte == b'=' => continue,
+            None => return None,
+        };
+        buffer = (buffer << 6) | sextet;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push(((buffer >> bits) & 0xFF) as u8);
+        }
+    }
+    Some(output)
+}
+
 fn render_template(template: &str, config: &ResolvedConfig) -> String {
     let mut output = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
@@ -394,6 +620,20 @@ mod tests {
         assert!(kinds.contains(&"file-delete"));
         assert!(kinds.contains(&"write-text-file"));
         assert!(kinds.contains(&"spawn-process"));
+        assert!(kinds.contains(&"write-binary-file"));
+        assert!(kinds.contains(&"move-file"));
+        assert!(kinds.contains(&"kill-process"));
+        assert!(kinds.contains(&"registry-write"));
+        assert!(kinds.contains(&"registry-delete"));
+    }
+
+    #[test]
+    fn base64_decode_handles_padded_and_unpadded_inputs() {
+        let decoded = base64_decode("SGVsbG8=").expect("valid");
+        assert_eq!(decoded, b"Hello");
+        let decoded = base64_decode("SGVsbG8").expect("unpadded valid");
+        assert_eq!(decoded, b"Hello");
+        assert!(base64_decode("@@@").is_none());
     }
 
     #[test]

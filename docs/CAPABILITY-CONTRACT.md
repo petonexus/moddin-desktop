@@ -126,7 +126,12 @@ Built-in step kinds (extend `builtin_steps.rs` to register more):
 | `verify-hash`     | Reads `pathField` and compares SHA-256 to `expectedField`.    |
 | `file-delete`     | Removes `pathField` (config field holding an absolute path). |
 | `write-text-file` | Writes `pathField` with `template` rendered (`{field}` → `ResolvedConfig.values`). |
+| `write-binary-file` | Same as `write-text-file` but for `base64` payload — useful for small DLLs and manifest blobs carried inline. |
+| `move-file`       | Renames / moves a file inside the executable directory (used for picking a proxy DLL among the candidates). |
 | `spawn-process`   | Starts `executable` (resolved against the game dir).         |
+| `kill-process`    | Runs `taskkill /IM <name> /T` (optionally `/F`) so an install can stop the previous instance. |
+| `registry-write`  | Runs `reg.exe add <key> /v <name> /t <type> [/d <data>] /f`. Windows-only; capability loader skips this kind on non-Windows. |
+| `registry-delete` | Runs `reg.exe delete <key> [/v <name>] /f`. Windows-only.     |
 
 `uninstall` follows the same shape. If it is empty the runner falls
 back to rolling back the latest transaction recorded for the
@@ -220,5 +225,8 @@ check kinds require a new match arm in `builtin_steps.rs` /
   check kinds.
 - [`src-tauri/capabilities/ofxr-bridge.yaml`](../src-tauri/capabilities/ofxr-bridge.yaml) —
   complete sample.
+- [`src-tauri/capabilities/optiscaler.yaml`](../src-tauri/capabilities/optiscaler.yaml) —
+  second sample covering `move-file`, `file-delete`, and the
+  `proxyCandidates` workflow.
 - [`src/types/capability.ts`](../src/types/capability.ts) —
   TypeScript mirror.

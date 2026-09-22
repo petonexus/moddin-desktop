@@ -1,0 +1,67 @@
+id: optiscaler
+displayName: OptiScaler DLSS upscaler
+category: graphics
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+  - re-engine
+  - unity
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the OptiScaler release archive (7z or zip).
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream OptiScaler release tag.
+  - name: proxy
+    type: path
+    required: true
+    description: Absolute path of the proxy DLL OptiScaler ships in place of the archive's bundled one (e.g. dxgi.dll, version.dll). The runner walks the proxy candidates from the recipe in `proxyCandidates` and picks the first that does not already live in the game directory.
+  - name: proxyCandidates
+    type: enum
+    enumValues: [dxgi.dll, version.dll, d3d11.dll, d3d12.dll, winmm.dll, dinput8.dll, xinput1_3.dll]
+    required: true
+    description: Ordered list of proxy DLLs OptiScaler accepts; the runner picks the first available one.
+checks:
+  - id: archive-reachable
+    label: OptiScaler archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the configured download URL responds before any install step runs.
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches recipe
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    description: Compares the downloaded archive against the declared digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract the OptiScaler archive into the game executable directory.
+    params:
+      archivePathField: downloadUrl
+  - kind: move-file
+    description: Rename OptiScaler's bundled proxy DLL to the recipe-declared `proxy`.
+    params:
+      fromField: downloadUrl
+      toField: proxy
+uninstall:
+  - kind: file-delete
+    description: Remove the proxy DLL OptiScaler dropped next to the game executable.
+    params:
+      pathField: proxy
+safetyNotes:
+  - OptiScaler proxies its own DLL into the executable directory; choose a proxy name that does not clash with other mods (UEVR, ReShade, R.E.A.L. VR, ERVR).
+  - OptiScaler only ships replacements for DLSS-SR; games that already include DLSS or FSR need their native runtime left untouched.
