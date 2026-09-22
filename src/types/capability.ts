@@ -15,6 +15,15 @@ export type CheckKind =
   | 'archive-reachable'
   | 'archive-sha256'
 
+/**
+ * Where a capability recipe came from. Drives the UI badge, the
+ * activity log level, and (for community + unsigned) whether the
+ * install prompts for confirmation.
+ *
+ * Mirrors `crate::capability::SpecOrigin` in Rust.
+ */
+export type CapabilityOrigin = 'builtIn' | 'local' | 'community'
+
 export interface ConfigFieldSpec {
   name: string
   type: 'string' | 'number' | 'boolean' | 'url' | 'sha256' | 'path' | 'enum'
@@ -52,6 +61,17 @@ export interface CapabilitySpec {
   uninstall?: StepSpec[]
   verify?: CheckSpec[]
   safetyNotes?: string[]
+}
+
+/** Lightweight summary the desktop uses to render the capability
+ * gallery (one card per entry). Mirrors
+ * `crate::capability_runner::CapabilitySummary`. */
+export interface CapabilitySummary {
+  id: string
+  displayName: string
+  category: CapabilityCategory
+  status: CapabilityStatus
+  origin: CapabilityOrigin
 }
 
 export interface ResolvedConfig {

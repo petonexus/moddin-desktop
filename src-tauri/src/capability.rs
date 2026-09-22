@@ -26,8 +26,49 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
+/// Where a [`CapabilitySpec`] came from. Determines how the UI badges
+/// it, what activity log level it carries, and whether the install
+/// prompts for confirmation.
+///
+/// * `BuiltIn` — shipped inside the app binary (Rust `include_str!`).
+/// * `Local` — a YAML file under `%LOCALAPPDATA%\Moddin\capabilities\`.
+///   The user dropped it themselves, so we trust it without
+///   prompting. Same kind allow-list as BuiltIn.
+/// * `Community` — fetched from the public community catalog
+///   ([`petonexus/moddin-community-capabilities`](https://github.com/petonexus/moddin-community-capabilities))
+///   and verified against the maintainer signing key. The runner
+///   refuses to load unsigned community capabilities without a UI
+///   confirmation (handled in the catalog layer, not here).
+///
+/// Adding a new variant requires updating the TypeScript mirror in
+/// `src/types/capability.ts`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SpecOrigin {
+    BuiltIn,
+    Local,
+    Community,
+}
+
+impl SpecOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SpecOrigin::BuiltIn => "builtIn",
+            SpecOrigin::Local => "local",
+            SpecOrigin::Community => "community",
+        }
+    }
+}
+
+impl Default for SpecOrigin {
+    fn default() -> Self {
+        SpecOrigin::BuiltIn
+    }
+}
+
 /// Top-level capability recipe. Parsed from a YAML file under
-/// `src-tauri/capabilities/<id>.yaml`.
+/// `src-tauri/capabilities/<id>.yaml` or
+/// `%LOCALAPPDATA%\Moddin\capabilities\<id>.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilitySpec {
@@ -51,6 +92,11 @@ pub struct CapabilitySpec {
     pub safety_notes: Vec<String>,
     #[serde(default)]
     pub config_schema: Vec<ConfigFieldSpec>,
+    /// Where the spec came from. Not serialised to / parsed from
+    /// YAML — the runner sets it after loading. Defaults to `BuiltIn`
+    /// so older YAMLs keep their original provenance.
+    #[serde(default, skip_deserializing)]
+    pub origin: SpecOrigin,
 }
 
 /// Declarative description of a single check the runner can evaluate.

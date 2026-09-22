@@ -23,12 +23,16 @@
 use crate::{
     builtin_checks,
     builtin_steps::{self, StepContext, StepResult},
-    capability::{CapabilitySpec, CheckSpec, ResolvedConfig, StepSpec},
+    capability::{CapabilitySpec, CheckSpec, ResolvedConfig, SpecOrigin, StepSpec},
     module::{CheckCategory, CheckOutcome, CheckSeverity, ModuleStatus, VerificationReport},
     transaction::{self, TransactionRecord},
 };
 use serde::Serialize;
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::Path,
+};
+use std::path::PathBuf;
 
 const OFXR_BRIDGE_YAML: &str = include_str!("../capabilities/ofxr-bridge.yaml");
 const OPTISCALER_YAML: &str = include_str!("../capabilities/optiscaler.yaml");
@@ -38,16 +42,38 @@ const RESHADE_YAML: &str = include_str!("../capabilities/reshade.yaml");
 const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
 const UEVR_YAML: &str = include_str!("../capabilities/uevr.yaml");
 
+/// Directory Moddin Desktop scans at startup for user-provided
+/// capability recipes. Files placed here are loaded as `SpecOrigin::Local`,
+/// which the UI badges as "Local" and the activity log records at
+/// `verbose` level. Same kind allow-list applies.
+///
+/// Returns `None` when `LOCALAPPDATA` is unset (non-Windows dev).
+pub fn local_capabilities_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("Moddin").join("capabilities"))
+}
+
 /// Static registry of every capability declared under
-/// `src-tauri/capabilities/`. Built at process start; never mutated.
+/// `src-tauri/capabilities/` (BuiltIn) plus the user's local override
+/// directory (Local). Built at process start; never mutated.
 #[derive(Debug, Default)]
 pub struct CapabilityRegistry {
     specs: HashMap<String, CapabilitySpec>,
 }
 
 impl CapabilityRegistry {
+    /// Load every capability the runner can find: the built-ins
+    /// compiled into the binary plus every YAML the user dropped under
+    /// `%LOCALAPPDATA%\Moddin\capabilities\`.
+    ///
+    /// Local YAMLs whose id matches a built-in override the built-in
+    /// (so users can patch a single step of `ofxr-bridge` without
+    /// recompiling the app). Duplicate ids among local files are
+    /// logged and skipped — the runner keeps the first one it finds.
     pub fn load() -> Self {
         let mut specs = HashMap::new();
+
         for raw in [
             OFXR_BRIDGE_YAML,
             OPTISCALER_YAML,
@@ -57,21 +83,116 @@ impl CapabilityRegistry {
             UEVR_YAML,
         ] {
             match serde_yaml::from_str::<CapabilitySpec>(raw) {
-                Ok(spec) => {
+                Ok(mut spec) => {
+                    spec.origin = SpecOrigin::BuiltIn;
                     if specs.contains_key(&spec.id) {
                         panic!(
-                            "duplicate capability id '{id}' in capabilities/*.yaml",
+                            "duplicate built-in capability id '{id}'",
                             id = spec.id
                         );
                     }
                     specs.insert(spec.id.clone(), spec);
                 }
                 Err(error) => {
-                    panic!("could not parse capability YAML: {error}");
+                    panic!("could not parse built-in capability YAML: {error}");
                 }
             }
         }
+
+        if let Some(local_dir) = local_capabilities_dir() {
+            Self::load_local_into(&local_dir, &mut specs);
+        }
+
         Self { specs }
+    }
+
+    /// Same as [`Self::load`] but takes the local override directory
+    /// explicitly. Used by tests and by a future `capability_reload`
+    /// Tauri command so the user can drop a new YAML and re-read it
+    /// without restarting.
+    pub fn load_with_local_dir<P: AsRef<Path>>(local_dir: P) -> Self {
+        let mut registry = Self::default();
+        for raw in [
+            OFXR_BRIDGE_YAML,
+            OPTISCALER_YAML,
+            CHEEKY_FOVEATED_DLSS_YAML,
+            RESHADE_YAML,
+            OPENXR_HELPERS_YAML,
+            UEVR_YAML,
+        ] {
+            if let Ok(mut spec) = serde_yaml::from_str::<CapabilitySpec>(raw) {
+                spec.origin = SpecOrigin::BuiltIn;
+                registry.specs.insert(spec.id.clone(), spec);
+            }
+        }
+        Self::load_local_into(local_dir.as_ref(), &mut registry.specs);
+        registry
+    }
+
+    fn load_local_into(dir: &Path, specs: &mut HashMap<String, CapabilitySpec>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                eprintln!(
+                    "moddin: could not read local capability dir {}: {error}",
+                    dir.display()
+                );
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_yaml = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml"))
+                .unwrap_or(false);
+            if !is_yaml {
+                continue;
+            }
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    eprintln!(
+                        "moddin: could not read {}: {error}",
+                        path.display()
+                    );
+                    continue;
+                }
+            };
+            let mut spec = match serde_yaml::from_str::<CapabilitySpec>(&raw) {
+                Ok(spec) => spec,
+                Err(error) => {
+                    eprintln!(
+                        "moddin: could not parse {}: {error}",
+                        path.display()
+                    );
+                    continue;
+                }
+            };
+            spec.origin = SpecOrigin::Local;
+            let spec_id = spec.id.clone();
+            let previous_origin = specs
+                .insert(spec.id.clone(), spec)
+                .map(|existing| existing.origin);
+            match previous_origin {
+                Some(SpecOrigin::BuiltIn) => eprintln!(
+                    "moddin: local capability {spec_id} overrides the built-in"
+                ),
+                Some(other) if other != SpecOrigin::Local => eprintln!(
+                    "moddin: local capability {spec_id} overrides {} capability",
+                    other.as_str()
+                ),
+                Some(SpecOrigin::Local) => eprintln!(
+                    "moddin: duplicate local capability id {spec_id}, keeping first"
+                ),
+                Some(SpecOrigin::Community) => eprintln!(
+                    "moddin: local capability {spec_id} overrides community capability"
+                ),
+                None => {}
+            }
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<&CapabilitySpec> {
@@ -88,6 +209,23 @@ impl CapabilityRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.specs.is_empty()
+    }
+
+    /// Re-read the local override directory and either add, replace,
+    /// or remove specs depending on what the user dropped or deleted
+    /// since the last call. The runner keeps the same `HashMap`
+    /// storage so existing `&CapabilitySpec` references stay valid for
+    /// already-resolved specs.
+    pub fn reload_local<P: AsRef<Path>>(&mut self, local_dir: P) {
+        let local_dir = local_dir.as_ref();
+        let mut keep: HashMap<String, CapabilitySpec> = HashMap::new();
+        for (id, spec) in self.specs.drain() {
+            if spec.origin != SpecOrigin::Local {
+                keep.insert(id, spec);
+            }
+        }
+        Self::load_local_into(local_dir, &mut keep);
+        self.specs.extend(keep);
     }
 }
 
@@ -280,7 +418,6 @@ fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collec
 // === Tauri command surface =====================================================
 
 use serde::Deserialize;
-use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -364,6 +501,9 @@ pub struct CapabilitySummary {
     pub display_name: String,
     pub category: String,
     pub status: String,
+    /// Provenance — drives the UI badge ("Verified", "Local",
+    /// "Community"). See [`SpecOrigin`].
+    pub origin: crate::capability::SpecOrigin,
 }
 
 #[tauri::command]
@@ -378,15 +518,54 @@ pub fn capability_list() -> Vec<CapabilitySummary> {
                 display_name: spec.display_name.clone(),
                 category: spec.category.clone(),
                 status: spec.status.clone(),
+                origin: spec.origin,
             }
         })
         .collect()
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityReloadRequest {
+    pub local_dir: Option<String>,
+}
+
+#[tauri::command]
+pub fn capability_reload(
+    request: CapabilityReloadRequest,
+) -> Result<Vec<CapabilitySummary>, String> {
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    static STATE: OnceLock<Mutex<CapabilityRegistry>> = OnceLock::new();
+    let mutex = STATE.get_or_init(|| Mutex::new(CapabilityRegistry::load()));
+    let mut registry = mutex.lock().map_err(|error| error.to_string())?;
+    let dir = request
+        .local_dir
+        .map(PathBuf::from)
+        .or_else(local_capabilities_dir)
+        .ok_or_else(|| "LOCALAPPDATA not set".to_owned())?;
+    registry.reload_local(&dir);
+    Ok(registry
+        .ids()
+        .map(|id| {
+            let spec = registry.get(id).expect("registry invariant");
+            CapabilitySummary {
+                id: spec.id.clone(),
+                display_name: spec.display_name.clone(),
+                category: spec.category.clone(),
+                status: spec.status.clone(),
+                origin: spec.origin,
+            }
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::CheckSpec;
+    use crate::capability::{CheckSpec, SpecOrigin};
+    use std::fs;
 
     #[test]
     fn registry_loads_ofxr_bridge() {
@@ -441,5 +620,96 @@ mod tests {
         assert_eq!(check.severity, "");
         assert_eq!(check.category, "");
         // serde default applied at deserialise time, not here.
+    }
+
+    fn write_local_capability(dir: &Path, id: &str, body: &str) {
+        fs::create_dir_all(dir).expect("create temp dir");
+        fs::write(dir.join(format!("{id}.yaml")), body).expect("write yaml");
+    }
+
+    #[test]
+    fn local_overrides_built_in_when_id_matches() {
+        let temp = std::env::temp_dir().join(format!(
+            "moddin-local-override-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        write_local_capability(
+            &temp,
+            "ofxr-bridge",
+            r#"
+id: ofxr-bridge
+displayName: Local OFXR override
+category: vr
+status: planned
+"#,
+        );
+        let registry = CapabilityRegistry::load_with_local_dir(&temp);
+        let spec = registry.get("ofxr-bridge").expect("spec present");
+        assert_eq!(spec.display_name, "Local OFXR override");
+        assert_eq!(spec.origin, SpecOrigin::Local);
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn local_adds_new_capability_without_touching_built_ins() {
+        let temp = std::env::temp_dir().join(format!(
+            "moddin-local-add-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        write_local_capability(
+            &temp,
+            "community-experimental-mod",
+            r#"
+id: community-experimental-mod
+displayName: Experimental community mod
+category: graphics
+status: planned
+checks:
+  - id: archive-reachable
+    label: Archive reachable
+    kind: archive-reachable
+    severity: info
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+install:
+  - kind: write-text-file
+    description: write a placeholder
+    params:
+      pathField: outputPath
+      template: hello
+"#,
+        );
+        let registry = CapabilityRegistry::load_with_local_dir(&temp);
+        let spec = registry
+            .get("community-experimental-mod")
+            .expect("local spec loaded");
+        assert_eq!(spec.origin, SpecOrigin::Local);
+        assert_eq!(spec.checks.len(), 1);
+        assert_eq!(spec.install.len(), 1);
+        // Built-ins still there.
+        assert!(registry.get("ofxr-bridge").is_some());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn malformed_local_yaml_is_skipped_not_panicked() {
+        let temp = std::env::temp_dir().join(format!(
+            "moddin-local-malformed-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).expect("create temp dir");
+        fs::write(temp.join("bad.yaml"), "this: is: not: valid: yaml: at: all:")
+            .expect("write malformed yaml");
+        let registry = CapabilityRegistry::load_with_local_dir(&temp);
+        // Built-ins unaffected by the malformed local file.
+        assert!(registry.get("ofxr-bridge").is_some());
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

@@ -92,6 +92,7 @@ pub fn run() {
             capability_runner::capability_uninstall,
             capability_runner::capability_evaluate,
             capability_runner::capability_list,
+            capability_runner::capability_reload,
             activity::list_action_logs,
             activity::clear_action_logs,
             cheeky::preview_cheeky_foveated_dlss,
