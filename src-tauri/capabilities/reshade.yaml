@@ -1,0 +1,62 @@
+id: reshade
+displayName: ReShade host
+category: graphics
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+  - re-engine
+  - unity
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the ReShade release archive (zip).
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream ReShade release tag.
+  - name: proxy
+    type: path
+    required: true
+    description: Absolute path of the proxy DLL the runner renames ReShade64.dll into. Pick one the recipe declares in `proxyCandidates`.
+  - name: proxyCandidates
+    type: enum
+    enumValues: [dxgi.dll, version.dll, d3d11.dll, d3d12.dll, winmm.dll, dinput8.dll, xinput1_3.dll]
+    required: true
+    description: Ordered list of proxy DLLs the runner will accept; the runner walks the list and picks the first one not already in use.
+checks:
+  - id: archive-reachable
+    label: ReShade archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the configured download URL responds before any install step runs.
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches recipe
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    description: Compares the downloaded archive against the declared digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract ReShade host archive (ReShade64.dll + ReShadeAddons64.dll + ReShade.ini) next to the game executable.
+    params:
+      archivePathField: downloadUrl
+  - kind: move-file
+    description: Rename ReShade64.dll to the recipe-declared `proxy` (avoids clashing with UEVR or another mod that already owns dxgi.dll).
+    params:
+      fromField: downloadUrl
+      toField: proxy
+safetyNotes:
+  - ReShade adds post-processing hooks; some games' anti-cheat systems flag ReShade even when offline.
+  - ReShade's `dxgi.dll` proxy conflicts with OptiScaler / R.E.A.L. VR. The recipe must declare an alternative proxy (typically `version.dll` for OptiScaler coexistence).

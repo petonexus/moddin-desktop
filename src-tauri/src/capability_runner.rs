@@ -32,6 +32,11 @@ use std::{collections::HashMap, path::Path};
 
 const OFXR_BRIDGE_YAML: &str = include_str!("../capabilities/ofxr-bridge.yaml");
 const OPTISCALER_YAML: &str = include_str!("../capabilities/optiscaler.yaml");
+const CHEEKY_FOVEATED_DLSS_YAML: &str =
+    include_str!("../capabilities/cheeky-foveated-dlss.yaml");
+const RESHADE_YAML: &str = include_str!("../capabilities/reshade.yaml");
+const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
+const UEVR_YAML: &str = include_str!("../capabilities/uevr.yaml");
 
 /// Static registry of every capability declared under
 /// `src-tauri/capabilities/`. Built at process start; never mutated.
@@ -43,7 +48,14 @@ pub struct CapabilityRegistry {
 impl CapabilityRegistry {
     pub fn load() -> Self {
         let mut specs = HashMap::new();
-        for raw in [OFXR_BRIDGE_YAML, OPTISCALER_YAML] {
+        for raw in [
+            OFXR_BRIDGE_YAML,
+            OPTISCALER_YAML,
+            CHEEKY_FOVEATED_DLSS_YAML,
+            RESHADE_YAML,
+            OPENXR_HELPERS_YAML,
+            UEVR_YAML,
+        ] {
             match serde_yaml::from_str::<CapabilitySpec>(raw) {
                 Ok(spec) => {
                     if specs.contains_key(&spec.id) {

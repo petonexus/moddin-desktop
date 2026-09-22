@@ -1,0 +1,69 @@
+id: uevr
+displayName: UEVR engine-aware installer
+category: vr
+status: available
+supportedEngines:
+  - unreal5
+configSchema:
+  - name: pinnedTag
+    type: string
+    required: true
+    description: UEVR release tag the runner pins (matches the catalog's versionPolicy=pinned).
+  - name: backend
+    type: enum
+    enumValues: [nightly, joey, afw, joey-afw]
+    required: true
+    description: Which UEVR backend variant to install.
+  - name: extractedDir
+    type: path
+    required: true
+    description: Absolute path of the directory where the runner drops the chosen backend's archive before moving files into the game directory.
+  - name: gameId
+    type: string
+    required: true
+    description: Moddin game id used to scope the runner's per-game tool directory.
+checks:
+  - id: archive-reachable
+    label: UEVR archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the configured GitHub release URL responds.
+    params:
+      urlField: pinnedTag
+  - id: engine-recognised
+    label: Engine recognised as Unreal
+    kind: file-exists
+    severity: blocker
+    category: global
+    description: Confirms the game directory contains the Unreal Engine layout (Binaries/Win64) before the runner proceeds.
+    params:
+      path: Binaries/Win64
+install:
+  - kind: kill-process
+    description: Stop UEVRInjector.exe if the user is re-installing while the injector is still alive.
+    params:
+      processName: UEVRInjector.exe
+      force: false
+  - kind: extract-zip
+    description: Extract the chosen backend's archive into the staging directory.
+    params:
+      archivePathField: pinnedTag
+  - kind: move-file
+    description: Promote the staged UEVR host files into the per-game tool directory.
+    params:
+      fromField: extractedDir
+      toField: pinnedTag
+uninstall:
+  - kind: kill-process
+    description: Stop UEVRInjector.exe before removing its track.
+    params:
+      processName: UEVRInjector.exe
+      force: true
+  - kind: file-delete
+    description: Remove the staging directory used for this backend.
+    params:
+      pathField: extractedDir
+safetyNotes:
+  - UEVR only injects Unreal Engine games (UE 4.8-5.4). Unity, RE Engine, REDengine, and unknown engines are not eligible; the install aborts before writing files.
+  - Close the game AND UEVRInjector.exe before applying or changing a backend. Do not run Steam, UEVR or the game as administrator.

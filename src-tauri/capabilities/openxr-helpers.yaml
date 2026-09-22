@@ -1,0 +1,55 @@
+id: openxr-helpers
+displayName: OpenXR runtime helpers
+category: vr
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+  - re-engine
+configSchema:
+  - name: preferredRuntime
+    type: path
+    required: true
+    description: Absolute path of the OpenXR runtime manifest (XR_RUNTIME_JSON) the runner should bind for this game.
+  - name: globalActiveRuntime
+    type: path
+    required: false
+    description: Absolute path of the Windows-global OpenXR runtime (HKLM). Only updated when the recipe toggles system installation.
+  - name: gameId
+    type: string
+    required: true
+    description: Moddin game id used to scope the per-game registry entry.
+checks:
+  - id: registry-writable
+    label: HKCU OpenXR hive writable
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    description: Confirms the user hive is writable before the runner writes per-game overrides.
+    params:
+      path: '%APPDATA%\Khronos'
+verify:
+  - id: per-game-runtime-set
+    label: Per-game OpenXR runtime override is set
+    kind: file-exists
+    severity: info
+    category: modulespecific
+    description: Confirms the runner wrote the per-game HKCU registry entry.
+    params:
+      path: '%APPDATA%\Khronos\OpenXR\1\per-game.json'
+install:
+  - kind: registry-write
+    description: Bind the configured OpenXR runtime for this game under HKCU (no admin required).
+    params:
+      key: HKCU\SOFTWARE\Khronos\OpenXR\1\per-game\<gameId>
+      value: preferredRuntime
+      type: REG_SZ
+uninstall:
+  - kind: registry-delete
+    description: Remove the per-game OpenXR runtime override.
+    params:
+      key: HKCU\SOFTWARE\Khronos\OpenXR\1\per-game\<gameId>
+      force: true
+safetyNotes:
+  - OpenXR helpers only write per-game (HKCU) entries by default. Setting the Windows-global runtime (HKLM) is intentionally not exposed here; use the existing openxr::set_system_openxr_runtime command which requires UAC.
+  - The runner does not modify the Windows global runtime; only the per-game override is touched.

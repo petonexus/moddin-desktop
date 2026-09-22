@@ -1,0 +1,59 @@
+id: cheeky-foveated-dlss
+displayName: Cheeky Foveated DLSS
+category: graphics
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+  - re-engine
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the CheekyFoveatedDLSS release archive (zip).
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream Cheeky release tag.
+  - name: addonFile
+    type: string
+    required: true
+    description: Name of the .addon64 file inside the archive (e.g. CheekyFoveatedDLSS.addon64).
+checks:
+  - id: archive-reachable
+    label: Cheeky archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the configured download URL responds before any install step runs.
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches recipe
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    description: Compares the downloaded archive against the declared digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract CheekyFoveatedDLSS.addon64 next to the game executable.
+    params:
+      archivePathField: downloadUrl
+uninstall:
+  - kind: file-delete
+    description: Remove the Cheeky .addon64 file from the game directory.
+    params:
+      pathField: addonFile
+
+uninstallSkipsFiles:
+  - pathField: addonFile
+safetyNotes:
+  - Cheeky is a ReShade add-on; install ReShade separately before installing Cheeky.
+  - Cheeky requires a game with DLSS or DLSS-SR (via OptiScaler) already running; games that ship FSR-only need an upstream provider first.
