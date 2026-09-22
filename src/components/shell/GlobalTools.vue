@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
+import CommunityPanel from '../community/CommunityPanel.vue'
 import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
 </script>
 
@@ -10,6 +11,7 @@ import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
   -->
   <div class="global-tools-dock">
     <ActivityLogPanel />
+    <CommunityPanel />
     <OpenXrManager />
   </div>
 </template>
