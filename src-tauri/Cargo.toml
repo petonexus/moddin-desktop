@@ -15,6 +15,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+pem = "3"
+pkcs8 = { version = "0.10", features = ["pem", "std"] }
+rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [dependencies]
