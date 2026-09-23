@@ -1,6 +1,6 @@
 export type ModuleCategory = 'vr' | 'graphics' | 'qol' | 'system'
 export type ModuleStatus = 'available' | 'planned'
-export type GameStore = 'steam' | 'epic'
+export type GameStore = 'steam' | 'epic' | 'gog'
 
 export interface ToolModuleDefinition {
   id: string
@@ -16,6 +16,7 @@ export interface GameCatalogEntry {
   name: string
   steamAppId?: string
   epicAppId?: string
+  gogAppId?: string
   executable: string
   /**
    * Optional id of an engine preset declared under
@@ -24,6 +25,12 @@ export interface GameCatalogEntry {
    * module entries always win over preset entries with the same id.
    */
   enginePreset?: string
+  /**
+   * Optional PCGamingWiki page title (canonical, may contain spaces).
+   * When set, the UI can fetch a cached `PcgwSummary` to enrich the
+   * game detail view. When absent, Moddin never queries the wiki.
+   */
+  pcgwSlug?: string
   modules: ToolModuleDefinition[]
 }
 
