@@ -1,0 +1,4 @@
+[submodule "moddin-community-capabilities"]
+	path = moddin-community-capabilities
+	url = https://github.com/petonexus/moddin-community-capabilities.git
+	branch = main
