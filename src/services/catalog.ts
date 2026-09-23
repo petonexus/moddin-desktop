@@ -25,11 +25,13 @@ const gameSchema = z.object({
   name: z.string().min(1),
   steamAppId: z.string().min(1).optional(),
   epicAppId: z.string().min(1).optional(),
+  gogAppId: z.string().min(1).optional(),
   executable: z.string().min(1),
   enginePreset: z.string().min(1).optional(),
+  pcgwSlug: z.string().min(1).optional(),
   modules: z.array(moduleSchema).default([]),
-}).refine((game) => Boolean(game.steamAppId || game.epicAppId), {
-  message: 'A Moddin game catalog entry must define steamAppId or epicAppId',
+}).refine((game) => Boolean(game.steamAppId || game.epicAppId || game.gogAppId), {
+  message: 'A Moddin game catalog entry must define steamAppId, epicAppId, or gogAppId',
 })
 
 const catalogFiles = import.meta.glob('../catalog/games/*.yaml', {
@@ -43,6 +45,7 @@ interface LoadedCatalog {
   byId: Map<string, GameCatalogEntry>
   bySteamAppId: Map<string, GameCatalogEntry>
   byEpicAppId: Map<string, GameCatalogEntry>
+  byGogAppId: Map<string, GameCatalogEntry>
 }
 
 function readCatalogEntry(raw: string, source: string): GameCatalogEntry {
@@ -79,6 +82,7 @@ function loadGameCatalog(): LoadedCatalog {
   const byId = new Map<string, GameCatalogEntry>()
   const bySteamAppId = new Map<string, GameCatalogEntry>()
   const byEpicAppId = new Map<string, GameCatalogEntry>()
+  const byGogAppId = new Map<string, GameCatalogEntry>()
 
   for (const game of entries) {
     if (byId.has(game.id)) {
@@ -90,13 +94,17 @@ function loadGameCatalog(): LoadedCatalog {
     if (game.epicAppId && byEpicAppId.has(game.epicAppId)) {
       throw new Error(`Duplicate Moddin Epic App ID: ${game.epicAppId}`)
     }
+    if (game.gogAppId && byGogAppId.has(game.gogAppId)) {
+      throw new Error(`Duplicate Moddin GOG App ID: ${game.gogAppId}`)
+    }
 
     byId.set(game.id, game)
     if (game.steamAppId) bySteamAppId.set(game.steamAppId, game)
     if (game.epicAppId) byEpicAppId.set(game.epicAppId, game)
+    if (game.gogAppId) byGogAppId.set(game.gogAppId, game)
   }
 
-  return { entries, byId, bySteamAppId, byEpicAppId }
+  return { entries, byId, bySteamAppId, byEpicAppId, byGogAppId }
 }
 
 const catalog = loadGameCatalog()
@@ -115,8 +123,17 @@ export function findCatalogGameByEpicAppId(appId: string) {
   return catalog.byEpicAppId.get(appId)
 }
 
+export function findCatalogGameByGogAppId(appId: string) {
+  return catalog.byGogAppId.get(appId)
+}
+
 export function findCatalogGameByInstalledGame(game: Pick<InstalledGame, 'store' | 'appId'>) {
-  return game.store === 'epic'
-    ? findCatalogGameByEpicAppId(game.appId)
-    : findCatalogGameBySteamAppId(game.appId)
+  switch (game.store) {
+    case 'epic':
+      return findCatalogGameByEpicAppId(game.appId)
+    case 'gog':
+      return findCatalogGameByGogAppId(game.appId)
+    default:
+      return findCatalogGameBySteamAppId(game.appId)
+  }
 }

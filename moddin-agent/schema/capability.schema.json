@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/petonexus/moddin-desktop/schema/capability.schema.json",
+  "title": "Moddin Capability Recipe",
+  "description": "Schema mirror of the Rust CapabilitySpec in src-tauri/src/capability.rs. Used by the moddin-agent MCP server to validate user-authored recipes before they are dropped in %LOCALAPPDATA%/Moddin/capabilities/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "displayName", "category", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,63}$",
+      "description": "Stable id; kebab-case; unique across all loaded specs."
+    },
+    "displayName": { "type": "string", "minLength": 1 },
+    "category": {
+      "type": "string",
+      "enum": ["vr", "graphics", "qol", "system"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["available", "planned"]
+    },
+    "supportedEngines": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional hint for which engines this capability is eligible for."
+    },
+    "safetyNotes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "configSchema": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/configField" }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "verify": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "install": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "uninstall": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "configField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "boolean", "url", "sha256", "path", "enum"]
+        },
+        "required": { "type": "boolean" },
+        "default": {},
+        "enumValues": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]+$" },
+        "label": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["process-running", "file-exists", "file-absent", "archive-reachable", "archive-sha256"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "blocker"],
+          "default": "info"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["global", "category", "modulespecific"],
+          "default": "modulespecific"
+        },
+        "description": { "type": "string" },
+        "params": { "type": "object" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "extract-zip",
+            "verify-hash",
+            "file-delete",
+            "write-text-file",
+            "write-binary-file",
+            "move-file",
+            "spawn-process",
+            "kill-process",
+            "registry-write",
+            "registry-delete"
+          ]
+        },
+        "description": { "type": "string" },
+        "params": { "type": "object" }
+      }
+    }
+  }
+}

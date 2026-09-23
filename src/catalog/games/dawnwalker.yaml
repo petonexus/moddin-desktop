@@ -3,6 +3,7 @@ name: The Blood of Dawnwalker
 steamAppId: "3751260"
 executable: Dawnwalker/Binaries/Win64/Dawnwalker.exe
 enginePreset: unreal5
+pcgwSlug: The Blood of Dawnwalker
 modules:
   - id: desktop-shortcut
     name: Criar atalho na Área de Trabalho

@@ -1,0 +1,110 @@
+# Pattern: vr-runtime-overlay
+#
+# Use when the mod is an OpenXR API layer (a runtime overlay such as
+# OFXR Bridge, OpenXR Toolkit, etc.). The install moves a JSON manifest
+# into the OpenXR ApiLayers folder for the current user and may spawn an
+# auxiliary tray process.
+#
+# The agent should:
+#   - ask the user where the upstream package puts its manifest (usually
+#     <archive-root>/<vendor>_<name>.json)
+#   - confirm whether the layer needs a side-process to arm it
+#
+# Required config fields:
+#   - downloadUrl, sha256, version, implementationVersion
+#   - runtimePath: where Moddin should write the manifest
+#   - trayExe: which side-process to spawn (relative to executableDir)
+#   - trayIniPath: optional path for an INI rendered from the configSchema
+
+id: my-mod-overlay   # ⚠ AGENT: replace this with the final kebab-case id before save
+displayName: <Human Readable Name>
+category: vr
+status: available
+supportedEngines:
+  - unreal5
+  - redengine
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+  - name: sha256
+    type: sha256
+    required: true
+  - name: version
+    type: string
+    required: true
+  - name: implementationVersion
+    type: number
+    required: true
+  - name: runtimePath
+    type: path
+    required: true
+    description: Absolute path the layer manifest will be written to (usually %LOCALAPPDATA%\\Moddin\\runtime-layers\\<id>.json).
+  - name: trayExe
+    type: path
+    required: true
+    description: Absolute path the tray executable will be spawned from after install.
+  - name: trayIniPath
+    type: path
+    required: true
+  - name: backend
+    type: enum
+    enumValues: [fidelityfx, nvidia]
+    required: true
+  - name: nvidiaPreset
+    type: enum
+    enumValues: [fast, medium, slow]
+    default: medium
+checks:
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract the archive.
+    params:
+      archivePathField: downloadUrl
+  - kind: move-file
+    description: Move the runtime manifest into the per-user ApiLayers directory.
+    params:
+      fromField: runtimePath
+      toField: runtimePath
+  - kind: write-text-file
+    description: Render and write the tray INI.
+    params:
+      pathField: trayIniPath
+      template: |
+        [tray]
+        backend={backend}
+        nvidia_preset={nvidiaPreset}
+        diagnostics=0
+  - kind: spawn-process
+    description: Launch the tray.
+    params:
+      executableField: trayExe
+verify:
+  - id: tray-running
+    label: Tray process running
+    kind: process-running
+    severity: warning
+    category: modulespecific
+    params:
+      processNameField: trayExe
+uninstall:
+  - kind: kill-process
+    description: Stop the tray.
+    params:
+      processNameField: trayExe
+      force: false
+  - kind: file-delete
+    description: Remove the tray INI.
+    params:
+      pathField: trayIniPath
+safetyNotes:
+  - OpenXR per-user layers do not apply to elevated processes. Keep the game non-elevated.
+  - Requires Microsoft Visual C++ Redistributable x64 for the tray.

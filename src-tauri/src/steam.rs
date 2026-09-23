@@ -152,9 +152,15 @@ fn detect_installed_games_sync() -> Result<Vec<InstalledGame>, String> {
 
 #[tauri::command]
 pub async fn detect_installed_games() -> Result<Vec<InstalledGame>, String> {
-    tauri::async_runtime::spawn_blocking(detect_installed_games_sync)
-        .await
-        .map_err(|error| format!("Game library scan task failed: {error}"))?
+    detect_installed_games_blocking()
+}
+
+/// Synchronous variant used by the background library cache. Avoids the
+/// `spawn_blocking` round-trip when the caller is already on a blocking
+/// task (the scanner runs the Steam/Epic + GOG detectors in the same
+/// worker thread).
+pub fn detect_installed_games_blocking() -> Result<Vec<InstalledGame>, String> {
+    detect_installed_games_sync()
 }
 
 fn discover_epic_manifest_dirs() -> Vec<PathBuf> {

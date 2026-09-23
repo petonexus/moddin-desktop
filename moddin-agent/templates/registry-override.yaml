@@ -1,0 +1,56 @@
+# Pattern: registry-override
+#
+# Use when the mod only needs to write a single per-user (HKCU) registry
+# value — for example redirecting an OpenXR runtime for the current user,
+# or setting a per-game config key.
+#
+# The agent should:
+#   - confirm the key is HKCU (HKLM is rejected by Moddin's path_guard and
+#     will fail at install time)
+#   - confirm the value type (REG_SZ, REG_DWORD, REG_BINARY)
+#   - decide whether the value should be removed on uninstall (most cases:
+#     yes)
+
+id: my-mod-registry  # ⚠ AGENT: replace this with the final kebab-case id before save
+displayName: <Human Readable Name>
+category: system
+status: available
+configSchema:
+  - name: registryKey
+    type: string
+    required: true
+    description: Full registry path under HKCU, e.g. "HKCU\\Software\\Vendor\\Product".
+  - name: registryValueName
+    type: string
+    required: true
+  - name: registryValueType
+    type: string
+    required: true
+    description: "One of: REG_SZ, REG_DWORD, REG_BINARY, REG_EXPAND_SZ."
+  - name: registryValueData
+    type: string
+    required: true
+    description: Value payload. For REG_DWORD pass a decimal number as a string. For REG_BINARY pass a hex string.
+checks:
+  - id: key-exists
+    label: Registry key is reachable
+    kind: file-exists
+    severity: info
+    category: modulespecific
+    description: This check is informational — the registry key may not exist yet on first install.
+install:
+  - kind: registry-write
+    description: Write the configured value under HKCU.
+    params:
+      keyField: registryKey
+      nameField: registryValueName
+      typeField: registryValueType
+      dataField: registryValueData
+uninstall:
+  - kind: registry-delete
+    description: Remove the value on uninstall.
+    params:
+      keyField: registryKey
+      nameField: registryValueName
+safetyNotes:
+  - This capability only writes under HKCU; it never touches HKLM and does not require administrator rights.
