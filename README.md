@@ -40,8 +40,8 @@ You can also drop your own YAML capability into `%LOCALAPPDATA%\Moddin\capabilit
 
 ## Getting Moddin
 
-1. **Download** the latest release from [Releases](https://github.com/petonexus/moddin-desktop/releases). Beta releases are tagged `vX.Y.Z-beta.N`.
-2. **Install** by running the `.msi` (Windows 10/11 x64).
+1. **Download** the latest release from [Releases](https://github.com/petonexus/moddin-desktop/releases). Beta releases are tagged `vX.Y.Z-beta.N`. If a release has no `.msi` attached yet, the release notes explain how to build from source; the Tauri MSI pipeline is being wired to GitHub Actions.
+2. **Install** by running the `.msi` (Windows 10/11 x64, no admin required — Moddin installs per-user).
 3. **Open** the app. Moddin scans your Steam + Epic libraries automatically.
 4. **Pick a game**, see which mods apply, and install what you need.
 
