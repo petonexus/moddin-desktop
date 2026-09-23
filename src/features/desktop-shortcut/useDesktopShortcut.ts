@@ -55,7 +55,7 @@ export function useDesktopShortcut(host: DesktopShortcutHost) {
       const { module, request } = dialog.value
       const result = await createDesktopShortcut(request)
       dialog.value = null
-      host.success.value = t('desktopShortcutCreated', { path: result.shortcutPath })
+      host.success.value = t('desktopShortcutCreated')
       await host.onCreated(module)
     } catch (error) {
       reportError(error)

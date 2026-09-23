@@ -1,19 +1,15 @@
 <script setup lang="ts">
 import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
-import CommunityPanel from '../community/CommunityPanel.vue'
+import CommunityPanel from '../../features/community/CommunityPanel.vue'
 import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
 </script>
 
 <template>
   <!--
-    Global utilities intentionally live outside the primary App workspace.
-    The dock owns trigger positioning; each feature still owns its dialog.
+    Global utilities render as sidebar navigation items. Each feature still
+    owns its trigger and its dialog; the shell only decides where they sit.
   -->
-  <div class="global-tools-dock">
-    <ActivityLogPanel />
-    <CommunityPanel />
-    <OpenXrManager />
-  </div>
+  <OpenXrManager />
+  <CommunityPanel />
+  <ActivityLogPanel />
 </template>
-
-<style scoped src="./global-tools.css"></style>

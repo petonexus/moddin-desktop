@@ -1,0 +1,120 @@
+/*
+ * Dialog layer shared by every modal: install previews, guides and the
+ * global tool panels (VR headset, community, activity).
+ */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--moddin-space-6);
+  background: var(--moddin-overlay);
+  backdrop-filter: blur(8px);
+  animation: moddin-fade-in var(--moddin-normal) var(--moddin-ease);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: calc(100vh - 48px);
+  border: 1px solid var(--moddin-line-strong);
+  border-radius: var(--moddin-radius-lg);
+  background: var(--moddin-surface-1);
+  box-shadow: var(--moddin-shadow-lg);
+  outline: none;
+  animation: moddin-rise var(--moddin-normal) var(--moddin-ease);
+}
+.dialog-lg { width: min(860px, 100%); }
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--moddin-space-4);
+  border-bottom: 1px solid var(--moddin-line-soft);
+  padding: var(--moddin-space-5) var(--moddin-space-6) var(--moddin-space-4);
+}
+.dialog-header .overline { margin-bottom: var(--moddin-space-1); }
+.dialog-description { margin-top: var(--moddin-space-1); color: var(--moddin-text-muted); font-size: var(--moddin-text-md); }
+.dialog-header .btn-icon { margin: -4px -8px 0 0; }
+
+.dialog-body {
+  display: grid;
+  gap: var(--moddin-space-5);
+  overflow-y: auto;
+  padding: var(--moddin-space-5) var(--moddin-space-6);
+}
+
+.dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--moddin-space-2);
+  border-top: 1px solid var(--moddin-line-soft);
+  padding: var(--moddin-space-4) var(--moddin-space-6);
+}
+.dialog-footer .footer-hint { margin-right: auto; color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+
+.dialog-section { display: grid; gap: var(--moddin-space-2); }
+.dialog-section h3 { font-size: var(--moddin-text-base); }
+.dialog-section > p { color: var(--moddin-text-soft); font-size: var(--moddin-text-md); }
+
+/* Key facts shown at the top of a preview (version, target, etc.). */
+.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--moddin-space-2); }
+.fact {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--moddin-line-soft);
+  border-radius: var(--moddin-radius-md);
+  padding: var(--moddin-space-3);
+  background: var(--moddin-surface-sunken);
+}
+.fact span { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
+.fact strong { overflow: hidden; font-size: var(--moddin-text-md); text-overflow: ellipsis; white-space: nowrap; }
+
+.change-list, .note-list, .step-list { display: grid; gap: var(--moddin-space-2); margin: 0; padding: 0; list-style: none; }
+.change-list li { display: flex; align-items: flex-start; gap: var(--moddin-space-2); color: var(--moddin-text-soft); font-size: var(--moddin-text-md); }
+.change-list .app-icon { margin-top: 3px; color: var(--moddin-success); }
+.note-list { gap: var(--moddin-space-1); margin-top: var(--moddin-space-1); }
+.note-list li { position: relative; padding-left: 14px; font-size: var(--moddin-text-md); }
+.note-list li::before { content: '•'; position: absolute; left: 2px; }
+.step-list { counter-reset: step; }
+.step-list li { position: relative; padding-left: 30px; color: var(--moddin-text-soft); font-size: var(--moddin-text-md); counter-increment: step; }
+.step-list li::before {
+  content: counter(step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--moddin-accent-text);
+  background: var(--moddin-accent-soft);
+  font-size: var(--moddin-text-xs);
+  font-weight: 700;
+}
+
+.setting-list li { display: flex; flex-wrap: wrap; gap: 6px; color: var(--moddin-text-soft); font-size: var(--moddin-text-md); }
+.setting-list .from { color: var(--moddin-text-faint); text-decoration: line-through; }
+.setting-list .to { color: var(--moddin-success); font-weight: 600; }
+
+.backup-note { display: flex; align-items: center; gap: var(--moddin-space-2); color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.backup-note .app-icon { color: var(--moddin-success); }
+
+.location-disclosure > summary { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.location-disclosure > .path-text { margin-top: var(--moddin-space-2); border-radius: var(--moddin-radius-sm); padding: var(--moddin-space-2); background: var(--moddin-surface-sunken); }
+
+@keyframes moddin-fade-in { from { opacity: 0; } }
+@keyframes moddin-rise { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
+
+@media (max-width: 640px) {
+  .dialog-backdrop { padding: var(--moddin-space-3); }
+  .dialog-header, .dialog-body, .dialog-footer { padding-right: var(--moddin-space-4); padding-left: var(--moddin-space-4); }
+}

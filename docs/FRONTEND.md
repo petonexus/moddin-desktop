@@ -17,13 +17,33 @@ src/
 
   components/
     shell/
-      GlobalTools.vue             # shell-owned global tool dock
-      global-tools.css
+      GlobalTools.vue             # sidebar "Tools" entries (VR system, community, activity)
+    ui/                           # design-system primitives shared by every feature
+      AppIcon.vue                 # single stroke icon set (no unicode glyph icons)
+      BaseDialog.vue              # modal shell: title, Esc/focus trap, footer slot
+      ChangePreview.vue           # "what Moddin will do" + warnings + backup note
+      ToastStack.vue              # success toasts auto-dismiss; errors stay until closed
 
   composables/
     useDialogLifecycle.ts         # shared modal keyboard/focus behavior
 
   features/
+    library/
+      GameList.vue                # searchable game list with "with mods / all" filter
+      ModuleCard.vue              # one status, one primary action, details on demand
+
+    history/
+      HistoryView.vue             # human-readable change history with undo
+
+    community/
+      CommunityPanel.vue
+      copy.ts
+      service.ts
+      types.ts
+
+    pcgw/
+      service.ts
+
     activity/
       ActivityLogPanel.vue
       activity-log-panel.css
@@ -57,11 +77,10 @@ src/
 
   styles/
     index.css                     # explicit global cascade entrypoint
-    base.css
-    module-states.css
-    library-layout.css
-    tokens.css
-    polish.css
+    tokens.css                    # colour, type, spacing, radius, motion
+    base.css                      # reset + buttons, badges, fields, callouts
+    shell.css                     # sidebar, page frame, panels
+    dialogs.css                   # shared modal layout
 
   types/                          # genuinely shared domain/transport types
 ```
@@ -87,9 +106,8 @@ The architecture guard freezes its current growth budget while extraction contin
 
 Current example:
 
-- `GlobalTools.vue` composes Activity and OpenXR;
-- `global-tools.css` owns the placement/gap of their trigger dock;
-- each feature still owns its own dialog and behavior.
+- `GlobalTools.vue` renders VR system, Community and Activity as sidebar navigation items (no floating buttons over content);
+- each feature still owns its own dialog and behavior, rendered through `Teleport` with the shared `.dialog` classes.
 
 Future shell-level concerns may include navigation, notification hosting or a command palette.
 
@@ -201,14 +219,16 @@ Adding a normal game recipe should not require registering it manually in TypeSc
 
 The global stylesheet entrypoint is `src/styles/index.css`.
 
-Current cascade:
+Current cascade (generic → specific, no override layers):
 
-1. `styles/base.css` — historical application base while `App.vue` is decomposed;
-2. `styles/module-states.css` — shared module-state presentation;
-3. `styles/library-layout.css` — current library/workspace layout layer;
-4. `environment.css` — environment/inspection-specific legacy styles;
-5. `styles/tokens.css` — shared product tokens and compatibility aliases;
-6. `styles/polish.css` — final cross-component interaction/visual polish.
+1. `styles/tokens.css` — design tokens; never hard-code a hex value in a component;
+2. `styles/base.css` — reset and primitives: `.btn` (+ `-primary`, `-ghost`, `-danger`, `-sm`, `-lg`, `-icon`), `.badge` (+ semantic tones), `.field`/`.input`/`.select`, `.segmented`, `.callout`, `.disclosure`, `.empty-state`;
+3. `styles/shell.css` — sidebar, page frame, `.panel`;
+4. `styles/dialogs.css` — shared dialog layout, facts, change lists.
+
+## Voice and tone
+
+Copy is written for players, not engineers: short sentences, everyday words, outcome before mechanism ("more FPS", "record in VR"). Technical names (DLL, runtime, registry path) appear only in "Technical info" or next to a plain label. Every string lives in `src/i18n/locales/*` or a feature `copy.ts`; never branch on `locale.value` to inline text in components.
 
 `src/style.css` must not return.
 
@@ -318,7 +338,9 @@ These are maintenance budgets, not permanent product constraints. Tighten or rem
 Completed foundations:
 
 - shared style tokens and explicit style layers;
-- shell/global-tools boundary and dock;
+- shell/global-tools boundary (tools live in the sidebar);
+- design-system primitives (`components/ui`) and consolidated style layers;
+- library game list, module card and history extracted from `App.vue`;
 - split translations and typed feature copy;
 - safe storage boundary;
 - Activity feature decomposition;
@@ -329,11 +351,9 @@ Completed foundations:
 
 Highest-value remaining work:
 
-1. extract library/game-list presentation from `App.vue`;
-2. extract module-card/verification/update presentation;
-3. move verification/update orchestration into focused composables;
-4. move module-specific request builders into feature folders;
-5. shrink `App.vue` to workspace coordination;
-6. continue removing obsolete selectors from `polish.css`/legacy layers as ownership moves.
+1. move verification/update orchestration into focused composables;
+2. move module-specific request builders into feature folders;
+3. shrink `App.vue` to workspace coordination;
+4. localize backend-generated preview text (`changes`/`warnings` from Rust are still English).
 
 Every code change should keep architecture checks, `npm run build`, Rust tests and `cargo check` green whenever CI runners are available.

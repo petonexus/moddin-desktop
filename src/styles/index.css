@@ -1,13 +1,9 @@
 /*
- * Frontend style entrypoint.
- *
- * Preserve the historical cascade explicitly while the frontend is decomposed:
- * base structure -> module states -> current library layout -> environment ->
- * shared tokens -> final product polish.
+ * Frontend style entrypoint. Layers go from generic to specific:
+ * tokens -> base primitives -> application shell -> dialogs.
+ * Feature-specific styles live next to their Vue component.
  */
-@import './base.css';
-@import './module-states.css';
-@import './library-layout.css';
-@import '../environment.css';
 @import './tokens.css';
-@import './polish.css';
+@import './base.css';
+@import './shell.css';
+@import './dialogs.css';
