@@ -26,6 +26,23 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["msi"],
+    "publisher": "Marco Antonio da Silva Junior",
+    "category": "Utility",
+    "shortDescription": "Moddin Desktop — manage game mods the safe way",
+    "longDescription": "Moddin Desktop installs, previews, and rolls back game mods (VR mods, performance mods, overlays) for Steam, Epic, and GOG games on Windows. Every change is previewed, backed up, and reversible.",
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": ["en-US"],
+        "upgradeBehavior": "silent"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }

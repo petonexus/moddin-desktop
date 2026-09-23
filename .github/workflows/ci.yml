@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main, 'feat/**', 'refactor/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -55,3 +56,87 @@ jobs:
 
       - name: Check Tauri backend
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  windows-msi:
+    name: Build Windows MSI
+    runs-on: windows-latest
+    needs: [windows]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend bundle
+        run: npm run build
+
+      - name: Setup Rust stable MSVC
+        shell: pwsh
+        run: |
+          rustup default stable-msvc
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build MSI
+        run: cargo tauri build --bundles msi
+
+      - name: Locate produced MSI
+        id: locate-msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path src-tauri\target\release\bundle\msi\*.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $msi) {
+            Write-Error "No MSI produced under src-tauri\target\release\bundle\msi"
+            exit 1
+          }
+          Write-Host "MSI produced: $($msi.FullName)"
+          Write-Host "MSI size: $($msi.Length) bytes"
+          "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT
+          "msi_name=$($msi.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: moddin-desktop-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach MSI to GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-msi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: moddin-desktop-msi
+          path: artifacts
+
+      - name: Upload MSI to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: artifacts/*.msi
+          fail_on_unmatched_files: true
+          generate_release_notes: false
