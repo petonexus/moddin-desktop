@@ -15,6 +15,10 @@ import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import DesktopShortcutDialog from './features/desktop-shortcut/DesktopShortcutDialog.vue'
 import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortcut'
+import { useAiModuleActions } from './composables/useAiModuleActions'
+import AiGameSuggestions from './components/shell/AiGameSuggestions.vue'
+import LibraryEmptyState from './components/shell/LibraryEmptyState.vue'
+import TransactionsView from './components/shell/TransactionsView.vue'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
 import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
@@ -87,6 +91,7 @@ const desktopShortcut = useDesktopShortcut({
     await verifyModule(module, true)
   },
 })
+const aiModuleActions = useAiModuleActions()
 const uevrBackendSelections = ref<Record<string, UevrBackend>>({})
 
 const compatibilityStatuses: CompatibilityStatus[] = [
@@ -370,6 +375,31 @@ function openCompatibilityReport(module: ToolModuleDefinition) {
     gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? '',
     version,
   }
+}
+
+function aiImprove(module: ToolModuleDefinition) {
+  aiModuleActions.openImproveWithAi({
+    moduleId: module.id,
+    gameId: selectedAppId.value,
+    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
+  })
+}
+
+function aiDiagnose(message: string) {
+  aiModuleActions.openDiagnoseWithAi({
+    message,
+    gameId: selectedAppId.value,
+    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
+    capabilityId: primaryModule.value?.id ?? null,
+  })
+}
+
+async function aiWhyThis(module: ToolModuleDefinition) {
+  await aiModuleActions.openWhyThisAi({
+    module: { id: module.id, name: moduleName(module) },
+    gameId: selectedAppId.value,
+    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
+  })
 }
 
 function saveCompatibilityReport() {
@@ -1024,6 +1054,12 @@ async function applyUevr() {
 }
 
 async function rollback(transaction: TransactionRecord) {
+  await rollbackById(transaction.id)
+}
+
+async function rollbackById(transactionId: string) {
+  const transaction = transactions.value.find((tx) => tx.id === transactionId)
+  if (!transaction) return
   if (selectedGameRunning.value && transaction.gameId === selectedGame.value?.catalog?.id) {
     actionError.value = t('gameRunningActionBlocked')
     return
@@ -1700,6 +1736,14 @@ onUnmounted(() => {
         <div v-if="actionError" class="error-banner">
           <strong>{{ t('actionFailed') }}</strong>
           <span>{{ actionError }}</span>
+          <button
+            class="text-button"
+            type="button"
+            @click="aiDiagnose(actionError)"
+          >
+            <span aria-hidden="true">✨</span>
+            {{ t('aiAssistantDiagnose') }}
+          </button>
         </div>
       </div>
 
@@ -1758,6 +1802,7 @@ onUnmounted(() => {
                 {{ t('scanningLibraries') }}
               </span>
             </div>
+            <LibraryEmptyState v-else-if="filteredGames.length === 0 && installedGames.length === 0" />
             <div v-else-if="filteredGames.length === 0" class="empty-state">{{ t('noGamesFound') }}</div>
 
             <button
@@ -1861,6 +1906,11 @@ onUnmounted(() => {
                 <div v-if="selectedGameRunning" class="game-running-banner">
                   <strong>{{ t('gameRunningBanner') }}</strong>
                 </div>
+
+                <AiGameSuggestions
+                  :game-id="selectedAppId"
+                  :game-name="selectedGame?.catalog?.name ?? selectedGame?.installed.name ?? null"
+                />
 
                 <div class="module-groups">
                   <section v-for="group in moduleGroups" :key="group.category" class="module-group">
@@ -2063,6 +2113,23 @@ onUnmounted(() => {
                         {{ moduleVerificationBusy(module) ? t('verifying') : t('verify') }}
                       </button>
                       <button
+                        class="secondary-button compact"
+                        type="button"
+                        :title="t('aiAssistantWhyThisTitle')"
+                        @click="aiWhyThis(module)"
+                      >
+                        <span aria-hidden="true">✨</span>
+                        {{ t('aiAssistantWhyThis') }}
+                      </button>
+                      <button
+                        class="secondary-button compact"
+                        type="button"
+                        @click="aiImprove(module)"
+                      >
+                        <span aria-hidden="true">✨</span>
+                        {{ t('aiAssistantImprove') }}
+                      </button>
+                      <button
                         class="module-button"
                         :class="{ 'is-loading': moduleBusy }"
                         :disabled="moduleActionsBlocked(module)"
@@ -2177,54 +2244,15 @@ onUnmounted(() => {
         </section>
       </section>
 
-      <section v-else class="transactions-view">
-        <header class="topbar transactions-topbar">
-          <div>
-            <p class="eyebrow">{{ t('rollbackHistory') }}</p>
-            <h1>{{ t('transactions') }}</h1>
-            <p class="subtle">{{ t('everyDestructive') }}</p>
-          </div>
-          <button class="secondary-button" :class="{ 'is-loading': transactionsLoading }" :disabled="transactionsLoading" @click="refreshTransactions">
-            {{ transactionsLoading ? t('refreshing') : t('refresh') }}
-          </button>
-        </header>
-
-        <section class="transactions-panel">
-          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">
-            <span class="loading-state" role="status" aria-live="polite">
-              <span class="loading-spinner" aria-hidden="true"></span>
-              {{ t('loadingTransactions') }}
-            </span>
-          </div>
-          <div v-else-if="transactions.length === 0" class="empty-state">{{ t('noTransactions') }}</div>
-
-          <article v-for="transaction in transactions" :key="transaction.id" class="transaction-row">
-            <div class="transaction-state" :class="transaction.status"></div>
-            <div class="transaction-copy">
-              <div class="transaction-title-row">
-                <strong>{{ transaction.label }}</strong>
-                <span class="status" :class="transaction.status === 'applied' ? 'supported' : 'unsupported'">
-                  {{ statusLabel(transaction.status) }}
-                </span>
-              </div>
-              <span>{{ formatTransactionDate(transaction.createdAt) }} · {{ transaction.kind }} · {{ transaction.gameId }}</span>
-              <code>{{ transaction.targetPath }}</code>
-            </div>
-            <button
-              class="secondary-button"
-              :class="{ 'is-loading': rollbackBusyId === transaction.id }"
-              :disabled="transaction.status !== 'applied'
-                || rollbackBusyId === transaction.id
-                || inspectionLoading
-                || (selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id)"
-              :title="selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id ? t('gameRunningActionBlocked') : undefined"
-              @click="rollback(transaction)"
-            >
-              {{ rollbackBusyId === transaction.id ? t('restoring') : t('undo') }}
-            </button>
-          </article>
-        </section>
-      </section>
+      <TransactionsView
+        v-else
+        :transactions="transactions"
+        :loading="transactionsLoading"
+        :rollback-busy-id="rollbackBusyId"
+        :block-rollback-for-running-game="inspectionLoading || (selectedGameRunning && transactions.some((tx) => tx.gameId === selectedGame?.catalog?.id))"
+        @refresh="refreshTransactions"
+        @rollback="(id) => rollbackById(id)"
+      />
     </main>
 
     <div v-if="obsDialog" class="modal-backdrop" @click.self="obsDialog = null">

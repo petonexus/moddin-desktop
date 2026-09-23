@@ -4,7 +4,10 @@ mod bepinex;
 mod builtin_checks;
 mod builtin_steps;
 mod capability;
+mod capability_authoring;
 mod capability_runner;
+mod collection;
+mod collection_runner;
 mod community_catalog;
 mod path_guard;
 mod compat_report;
@@ -95,6 +98,18 @@ pub fn run() {
             capability_runner::capability_list,
             capability_runner::capability_reload,
             capability_runner::community_capability_install,
+            capability_authoring::build_author_prompt,
+            capability_authoring::validate_capability_yaml,
+            capability_authoring::validate_recommendations_yaml,
+            capability_authoring::preview_capability_plan,
+            capability_authoring::save_capability_yaml,
+            collection_runner::collection_list,
+            collection_runner::collection_get,
+            collection_runner::collection_install,
+            collection_runner::collection_resume,
+            collection_runner::collection_abort,
+            collection_runner::collection_validate_yaml,
+            collection_runner::collection_save_yaml,
             community_catalog::community_catalog_fetch,
             community_catalog::community_catalog_set_ttl,
             activity::list_action_logs,

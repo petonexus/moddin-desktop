@@ -19,6 +19,8 @@ const ptBR = {
   game: 'Jogo',
   confirmClear: 'Apagar o histórico persistente de ações do Moddin?',
   storage: 'Os logs ficam em %LOCALAPPDATA%\\Moddin\\logs e rotacionam automaticamente ao atingir 5 MB.',
+  explainAi: '✨ Pedir à IA pra explicar',
+  explainAiTitle: 'Perguntar à IA o que essa transação fez',
 } as const
 
 const activityMessages = defineLocalizedCopy(
@@ -42,6 +44,8 @@ const activityMessages = defineLocalizedCopy(
     game: 'Game',
     confirmClear: 'Delete Moddin’s persistent action history?',
     storage: 'Logs live under %LOCALAPPDATA%\\Moddin\\logs and rotate automatically at 5 MB.',
+    explainAi: '✨ Ask AI to explain',
+    explainAiTitle: 'Ask AI what this transaction did',
   },
   {
     button: 'Logs',
@@ -62,6 +66,8 @@ const activityMessages = defineLocalizedCopy(
     game: 'Juego',
     confirmClear: '¿Borrar el historial persistente de acciones de Moddin?',
     storage: 'Los logs se guardan en %LOCALAPPDATA%\\Moddin\\logs y rotan automáticamente al llegar a 5 MB.',
+    explainAi: '✨ Pedir a la IA que explique',
+    explainAiTitle: 'Preguntar a la IA qué hizo esta transacción',
   },
 )
 

@@ -8,8 +8,24 @@ import {
   type CommunityCatalogEntry,
   type CommunityFetchResult,
 } from '../../types/community'
+import { useAiAssistantTrigger } from '../../composables/useAiAssistant'
+import type { AuthorPromptContext } from '../../types/ai-assistant'
+import CollectionsTab from './CollectionsTab.vue'
 
 const { t, locale } = useI18n()
+const { openFor } = useAiAssistantTrigger()
+
+type CommunityTab = 'capabilities' | 'collections'
+const activeTab = ref<CommunityTab>('capabilities')
+
+function openAiAssistant() {
+  // The community panel already lists curated capabilities; the
+  // "Add mod with AI" entry point opens the AI dialog with author
+  // mode pre-selected. The user can switch to improve / diagnose
+  // from inside the dialog if they prefer.
+  const ctx: AuthorPromptContext = { mode: 'author' }
+  openFor(ctx)
+}
 
 interface CapabilitySummary {
   id: string
@@ -208,9 +224,45 @@ onMounted(async () => {
           <h2>{{ t('communityTitle') }}</h2>
           <p>{{ t('communitySubtitle') }}</p>
         </div>
-        <button class="community-icon-button" type="button" :aria-label="t('communityClose')" @click="closePanel">×</button>
+        <div class="community-header-actions">
+          <button
+            class="community-ai-button"
+            type="button"
+            @click="openAiAssistant"
+          >
+            <span>✨</span>
+            {{ t('aiAssistantButton') }}
+          </button>
+          <button class="community-icon-button" type="button" :aria-label="t('communityClose')" @click="closePanel">×</button>
+        </div>
       </header>
 
+      <div class="community-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: activeTab === 'capabilities' }"
+          :aria-selected="activeTab === 'capabilities'"
+          @click="activeTab = 'capabilities'"
+        >
+          {{ t('communityTabCapabilities') }}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: activeTab === 'collections' }"
+          :aria-selected="activeTab === 'collections'"
+          @click="activeTab = 'collections'"
+        >
+          {{ t('communityTabCollections') }}
+        </button>
+      </div>
+
+      <div v-show="activeTab === 'collections'" role="tabpanel">
+        <CollectionsTab />
+      </div>
+
+      <div v-if="activeTab === 'capabilities'">
       <div class="community-toolbar">
         <label class="community-ttl">
           <span>{{ t('communityRefreshEvery') }}</span>
@@ -296,6 +348,7 @@ onMounted(async () => {
           </li>
         </ul>
       </details>
+      </div>
     </section>
   </div>
 </template>
@@ -361,6 +414,51 @@ onMounted(async () => {
   border-radius: 50%;
   cursor: pointer;
   font-size: 1.1rem;
+}
+
+.community-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.community-ai-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: transparent;
+  border: 1px solid var(--moddin-accent, #7aa2f7);
+  color: var(--moddin-accent, #7aa2f7);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.community-ai-button:hover {
+  background: rgba(122, 162, 247, 0.1);
+}
+
+.community-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--moddin-border, #3a4252);
+}
+
+.community-tabs button {
+  background: transparent;
+  border: 0;
+  color: var(--moddin-muted, #8c93a3);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.community-tabs button.active {
+  color: var(--moddin-accent, #7aa2f7);
+  border-bottom-color: var(--moddin-accent, #7aa2f7);
+  font-weight: 600;
 }
 
 .community-toolbar {

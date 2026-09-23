@@ -4,9 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { dateLocaleFor } from '../../i18n/locale'
 import { activityCopyForLocale } from './copy'
 import { useActivityLogPanel } from './useActivityLogPanel'
+import { useAiModuleActions } from '../../composables/useAiModuleActions'
+import type { ActionLogEntry } from './types'
 
 const { locale } = useI18n()
 const copy = computed(() => activityCopyForLocale(locale.value))
+const aiActions = useAiModuleActions()
 
 const {
   open,
@@ -35,6 +38,31 @@ function formatDate(timestamp: number) {
 
 async function clearLogs() {
   await clearLogsAction(copy.value.confirmClear)
+}
+
+function explainWithAi(entry: ActionLogEntry) {
+  // Format the entry into a human-readable context block and hand it
+  // to the diagnose flow with the transaction message as the error.
+  const detailsLines = Object.entries(entry.details)
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join('\n')
+  const context = [
+    `Ação: ${entry.action}`,
+    `Nível: ${entry.level}`,
+    entry.gameId ? `Jogo: ${entry.gameId}` : '',
+    entry.transactionId ? `Transação: ${entry.transactionId}` : '',
+    `Quando: ${new Date(entry.timestamp).toISOString()}`,
+    `Mensagem: ${entry.message}`,
+    detailsLines,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  aiActions.openDiagnoseWithAi({
+    message: context,
+    gameId: entry.gameId,
+    gameName: null,
+    capabilityId: null,
+  })
 }
 </script>
 
@@ -99,6 +127,17 @@ async function clearLogs() {
           </div>
 
           <p>{{ entry.message }}</p>
+
+          <div class="activity-entry-actions">
+            <button
+              class="activity-link"
+              type="button"
+              :title="copy.explainAiTitle"
+              @click="explainWithAi(entry)"
+            >
+              {{ copy.explainAi }}
+            </button>
+          </div>
 
           <div v-if="expanded.has(entry.id)" class="activity-details">
             <div v-if="entry.gameId"><span>{{ copy.game }}</span><code>{{ entry.gameId }}</code></div>

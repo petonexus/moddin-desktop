@@ -311,6 +311,16 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .metadata-card strong { color: #c7d0db; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
 
 .empty-state { padding: 28px; color: #6f7b8b; text-align: center; font-size: 13px; }
+.empty-state-ai {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: center;
+  background: linear-gradient(180deg, rgba(122, 162, 247, 0.10), rgba(122, 162, 247, 0));
+  border: 1px dashed rgba(122, 162, 247, 0.4);
+  border-radius: 8px;
+}
+.empty-state-ai strong { color: var(--moddin-text, #e8ecf2); font-size: 0.95rem; }
+.empty-state-ai p { margin: 0; max-width: 360px; line-height: 1.4; }
 .details-empty { display: grid; place-items: center; height: 100%; }
 .unsupported-copy { max-width: 560px; padding-top: 28px; }
 .unsupported-copy p { color: #7f8b9a; line-height: 1.6; }

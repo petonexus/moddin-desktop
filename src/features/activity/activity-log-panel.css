@@ -98,6 +98,8 @@
 .activity-entry-title time { color: #8996a5; font-size: .76rem; }
 .activity-level { padding: 2px 7px; border-radius: 999px; background: rgba(148, 163, 184, .12); color: #cbd5e1; font-size: .7rem; font-weight: 700; text-transform: uppercase; }
 .activity-entry p { margin: 7px 0 0; color: #c6d0dc; overflow-wrap: anywhere; }
+.activity-entry-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.activity-entry-actions .activity-link { color: #c5bcff; }
 .activity-details { display: grid; gap: 5px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, .12); }
 .activity-details > div { display: grid; grid-template-columns: minmax(100px, 160px) 1fr; gap: 10px; }
 .activity-details span { color: #8996a5; font-size: .76rem; }
