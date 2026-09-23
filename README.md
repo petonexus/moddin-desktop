@@ -8,6 +8,8 @@ Moddin Desktop detects your installed Steam and Epic games, matches them against
 >
 > 🛠️ **Want to write a capability?** Read [CONTRIBUTING.md](docs/CONTRIBUTING.md) and look at the [community catalog](https://github.com/petonexus/moddin-community-capabilities).
 >
+> 🤖 **Want an AI agent to add a mod for you?** Use the [`moddin-agent`](moddin-agent/) MCP server. See [docs/AGENT-RECIPES.md](docs/AGENT-RECIPES.md).
+>
 > 🏗️ **Building Moddin itself?** See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup, tests, and the catalog schema.
 
 ---
@@ -71,6 +73,7 @@ The fingerprint of the pinned signing key is shown in the panel header so you ca
 | --- | --- |
 | Install Moddin and use it | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) |
 | Add a capability to a game you maintain | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) |
+| Add a mod by talking to an AI assistant | [moddin-agent/README.md](moddin-agent/README.md) |
 | Build Moddin from source | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
 | Understand the architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Help the project | [CONTRIBUTING.md → Other ways to help](docs/CONTRIBUTING.md#other-ways-to-help) |
@@ -84,6 +87,8 @@ The fingerprint of the pinned signing key is shown in the panel header so you ca
 Moddin never asks for admin rights and never disables your game anti-cheat. Every action runs in your user account, writes only to the game directory or per-user registry paths, and is recorded in an activity log so you can audit what changed.
 
 For community capabilities, the catalog is signed with Ed25519 by the maintainers. Moddin verifies the signature against a public key **pinned in the app binary** before installing anything. Unsigned capabilities are accepted only when you tick a confirmation box in the UI.
+
+The [`moddin-agent`](moddin-agent/) MCP server is bounded by the same rules: it can only write capability YAML to `%LOCALAPPDATA%\Moddin\capabilities\`; every install still flows through Moddin's own preview, transaction, and rollback.
 
 See [SECURITY.md](docs/CAPABILITY-CONTRACT.md#threat-model) for the full threat model.
 

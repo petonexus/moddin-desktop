@@ -1,0 +1,74 @@
+# Pattern: proxy-dll
+#
+# Use when the mod is a single DLL that needs to land next to the game's
+# executable under one of a known set of proxy-DLL names (e.g. dxgi.dll,
+# version.dll, winmm.dll). This is the OptiScaler / ReShade / BepInEx
+# pattern.
+#
+# The agent should:
+#   - ask the user which proxy names their DLL supports (or accept a single
+#     one if the upstream docs are explicit)
+#   - compute the SHA-256 of the DLL
+#   - configure `proxyCandidates` so Moddin's conflict resolver can pick
+#     one
+#
+# Required config fields:
+#   - downloadUrl, sha256, version, addonFile (the DLL filename inside the
+#     archive, or the absolute URL of the DLL itself)
+
+id: my-mod-proxy     # ⚠ AGENT: replace this with the final kebab-case id before save
+displayName: <Human Readable Name>
+category: graphics
+status: available
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+  - name: sha256
+    type: sha256
+    required: true
+  - name: version
+    type: string
+    required: true
+  - name: addonFile
+    type: string
+    required: true
+    description: Filename of the DLL inside the downloaded archive.
+  - name: proxyCandidates
+    type: string
+    required: true
+    description: Comma-separated proxy DLL names the user is willing to install under (e.g. "dxgi.dll,version.dll").
+checks:
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract the archive into the staging directory.
+    params:
+      archivePathField: downloadUrl
+  - kind: move-file
+    description: Copy the addon DLL to the chosen proxy name inside the executable directory.
+    params:
+      fromField: addonFile
+      toField: chosenProxy
+verify:
+  - id: proxy-present
+    label: Proxy DLL installed
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    params:
+      pathField: chosenProxy
+uninstall:
+  - kind: file-delete
+    description: Remove the installed proxy DLL.
+    params:
+      pathField: chosenProxy
+safetyNotes:
+  - Proxy DLLs can conflict with other mods installed under the same proxy name. Moddin's resolver picks the first candidate that is free.

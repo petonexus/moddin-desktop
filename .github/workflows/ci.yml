@@ -33,6 +33,16 @@ jobs:
           npm run check:architecture
           npm run build
 
+      - name: Validate moddin-agent capability templates
+        working-directory: moddin-agent
+        run: |
+          npm ci
+          node scripts/validate-templates.mjs
+
+      - name: Smoke test moddin-agent MCP server
+        working-directory: moddin-agent
+        run: node scripts/smoke-test.mjs
+
       - name: Setup Rust stable MSVC
         shell: pwsh
         run: |

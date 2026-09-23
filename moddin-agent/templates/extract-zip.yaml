@@ -1,0 +1,77 @@
+# Pattern: extract-zip
+#
+# Use when the user has an archive (zip) they want unpacked into the game's
+# executable directory. The agent will:
+#   - compute the SHA-256 of the local archive
+#   - fill in downloadUrl (or leave empty if the user already has the file
+#     locally — they can configure Moddin to load the file via the
+#     `archivePath` config field instead)
+#   - add a `file-exists` blocker check for at least one critical DLL / EXE
+#     extracted from the archive
+#
+# Required config fields (the agent must prompt the user for any missing):
+#   - downloadUrl: HTTPS URL of the archive
+#   - sha256: 64-char hex digest
+#   - version: upstream release tag
+#
+# After this draft is saved, the user opens Moddin, clicks Apply, and the
+# extract-zip step runs through Moddin's transaction store.
+
+id: my-mod-extract   # ⚠ AGENT: replace this with the final kebab-case id before save
+displayName: <Human Readable Name>
+category: graphics   # vr | graphics | qol | system
+status: available
+supportedEngines: []   # leave empty if engine-agnostic
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the mod archive.
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream release tag.
+  - name: expectedFile
+    type: path
+    required: true
+    description: Relative path (from executableDir) of one critical file the archive must contain — used as the blocker check.
+checks:
+  - id: archive-reachable
+    label: Archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract the archive into the game's executable directory.
+    params:
+      archivePathField: downloadUrl
+verify:
+  - id: critical-file-present
+    label: <expectedFile> exists
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    params:
+      pathField: expectedFile
+uninstall:
+  - kind: file-delete
+    description: Remove the critical file to roll back the install.
+    params:
+      pathField: expectedFile
+safetyNotes:
+  - Close the game (and any overlays) before applying or removing.

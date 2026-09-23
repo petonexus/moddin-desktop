@@ -1,0 +1,40 @@
+{
+  "name": "moddin-agent",
+  "version": "0.1.0",
+  "description": "MCP server + agent skill that lets an AI assistant add new mods to Moddin Desktop by authoring capability recipes the user can preview and apply.",
+  "type": "module",
+  "main": "src/mcp-server.mjs",
+  "bin": {
+    "moddin-mcp": "src/mcp-server.mjs"
+  },
+  "scripts": {
+    "start": "node src/mcp-server.mjs",
+    "test": "node --test test/",
+    "lint:schema": "node scripts/validate-templates.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.6.1"
+  },
+  "files": [
+    "src/",
+    "templates/",
+    "schema/",
+    "SKILL.md",
+    "README.md"
+  ],
+  "keywords": [
+    "moddin",
+    "modding",
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "steam"
+  ],
+  "license": "GPL-3.0"
+}
