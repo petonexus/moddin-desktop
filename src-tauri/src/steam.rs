@@ -1,3 +1,4 @@
+use crate::process::HideConsole;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -259,6 +260,7 @@ fn registry_steam_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for (key, value_name) in locations {
         let output = Command::new("reg.exe")
+            .hide_console()
             .args(["query", key, "/v", value_name])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

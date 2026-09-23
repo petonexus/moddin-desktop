@@ -12,6 +12,7 @@
 //! dependency would balloon the binary. The registry path covers the
 //! common case; the Galaxy path is left for a follow-up.
 
+use crate::process::HideConsole;
 use crate::steam::InstalledGame;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,6 +35,7 @@ const REGISTRY_ROOTS: &[&str] = &[
 
 fn query_registry_subkeys(root: &str) -> Vec<String> {
     let output = Command::new("reg.exe")
+        .hide_console()
         .args(["query", root])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -71,6 +73,7 @@ fn parse_subkeys_from_reg_output(stdout: &str) -> Vec<String> {
 
 fn read_gog_registry_value(root: &str, app_id: &str, value: &str) -> Option<String> {
     let output = Command::new("reg.exe")
+        .hide_console()
         .args(["query", &format!("{}\\{}", root, app_id), "/v", value])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

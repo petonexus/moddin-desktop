@@ -1,3 +1,4 @@
+use crate::process::HideConsole;
 use crate::transaction::{self, TransactionRecord};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -180,6 +181,7 @@ $shortcut.Save()
         .parent()
         .ok_or_else(|| "Could not resolve the game executable directory.".to_owned())?;
     let output = Command::new(powershell_path())
+        .hide_console()
         .args([
             "-NoProfile",
             "-NonInteractive",

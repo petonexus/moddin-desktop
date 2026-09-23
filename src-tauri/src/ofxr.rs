@@ -1,3 +1,4 @@
+use crate::process::HideConsole;
 use crate::transaction::{self, TransactionRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -289,6 +290,7 @@ fn owned_manifest_in(manifest: &Path, directory: &Path) -> bool {
 
 fn registry_value_exists(manifest: &Path) -> bool {
     Command::new("reg.exe")
+        .hide_console()
         .args([
             "query",
             OPENXR_REGISTRY_KEY,
@@ -303,6 +305,7 @@ fn registry_value_exists(manifest: &Path) -> bool {
 
 fn registry_remove(manifest: &Path) -> bool {
     Command::new("reg.exe")
+        .hide_console()
         .args([
             "delete",
             OPENXR_REGISTRY_KEY,
@@ -352,6 +355,7 @@ fn tray_window_for_path(expected_path: &Path) -> Option<HWND> {
     }
 
     let output = Command::new("powershell.exe")
+        .hide_console()
         .args([
             "-NoProfile",
             "-Command",

@@ -1,3 +1,4 @@
+use crate::process::HideConsole;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -194,6 +195,7 @@ fn is_process_running(image_name: &str) -> bool {
 
 fn running_obs_executable() -> Option<PathBuf> {
     let output = Command::new("powershell.exe")
+        .hide_console()
         .args([
             "-NoProfile",
             "-Command",
@@ -218,6 +220,7 @@ fn close_obs_gracefully() -> Result<bool, String> {
     }
 
     let status = Command::new("powershell.exe")
+        .hide_console()
         .args([
             "-NoProfile",
             "-Command",

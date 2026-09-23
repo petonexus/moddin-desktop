@@ -1,3 +1,4 @@
+use crate::process::HideConsole;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -94,6 +95,7 @@ fn parse_available_runtime_output(output: &str) -> Vec<(String, bool)> {
 
 pub(crate) fn system_active_runtime() -> Option<String> {
     let output = Command::new("reg.exe")
+        .hide_console()
         .args(["query", OPENXR_REGISTRY_KEY, "/v", "ActiveRuntime"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -109,6 +111,7 @@ pub(crate) fn system_active_runtime() -> Option<String> {
 
 fn available_registry_runtimes() -> Vec<(String, bool)> {
     let Ok(output) = Command::new("reg.exe")
+        .hide_console()
         .args(["query", OPENXR_AVAILABLE_REGISTRY_KEY])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -414,6 +417,7 @@ fn set_system_runtime_elevated(manifest_path: &Path) -> Result<(), String> {
     );
 
     let status = Command::new("powershell.exe")
+        .hide_console()
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
         .status()
         .map_err(|error| format!("Could not request administrator permission for OpenXR: {error}"))?;

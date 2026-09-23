@@ -393,6 +393,7 @@ fn run_kill_process(
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
     let mut command = std::process::Command::new("taskkill");
+    crate::process::HideConsole::hide_console(&mut command);
     command.arg("/IM").arg(process_name).arg("/T");
     if force {
         command.arg("/F");
@@ -430,6 +431,7 @@ fn run_registry_write(
         .unwrap_or(true);
 
     let mut command = std::process::Command::new("reg.exe");
+    crate::process::HideConsole::hide_console(&mut command);
     command.arg("add").arg(key);
     if value_kind == "REG_SZ" || value_kind == "REG_EXPAND_SZ" || value_kind == "REG_DWORD" {
         command.arg("/v").arg(value).arg("/t").arg(value_kind);
@@ -472,6 +474,7 @@ fn run_registry_delete(
         .unwrap_or(true);
 
     let mut command = std::process::Command::new("reg.exe");
+    crate::process::HideConsole::hide_console(&mut command);
     command.arg("delete").arg(key);
     if let Some(name) = value {
         command.arg("/v").arg(name);
