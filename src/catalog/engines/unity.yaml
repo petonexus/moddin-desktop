@@ -1,0 +1,37 @@
+id: unity
+displayName: Unity (Mono / IL2CPP)
+description: Default module set for games built on Unity. BepInEx is the canonical scripting framework; OptiScaler and Cheeky are graphics helpers. UEVR does not apply to Unity games — the OpenXR helper still ships for Unity VR titles.
+modules:
+  - id: desktop-shortcut
+    name: Desktop shortcut
+    description: Create a Windows Desktop .lnk for the selected executable with transaction-backed rollback.
+    category: qol
+    status: available
+  - id: bepinex
+    name: BepInEx
+    description: Install the BepInEx scripting runtime for Unity games, with IL2CPP / Mono architecture auto-detection and transactional rollback. Per-game plugin bundles are applied in the same transaction.
+    category: qol
+    status: available
+    config:
+      versionPolicy: latest
+      releaseApiUrl: https://api.github.com/repos/BepInEx/BepInEx/releases/latest
+  - id: optiscaler
+    name: OptiScaler
+    description: Install the official OptiScaler release with checksum verification, conflict-aware proxy selection and rollback.
+    category: graphics
+    status: available
+  - id: cheeky-foveated-dlss
+    name: Cheeky Foveated DLSS
+    description: Install the ReShade add-on that concentrates DLSS quality in the center of the image for lower GPU cost.
+    category: graphics
+    status: available
+  - id: reshade
+    name: ReShade host
+    description: Install a ReShade build compatible with the selected game, with proxy-DLL selection and transactional rollback. Required as a host by the Cheeky add-on above.
+    category: graphics
+    status: planned
+  - id: openxr
+    name: OpenXR tools
+    description: Manage OpenXR-related helpers and per-game VR configuration for Unity XR Plug-in Management games.
+    category: vr
+    status: planned

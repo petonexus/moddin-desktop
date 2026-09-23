@@ -1,0 +1,9 @@
+id: idtech
+displayName: id Tech (DOOM, Quake lineage)
+description: Default module set for games built on id Tech engines. Moddin does not bundle a managed VR injector (KHARVOX-style external launchers stay outside the app); the desktop shortcut is the only reusable capability that ships today.
+modules:
+  - id: desktop-shortcut
+    name: Desktop shortcut
+    description: Create a Windows Desktop .lnk for the selected executable with transaction-backed rollback.
+    category: qol
+    status: available
