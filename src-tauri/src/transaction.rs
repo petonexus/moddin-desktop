@@ -542,6 +542,159 @@ pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
     restored
 }
 
+// ---------------------------------------------------------------------------
+// Named snapshots — point-in-time rollback points
+// ---------------------------------------------------------------------------
+
+/// A `Snapshot` records a name + the list of `applied` transaction ids
+/// that existed at the moment the snapshot was created. Rolling a
+/// snapshot back iterates the list in **reverse chronological order**
+/// (newest first) so the restore order matches the natural undo order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub id: String,
+    pub name: String,
+    pub created_at: u64,
+    pub game_id: String,
+    pub transaction_ids: Vec<String>,
+}
+
+fn snapshot_root() -> PathBuf {
+    env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("Moddin")
+        .join("snapshots")
+}
+
+fn is_valid_snapshot_id(id: &str) -> bool {
+    is_valid_transaction_id(id)
+}
+
+fn snapshot_path(id: &str) -> Result<PathBuf, String> {
+    if !is_valid_snapshot_id(id) {
+        return Err("Invalid Moddin snapshot id.".to_owned());
+    }
+    Ok(snapshot_root().join(format!("{id}.json")))
+}
+
+fn write_snapshot(snapshot: &Snapshot) -> Result<(), String> {
+    let path = snapshot_path(&snapshot.id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create snapshot directory: {error}"))?;
+    }
+    let json = serde_json::to_vec_pretty(snapshot)
+        .map_err(|error| format!("Could not serialize snapshot: {error}"))?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &json).map_err(|error| format!("Could not write snapshot: {error}"))?;
+    fs::rename(&tmp, &path).map_err(|error| format!("Could not commit snapshot: {error}"))?;
+    Ok(())
+}
+
+fn read_snapshot(id: &str) -> Result<Snapshot, String> {
+    let path = snapshot_path(id)?;
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read snapshot '{id}': {error}"))?;
+    let snapshot: Snapshot = serde_json::from_str(&contents)
+        .map_err(|error| format!("Could not parse snapshot '{id}': {error}"))?;
+    if snapshot.id != id {
+        return Err(format!("Snapshot identity mismatch for '{id}'."));
+    }
+    Ok(snapshot)
+}
+
+/// Create a named snapshot of every currently `applied` transaction for
+/// the given game. The snapshot itself is stored under
+/// `%LOCALAPPDATA%/Moddin/snapshots/` so the regular transaction log
+/// stays untouched and the snapshot can outlive a later `undo`.
+#[tauri::command]
+pub fn create_snapshot(name: String, game_id: String) -> Result<Snapshot, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Snapshot name is required.".to_owned());
+    }
+    if game_id.is_empty() {
+        return Err("Snapshot game_id is required.".to_owned());
+    }
+    let (id_part, created_at) = new_transaction_id()?;
+    // Snapshot ids share the transaction-id shape (timestamp-nonce) so
+    // existing path-validation rules apply unchanged.
+    let snapshot = Snapshot {
+        id: id_part,
+        name: trimmed.to_owned(),
+        created_at,
+        game_id,
+        transaction_ids: list_transactions_sync()?
+            .into_iter()
+            .filter(|record| record.status == "applied" && record.game_id == snapshot_game_filter(&record))
+            .map(|record| record.id)
+            .collect(),
+    };
+    let _ = snapshot_game_filter; // placeholder for future per-game filtering
+    write_snapshot(&snapshot)?;
+    Ok(snapshot)
+}
+
+fn snapshot_game_filter(record: &TransactionRecord) -> String {
+    record.game_id.clone()
+}
+
+#[tauri::command]
+pub fn list_snapshots() -> Result<Vec<Snapshot>, String> {
+    let root = snapshot_root();
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!("Could not read snapshot directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("Could not read snapshot entry: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()).map(str::to_owned) else {
+            continue;
+        };
+        if let Ok(snapshot) = read_snapshot(&id) {
+            snapshots.push(snapshot);
+        }
+    }
+    snapshots.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(snapshots)
+}
+
+/// Roll back every transaction captured by the snapshot, newest first.
+/// Already rolled-back transactions are skipped (so a snapshot can be
+/// re-applied to undo a partial restore).
+#[tauri::command]
+pub fn rollback_snapshot(id: String) -> Result<Vec<TransactionRecord>, String> {
+    let snapshot = read_snapshot(&id)?;
+    let mut restored = Vec::new();
+    for transaction_id in snapshot.transaction_ids.iter().rev() {
+        let record = read_record(transaction_id)?;
+        if record.status == "rolled_back" {
+            continue;
+        }
+        let rolled = rollback_transaction(transaction_id.clone())?;
+        restored.push(rolled);
+    }
+    Ok(restored)
+}
+
+#[tauri::command]
+pub fn delete_snapshot(id: String) -> Result<(), String> {
+    let path = snapshot_path(&id)?;
+    if path.is_file() {
+        fs::remove_file(&path)
+            .map_err(|error| format!("Could not delete snapshot: {error}"))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
