@@ -2,6 +2,8 @@ id: cyberpunk-2077
 name: Cyberpunk 2077
 steamAppId: "1091500"
 executable: bin/x64/Cyberpunk2077.exe
+enginePreset: redengine
+pcgwSlug: Cyberpunk 2077
 modules:
   - id: vr-launch
     name: VR launch profile

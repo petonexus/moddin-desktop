@@ -3,6 +3,7 @@ name: Dead Island 2
 epicAppId: Crow
 executable: DeadIsland/Binaries/Win64/DeadIsland-Win64-Shipping.exe
 enginePreset: re-engine
+pcgwSlug: Dead Island 2
 modules:
   - id: desktop-shortcut
     name: Create Desktop Shortcut

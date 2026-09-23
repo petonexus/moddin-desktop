@@ -2,6 +2,8 @@ id: doom-2016
 name: DOOM (2016)
 steamAppId: "379720"
 executable: DOOMx64.exe
+enginePreset: idtech
+pcgwSlug: DOOM (2016)
 modules:
   - id: desktop-shortcut
     name: Criar atalho na Area de Trabalho

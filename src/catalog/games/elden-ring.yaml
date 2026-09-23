@@ -2,6 +2,7 @@ id: elden-ring
 name: Elden Ring
 steamAppId: "1245620"
 executable: Game/eldenring.exe
+pcgwSlug: Elden Ring
 modules:
   - id: vr-launch
     name: VR launch profile

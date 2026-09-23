@@ -3,6 +3,7 @@ name: "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
 steamAppId: "1643320"
 executable: Stalker2/Binaries/Win64/Stalker2-Win64-Shipping.exe
 enginePreset: unreal5
+pcgwSlug: S.T.A.L.K.E.R. 2: Heart of Chornobyl
 modules:
   - id: desktop-shortcut
     name: Criar atalho na Área de Trabalho
