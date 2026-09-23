@@ -398,6 +398,17 @@ const es = {
   libraryEmptyAskAi: 'Pedir ayuda a la IA para diagnosticar',
   aiAssistantAuditButton: '✨ Auditar mi setup',
   aiAssistantAuditIntent: 'Audita mi setup actual de {game}. Lista lo que falta, lo que sobra, y lo que vale la pena añadir.',
+  aiTopbarAsk: '✨ Pedir ayuda a la IA',
+  aiTopbarMenu: 'Menú de acciones de la IA',
+  aiTopbarRecommend: '🎯 Pedir sugerencias para {game}',
+  aiTopbarRecommendGeneric: '🎯 Pedir sugerencias',
+  aiTopbarAudit: '🔍 Auditar mi setup',
+  aiTopbarDiagnose: '⚠️ Diagnosticar error actual',
+  aiTopbarDiagnoseHint: 'No hay error para diagnosticar ahora',
+  aiTopbarContribute: '📝 Contribuir',
+  aiTopbarOpenMenu: 'Abrir menú de acciones de la IA',
+  optiScalerSafetyBase: 'No uses OptiScaler en sesiones online con anti-cheat. Cierra el juego antes de instalar o revertir archivos.',
+  optiScalerSafetyEldenRing: 'En Elden Ring, OptiScaler requiere un mod que proporcione entradas de escalado/FG, como ERSS-FG; el juego vanilla no ofrece esas entradas.',
 } as const
 
 export default es

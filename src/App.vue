@@ -16,8 +16,9 @@ import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRe
 import DesktopShortcutDialog from './features/desktop-shortcut/DesktopShortcutDialog.vue'
 import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortcut'
 import { useAiModuleActions } from './composables/useAiModuleActions'
-import AiGameSuggestions from './components/shell/AiGameSuggestions.vue'
+import { useAiTopbarActions } from './composables/useAiTopbarActions'
 import LibraryEmptyState from './components/shell/LibraryEmptyState.vue'
+import LibraryTopbar from './components/shell/LibraryTopbar.vue'
 import TransactionsView from './components/shell/TransactionsView.vue'
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
@@ -139,6 +140,8 @@ const selectedGame = computed(() => {
   }
 })
 
+const selectedGameName = computed(() => selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null)
+
 function gameContextForAppId(appId: string | null) {
   if (!appId) return null
   const installed = installedGames.value.find((game) => game.appId === appId)
@@ -238,12 +241,6 @@ function moduleDescription(module: ToolModuleDefinition) {
 
 function categoryLabel(category: ToolModuleDefinition['category']) {
   return t(`category${category.charAt(0).toUpperCase()}${category.slice(1)}`)
-}
-
-function statusLabel(status: TransactionRecord['status']) {
-  if (status === 'applied') return t('statusApplied')
-  if (status === 'rolled_back') return t('statusRolledBack')
-  return status
 }
 
 function moduleKey(module: ToolModuleDefinition) {
@@ -378,29 +375,15 @@ function openCompatibilityReport(module: ToolModuleDefinition) {
 }
 
 function aiImprove(module: ToolModuleDefinition) {
-  aiModuleActions.openImproveWithAi({
-    moduleId: module.id,
-    gameId: selectedAppId.value,
-    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
-  })
+  aiModuleActions.openImproveWithAi({ moduleId: module.id, gameId: selectedAppId.value, gameName: selectedGameName.value })
 }
-
 function aiDiagnose(message: string) {
-  aiModuleActions.openDiagnoseWithAi({
-    message,
-    gameId: selectedAppId.value,
-    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
-    capabilityId: primaryModule.value?.id ?? null,
-  })
+  aiModuleActions.openDiagnoseWithAi({ message, gameId: selectedAppId.value, gameName: selectedGameName.value, capabilityId: primaryModule.value?.id ?? null })
 }
-
 async function aiWhyThis(module: ToolModuleDefinition) {
-  await aiModuleActions.openWhyThisAi({
-    module: { id: module.id, name: moduleName(module) },
-    gameId: selectedAppId.value,
-    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? null,
-  })
+  await aiModuleActions.openWhyThisAi({ module: { id: module.id, name: moduleName(module) }, gameId: selectedAppId.value, gameName: selectedGameName.value })
 }
+const aiTopbarActions = useAiTopbarActions({ selectedAppId: () => selectedAppId.value, selectedGameName: () => selectedGameName.value, currentError: () => actionError.value })
 
 function saveCompatibilityReport() {
   const dialog = compatibilityDialog.value
@@ -697,26 +680,9 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
 }
 
 function optiScalerSafetyNotes(gameId: string): string[] {
-  if (locale.value === 'pt-BR') {
-    const notes = ['Não use OptiScaler em sessões online com anti-cheat. Feche o jogo antes de instalar ou reverter arquivos.']
-    if (gameId === 'elden-ring') {
-      notes.push('No Elden Ring, o OptiScaler requer um mod que forneça entradas de upscaling/FG, como o ERSS-FG; o jogo vanilla não fornece essas entradas.')
-    }
-    return notes
-  }
-
-  if (locale.value === 'es') {
-    const notes = ['No uses OptiScaler en sesiones online con anti-cheat. Cierra el juego antes de instalar o revertir archivos.']
-    if (gameId === 'elden-ring') {
-      notes.push('En Elden Ring, OptiScaler requiere un mod que proporcione entradas de escalado/FG, como ERSS-FG; el juego vanilla no ofrece esas entradas.')
-    }
-    return notes
-  }
-
-  const notes = ['Do not use OptiScaler in online sessions with anti-cheat. Close the game before installing or rolling files back.']
-  if (gameId === 'elden-ring') {
-    notes.push('On Elden Ring, OptiScaler requires a mod that provides upscaler/FG inputs, such as ERSS-FG; the vanilla game does not provide those inputs.')
-  }
+  const baseKey = 'optiScalerSafety'
+  const notes = [t(`${baseKey}Base` as any)]
+  if (gameId === 'elden-ring') notes.push(t(`${baseKey}EldenRing` as any))
   return notes
 }
 
@@ -1748,18 +1714,12 @@ onUnmounted(() => {
       </div>
 
       <section v-if="activeView === 'library'" class="library-view">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">{{ t('localLibrary') }}</p>
-            <h1>{{ t('installedGames') }}</h1>
-            <p class="subtle">
-              {{ t('detectedSupported', { detected: installedGames.length, supported: supportedInstalledGames.length }) }}
-            </p>
-          </div>
-          <button class="secondary-button" :class="{ 'is-loading': loading }" :disabled="loading" @click="refreshGames">
-            {{ loading ? t('scanning') : t('rescanLibraries') }}
-          </button>
-        </header>
+        <LibraryTopbar
+          :detected="installedGames.length" :supported="supportedInstalledGames.length" :loading="loading"
+          :selected-app-id="selectedAppId" :selected-game-name="selectedGameName" :has-error="aiTopbarActions.hasError.value"
+          @rescan="refreshGames" @ask="aiTopbarActions.ask" @recommend="aiTopbarActions.recommend"
+          @audit="aiTopbarActions.audit" @diagnose="aiTopbarActions.diagnose" @contribute="aiTopbarActions.contribute"
+        />
 
         <div class="library-controls">
           <div class="game-filter-control" :aria-label="t('supportedOnly')">
@@ -1907,10 +1867,7 @@ onUnmounted(() => {
                   <strong>{{ t('gameRunningBanner') }}</strong>
                 </div>
 
-                <AiGameSuggestions
-                  :game-id="selectedAppId"
-                  :game-name="selectedGame?.catalog?.name ?? selectedGame?.installed.name ?? null"
-                />
+
 
                 <div class="module-groups">
                   <section v-for="group in moduleGroups" :key="group.category" class="module-group">

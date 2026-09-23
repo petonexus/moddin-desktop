@@ -398,6 +398,17 @@ const en = {
   libraryEmptyAskAi: 'Ask AI to diagnose',
   aiAssistantAuditButton: '✨ Audit my setup',
   aiAssistantAuditIntent: 'Audit my current {game} setup. List what is missing, what is redundant, and what is worth adding.',
+  aiTopbarAsk: '✨ Ask AI',
+  aiTopbarMenu: 'AI actions menu',
+  aiTopbarRecommend: '🎯 Ask for suggestions for {game}',
+  aiTopbarRecommendGeneric: '🎯 Ask for suggestions',
+  aiTopbarAudit: '🔍 Audit my setup',
+  aiTopbarDiagnose: '⚠️ Diagnose current error',
+  aiTopbarDiagnoseHint: 'No error to diagnose right now',
+  aiTopbarContribute: '📝 Contribute',
+  aiTopbarOpenMenu: 'Open AI actions menu',
+  optiScalerSafetyBase: 'Do not use OptiScaler in online sessions with anti-cheat. Close the game before installing or rolling files back.',
+  optiScalerSafetyEldenRing: 'On Elden Ring, OptiScaler requires a mod that provides upscaler/FG inputs, such as ERSS-FG; the vanilla game does not provide those inputs.',
 } as const
 
 export default en

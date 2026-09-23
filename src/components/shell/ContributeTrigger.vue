@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -12,6 +12,22 @@ function show() {
 function hide() {
   open.value = false
 }
+
+// Listen for the global "open contribute" event so the AI topbar split
+// button (or any future trigger) can surface the contribute dialog
+// without the App.vue having to reach into the trigger component
+// directly (keeps the architecture boundary clean).
+function onOpenContribute() {
+  show()
+}
+
+onMounted(() => {
+  window.addEventListener('moddin:open-contribute', onOpenContribute)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('moddin:open-contribute', onOpenContribute)
+})
 
 defineExpose({ show, hide })
 </script>
