@@ -37,8 +37,7 @@
     ],
     "windows": {
       "wix": {
-        "language": ["en-US"],
-        "upgradeBehavior": "silent"
+        "language": ["en-US"]
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
