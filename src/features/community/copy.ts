@@ -31,6 +31,15 @@ const ptBR = {
   ttlHours: 'A cada {count} h',
   ttlDaily: 'Uma vez por dia',
   ttlDays: 'A cada {count} dias',
+  errorSigTitle: 'A assinatura do catálogo não bate.',
+  errorSigWhy: 'O catálogo foi assinado por outra chave ou foi modificado depois de assinado. Atualize o Moddin (ou peça ao mantenedor para republicar o catálogo).',
+  errorNetworkTitle: 'Não consegui falar com o servidor do catálogo.',
+  errorNetworkWhy: 'Verifique sua conexão com a internet e tente de novo. O servidor pode estar fora do ar por alguns minutos.',
+  errorMissingTitle: 'O catálogo não foi encontrado no servidor.',
+  errorMissingWhy: 'O repositório da comunidade pode ter sido movido ou ainda não publicou um catálogo. Veja o status em github.com/petonexus/moddin-community-capabilities.',
+  errorGenericTitle: 'Não consegui buscar o catálogo agora.',
+  errorGenericWhy: 'Algo deu errado. Tente de novo em alguns segundos. Se persistir, abra uma issue em github.com/petonexus/moddin-desktop.',
+  errorRawToggle: 'Ver detalhe técnico',
 } as const
 
 const communityMessages = defineLocalizedCopy(
@@ -66,6 +75,15 @@ const communityMessages = defineLocalizedCopy(
     ttlHours: 'Every {count} h',
     ttlDaily: 'Once a day',
     ttlDays: 'Every {count} days',
+    errorSigTitle: 'The catalog signature does not match.',
+    errorSigWhy: 'The catalog was signed by a different key or was modified after signing. Update Moddin (or ask the maintainer to re-publish the catalog).',
+    errorNetworkTitle: 'Could not reach the catalog server.',
+    errorNetworkWhy: 'Check your internet connection and try again. The server may be down for a few minutes.',
+    errorMissingTitle: 'The catalog was not found on the server.',
+    errorMissingWhy: 'The community repo may have moved, or has not published a catalog yet. Check status at github.com/petonexus/moddin-community-capabilities.',
+    errorGenericTitle: 'Could not fetch the catalog right now.',
+    errorGenericWhy: 'Something went wrong. Try again in a few seconds. If it persists, open an issue at github.com/petonexus/moddin-desktop.',
+    errorRawToggle: 'Show technical detail',
   },
   {
     button: 'Comunidad',
@@ -98,6 +116,15 @@ const communityMessages = defineLocalizedCopy(
     ttlHours: 'Cada {count} h',
     ttlDaily: 'Una vez al día',
     ttlDays: 'Cada {count} días',
+    errorSigTitle: 'La firma del catálogo no coincide.',
+    errorSigWhy: 'El catálogo fue firmado con otra clave o se modificó después de firmar. Actualiza Moddin (o pide al mantenedor que vuelva a publicar el catálogo).',
+    errorNetworkTitle: 'No pude contactar al servidor del catálogo.',
+    errorNetworkWhy: 'Verifica tu conexión a internet e inténtalo otra vez. El servidor puede estar caído unos minutos.',
+    errorMissingTitle: 'No se encontró el catálogo en el servidor.',
+    errorMissingWhy: 'El repo de la comunidad puede haberse movido o aún no publicó un catálogo. Revisa el estado en github.com/petonexus/moddin-community-capabilities.',
+    errorGenericTitle: 'No pude obtener el catálogo ahora mismo.',
+    errorGenericWhy: 'Algo salió mal. Inténtalo otra vez en unos segundos. Si persiste, abre un issue en github.com/petonexus/moddin-desktop.',
+    errorRawToggle: 'Ver detalle técnico',
   },
 )
 

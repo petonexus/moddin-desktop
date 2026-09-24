@@ -256,6 +256,41 @@ code, .mono { font-family: var(--moddin-mono); font-size: var(--moddin-text-xs);
 .callout-info { border-color: var(--moddin-info-line); color: var(--moddin-info); background: var(--moddin-info-bg); }
 .callout-warning strong, .callout-danger strong, .callout-info strong { color: inherit; }
 
+/* Technical raw error inside a callout: tucked under a disclosure
+   summary so the friendly title/why stay on top. Used by Community,
+   OpenXr and Activity log panels. Inspired by Nielsen H9 (help users
+   recognize, diagnose and recover from errors). */
+.callout-raw { margin-top: var(--moddin-space-2); }
+.callout-raw > summary {
+  font-size: var(--moddin-text-sm);
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.85;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.callout-raw > summary::-webkit-details-marker { display: none; }
+.callout-raw > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform var(--moddin-fast) var(--moddin-ease);
+}
+.callout-raw[open] > summary::before { transform: rotate(90deg); }
+.callout-raw > code {
+  display: block;
+  margin-top: var(--moddin-space-1);
+  padding: var(--moddin-space-2) var(--moddin-space-3);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  font: 12px/1.45 ui-monospace, 'Cascadia Mono', 'JetBrains Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: inherit;
+  opacity: 0.9;
+}
+
 /* ---------- Disclosure ---------- */
 
 .disclosure > summary {

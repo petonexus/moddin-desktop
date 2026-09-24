@@ -8,6 +8,15 @@ import { useOpenXrManager } from './useOpenXrManager'
 const { locale } = useI18n()
 const copy = computed(() => openXrCopyForLocale(locale.value))
 
+const friendlyError = computed<{ title: string; why: string }>(() => {
+  const raw = error.value ?? ''
+  const c = copy.value
+  if (/admin|UAC|denied|permission|elevation|0x80070005|0x80070252/i.test(raw)) {
+    return { title: c.errorUacTitle, why: c.errorUacWhy }
+  }
+  return { title: c.errorGenericTitle, why: c.errorGenericWhy }
+})
+
 const {
   open,
   dialogElement,
@@ -74,7 +83,14 @@ function effectiveSourceLabel() {
             </button>
           </div>
 
-          <div v-if="error" class="callout callout-danger">{{ error }}</div>
+          <div v-if="error" class="callout callout-danger" role="alert">
+            <strong>{{ friendlyError.title }}</strong>
+            <p>{{ friendlyError.why }}</p>
+            <details class="callout-raw">
+              <summary>{{ copy.errorRawToggle }}</summary>
+              <code>{{ error }}</code>
+            </details>
+          </div>
           <div v-if="loading && !state" class="empty-state"><span class="spinner" /></div>
 
           <template v-if="state">

@@ -63,3 +63,28 @@ modules:
     description: Instalar o plugin Cheeky no perfil UEVR, configurar a camada OpenXR correspondente e validar o pipeline com DLSS. O fluxo seguro ainda está em planejamento no Moddin.
     category: graphics
     status: planned
+  - id: optiscaler
+    name: OptiScaler
+    description: Instalar a release oficial do OptiScaler com verificação de checksum, seleção de proxy consciente de conflito e rollback. Compatível com STALKER 2 segundo a lista oficial do projeto.
+    category: graphics
+    status: available
+    config:
+      compatibilityStatus: proven
+      compatSource: 'https://github.com/optiscaler/OptiScaler/wiki/S.T.A.L.K.E.R.-2-Heart-of-Chornobyl'
+      recommendedUpscaler: dlss
+      safetyNotes:
+        - OptiScaler 0.9+ está marcado como compatível com STALKER 2 na lista oficial do projeto.
+        - Prefira entrada DLSS ou XeSS — entradas FSR 3.1 apresentam image quality ruim segundo o autor do OptiScaler.
+        - Em sessões UEVR, use OptiScaler junto com o build AFW se você tem GPU AMD; em NVIDIA o DLSS nativo do jogo já funciona.
+        - Não combine OptiScaler com injetores DLSS Frame Gen ao mesmo tempo — escolha um upscaler ou um frame gen, não os dois.
+  - id: reshade
+    name: ReShade host
+    description: Instalar uma build do ReShade compatível com o jogo, com seleção de proxy-DLL e rollback transacional. Em STALKER 2 VR (UEVR) o ReShade tende a conflitar com o injetor — trate como arriscado.
+    category: graphics
+    status: planned
+    config:
+      compatibilityStatus: risky
+      safetyNotes:
+        - ReShade não roda de forma estável com UEVR em STALKER 2 — a própria documentação do UEVR recomenda remover ReShade ao diagnosticar problemas de VR.
+        - Caso queira testar, faça em uma sessão limpa (sem outros overlays) e tenha o plano de desinstalar pelo Moddin se o jogo travar.
+        - ReShade continua sendo requisito do add-on Cheeky no caminho não-VR.

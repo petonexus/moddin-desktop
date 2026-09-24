@@ -53,10 +53,10 @@ const MAX_TTL_SECONDS: u64 = 30 * 24 * 60 * 60; // 30d ceiling
 /// maintainer entry in
 /// [`petonexus/moddin-community-capabilities` `public-keys.json`](https://github.com/petonexus/moddin-community-capabilities)
 /// — the first 16 hex chars of SHA-256 over these 32 bytes are
-/// `e247ca4981f22245`. Rotating the maintainer key requires a new
+/// `d489a3a0be894b19`. Rotating the maintainer key requires a new
 /// Moddin Desktop release with the updated constant.
 const BOOTSTRAP_PUBLIC_KEY_B64: &str =
-    "Mh/WGQ0kCviGtiX/8wLB5fqBCLgtVR/4smlVai13xs8=";
+    "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=";
 
 fn community_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA")
@@ -247,8 +247,41 @@ fn verify_signature(
         .try_into()
         .map_err(|error: std::array::TryFromSliceError| error.to_string())?;
     let signature = Signature::from_bytes(&signature_array);
-    key.verify(payload, &signature)
+    // Normalize the payload before verifying: strip a leading UTF-8 BOM and
+    // fold CRLF line endings down to LF. Ed25519 is byte-exact, so any
+    // difference between the bytes the maintainer signed and the bytes
+    // served by the CDN (BOM added by a `Set-Content -Encoding utf8`,
+    // CRLF inserted by a Windows clone) would otherwise fail verification
+    // for a perfectly valid signature.
+    let normalized = normalize_payload_for_verify(payload);
+    key.verify(&normalized, &signature)
         .map_err(|error| format!("signature verification failed: {error}"))
+}
+
+/// Make the payload match the canonical form maintainers sign:
+///   * no leading UTF-8 BOM (`EF BB BF`)
+///   * line endings folded to LF (`0A`)
+/// Anything else (UTF-16 BOMs, trailing bytes, etc.) is left alone —
+/// the signature will still fail loudly in those cases, which is what
+/// we want for any unexpected CDN transformation.
+fn normalize_payload_for_verify(payload: &[u8]) -> Vec<u8> {
+    let mut start = 0usize;
+    if payload.len() >= 3 && payload[..3] == [0xEF, 0xBB, 0xBF] {
+        start = 3;
+    }
+    let mut out = Vec::with_capacity(payload.len() - start);
+    let mut i = start;
+    while i < payload.len() {
+        let b = payload[i];
+        if b == b'\r' && i + 1 < payload.len() && payload[i + 1] == b'\n' {
+            out.push(b'\n');
+            i += 2;
+        } else {
+            out.push(b);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Fetch the community catalog, honouring the cached TTL unless
@@ -517,6 +550,87 @@ mod tests {
         let error = verify_signature(b"payload", &BASE64.encode([0u8; 32]), &key)
             .expect_err("must reject 32-byte signature");
         assert!(error.contains("64 bytes"));
+    }
+
+    #[test]
+    fn normalize_strips_leading_utf8_bom() {
+        let payload = b"\xEF\xBB\xBF{\"version\":1}";
+        let normalized = normalize_payload_for_verify(payload);
+        assert_eq!(normalized, b"{\"version\":1}");
+    }
+
+    #[test]
+    fn normalize_keeps_bom_in_the_middle_alone() {
+        // A BOM anywhere except the start must NOT be stripped — otherwise a
+        // genuine BOM in the payload body would be silently mutated and the
+        // signature would still fail. Defensive: only the leading BOM gets
+        // normalized.
+        let payload = b"{\"a\":\"\xEF\xBB\xBF\"}";
+        let normalized = normalize_payload_for_verify(payload);
+        assert_eq!(normalized, b"{\"a\":\"\xEF\xBB\xBF\"}");
+    }
+
+    #[test]
+    fn normalize_folds_crlf_to_lf() {
+        let payload = b"line1\r\nline2\r\nline3";
+        let normalized = normalize_payload_for_verify(payload);
+        assert_eq!(normalized, b"line1\nline2\nline3");
+    }
+
+    #[test]
+    fn normalize_handles_trailing_cr_without_lf() {
+        // A bare CR at the end of the file (no LF after) is unusual but valid;
+        // the normalizer must not eat it.
+        let payload = b"line1\nline2\r";
+        let normalized = normalize_payload_for_verify(payload);
+        assert_eq!(normalized, b"line1\nline2\r");
+    }
+
+    #[test]
+    fn normalize_combined_bom_and_crlf() {
+        let payload = b"\xEF\xBB\xBFline1\r\nline2\r\nline3";
+        let normalized = normalize_payload_for_verify(payload);
+        assert_eq!(normalized, b"line1\nline2\nline3");
+    }
+
+    #[test]
+    fn signature_verifies_across_bom_and_crlf() {
+        // Build a keypair, sign the canonical payload, then confirm that
+        // wrapping the same payload in a leading BOM and CRLF still verifies.
+        // This is the regression test for the catalog mismatch bug where
+        // GitHub served the catalog with BOM + LF but the .sig was generated
+        // over a different byte form.
+        use ed25519_dalek::{Signer, SigningKey};
+        let mut seed = [0u8; 32];
+        for (i, byte) in seed.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+        let canonical: &[u8] = b"line1\nline2\nline3\n";
+        let signature: ed25519_dalek::Signature = signing_key.sign(canonical);
+        let sig_b64 = BASE64.encode(signature.to_bytes());
+
+        // The same logical content, but with a leading BOM and CRLF endings —
+        // exactly the form a Windows clone of the repo + a `Set-Content
+        // -Encoding utf8` upload would produce.
+        let mut with_bom_and_crlf: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+        for line in canonical.split(|byte| *byte == b'\n') {
+            if line.is_empty() {
+                // Trailing LF in the canonical becomes \r\n with the BOM wrapper
+                // but no trailing CR after the final newline.
+                continue;
+            }
+            with_bom_and_crlf.extend_from_slice(line);
+            with_bom_and_crlf.extend_from_slice(b"\r\n");
+        }
+
+        // Sanity: normalization must collapse BOM + CRLF back to canonical.
+        let normalized = normalize_payload_for_verify(&with_bom_and_crlf);
+        assert_eq!(normalized, canonical, "test setup is wrong");
+
+        verify_signature(&with_bom_and_crlf, &sig_b64, &verifying_key)
+            .expect("normalized verification must accept the wrapped payload");
     }
 
     #[test]
