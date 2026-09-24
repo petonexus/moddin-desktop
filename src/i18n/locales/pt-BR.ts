@@ -26,7 +26,7 @@ const ptBR = {
   filterAll: 'Todos',
   rescanLibraries: 'Procurar jogos',
   scanning: 'Procurando…',
-  scanningLibraries: 'Procurando jogos na Steam, Epic e GOG…',
+  scanningLibraries: 'Procurando jogos na Steam e na Epic…',
   noGamesFound: 'Nenhum jogo encontrado',
   noGamesHint: 'Tente outra busca ou clique em "Procurar jogos".',
   libraryScanFailed: 'Não conseguimos ler suas bibliotecas de jogos.',
