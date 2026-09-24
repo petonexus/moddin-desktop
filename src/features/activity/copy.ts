@@ -19,6 +19,15 @@ const ptBR = {
   game: 'Jogo',
   confirmClear: 'Apagar todo o registro de atividades? Isso não desfaz nenhuma mudança nos seus jogos.',
   storage: 'Salvo em %LOCALAPPDATA%\\Moddin\\logs (até 5 MB).',
+  errorLockedTitle: 'Não consegui abrir o registro de atividades.',
+  errorLockedWhy: 'Outro programa ( antivírus, editor de texto, ferramenta de backup) está usando o arquivo de log. Feche-o ou espere alguns segundos e clique em Atualizar.',
+  errorMissingTitle: 'O arquivo de log ainda não existe.',
+  errorMissingWhy: 'Isso é normal logo após instalar o Moddin: o log é criado quando você faz a primeira ação. Tente de novo depois de usar o app por alguns minutos.',
+  errorDiskTitle: 'O disco está sem espaço para gravar o log.',
+  errorDiskWhy: 'Libere espaço em %LOCALAPPDATA%\\Moddin\\logs ou em outra unidade e clique em Atualizar. Sem espaço, o Moddin continua funcionando, mas não consegue registrar novas atividades.',
+  errorGenericTitle: 'Não consegui ler ou gravar o registro de atividades.',
+  errorGenericWhy: 'Tente atualizar daqui a pouco. Se persistir, abra uma issue em github.com/petonexus/moddin-desktop com o detalhe técnico abaixo.',
+  errorRawToggle: 'Ver detalhe técnico',
 } as const
 
 const activityMessages = defineLocalizedCopy(
@@ -42,6 +51,15 @@ const activityMessages = defineLocalizedCopy(
     game: 'Game',
     confirmClear: 'Clear the whole activity log? This does not undo any change to your games.',
     storage: 'Saved in %LOCALAPPDATA%\\Moddin\\logs (up to 5 MB).',
+    errorLockedTitle: 'Could not open the activity log.',
+    errorLockedWhy: 'Another program (antivirus, text editor, backup tool) is holding the log file. Close it or wait a few seconds and click Refresh.',
+    errorMissingTitle: 'The log file does not exist yet.',
+    errorMissingWhy: 'That is normal right after installing Moddin: the log is created the first time you do something. Try again after using the app for a few minutes.',
+    errorDiskTitle: 'The disk is out of space for the log.',
+    errorDiskWhy: 'Free space under %LOCALAPPDATA%\\Moddin\\logs (or another drive) and click Refresh. Without space, Moddin keeps working but cannot record new activities.',
+    errorGenericTitle: 'Could not read or write the activity log.',
+    errorGenericWhy: 'Try refreshing in a few seconds. If it persists, open an issue at github.com/petonexus/moddin-desktop with the technical detail below.',
+    errorRawToggle: 'Show technical detail',
   },
   {
     button: 'Actividad',
@@ -62,6 +80,15 @@ const activityMessages = defineLocalizedCopy(
     game: 'Juego',
     confirmClear: '¿Borrar todo el registro de actividad? Esto no deshace ningún cambio en tus juegos.',
     storage: 'Guardado en %LOCALAPPDATA%\\Moddin\\logs (hasta 5 MB).',
+    errorLockedTitle: 'No pude abrir el registro de actividad.',
+    errorLockedWhy: 'Otro programa (antivirus, editor de texto, herramienta de copia de seguridad) está usando el archivo de log. Ciérralo o espera unos segundos y haz clic en Actualizar.',
+    errorMissingTitle: 'El archivo de log aún no existe.',
+    errorMissingWhy: 'Es normal recién después de instalar Moddin: el log se crea cuando realizas la primera acción. Vuelve a intentarlo después de usar la app unos minutos.',
+    errorDiskTitle: 'El disco no tiene espacio para escribir el log.',
+    errorDiskWhy: 'Libera espacio en %LOCALAPPDATA%\\Moddin\\logs o en otra unidad y haz clic en Actualizar. Sin espacio, Moddin sigue funcionando, pero no puede registrar nuevas actividades.',
+    errorGenericTitle: 'No pude leer ni escribir el registro de actividad.',
+    errorGenericWhy: 'Intenta actualizar en unos segundos. Si persiste, abre un issue en github.com/petonexus/moddin-desktop con el detalle técnico de abajo.',
+    errorRawToggle: 'Ver detalle técnico',
   },
 )
 

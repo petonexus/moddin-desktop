@@ -46,6 +46,45 @@ function onToggle(id: string, event: Event) {
   if (isOpen !== expanded.value.has(id)) toggleDetails(id)
 }
 
+/**
+ * Translate raw backend errors into a friendly summary + a 'why' line
+ * the user can actually act on. We keep the raw message below for power users.
+ *
+ * Inspired by Microsoft HAI Guidelines G1/G2: make clear what went wrong
+ * and how the user can recover.
+ */
+const friendlyError = computed<{ title: string; why: string; showRaw: boolean } | null>(() => {
+  if (!error.value) return null
+  const raw = error.value
+  const c = copy.value
+  if (/permission|denied|access|os error 5|0x80070005|being used|locked|sharing/i.test(raw)) {
+    return {
+      title: c.errorLockedTitle,
+      why: c.errorLockedWhy,
+      showRaw: true,
+    }
+  }
+  if (/not found|os error 2|no such file|cannot find/i.test(raw)) {
+    return {
+      title: c.errorMissingTitle,
+      why: c.errorMissingWhy,
+      showRaw: false,
+    }
+  }
+  if (/disk full|no space|os error 112|0x80070027|0x80070070/i.test(raw)) {
+    return {
+      title: c.errorDiskTitle,
+      why: c.errorDiskWhy,
+      showRaw: true,
+    }
+  }
+  return {
+    title: c.errorGenericTitle,
+    why: c.errorGenericWhy,
+    showRaw: true,
+  }
+})
+
 async function clearLogs() {
   await clearLogsAction(copy.value.confirmClear)
 }
@@ -93,7 +132,14 @@ async function clearLogs() {
             </button>
           </div>
 
-          <div v-if="error" class="callout callout-danger">{{ error }}</div>
+          <div v-if="friendlyError" class="callout callout-danger" role="alert">
+            <strong>{{ friendlyError.title }}</strong>
+            <p>{{ friendlyError.why }}</p>
+            <details v-if="friendlyError.showRaw" class="callout-raw">
+              <summary>{{ copy.errorRawToggle }}</summary>
+              <code>{{ error }}</code>
+            </details>
+          </div>
           <div v-if="loading && logs.length === 0" class="empty-state"><span class="spinner" /></div>
           <div v-else-if="filteredLogs.length === 0" class="empty-state">
             <AppIcon name="activity" :size="28" />
