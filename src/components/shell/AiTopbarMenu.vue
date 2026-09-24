@@ -3,22 +3,12 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 /**
- * Split-button IA toolbar that sits at the top-right of the library
- * topbar. The main half triggers the contextual default action
- * (currently "audit"); the arrow half opens a dropdown of nearby modes
- * (recommend / audit / diagnose current error / contribute).
+ * Compact AI menu that sits next to the primary game action. The
+ * single button opens a dropdown; the most-used action (Ask AI) is
+ * also a click on the button body itself.
  *
  * The component is dumb about *what* each action does — it just emits
- * events up to App.vue so the wiring stays in one place. The component
- * only owns:
- *   - the open/close state of the dropdown,
- *   - the click-outside dismissal,
- *   - the keyboard escape handling,
- *   - the visual styling (split-button + menu).
- *
- * This keeps App.vue from re-bloating past its 115 KB byte budget and
- * lets the menu render identically in any future surface that mounts
- * it.
+ * events up to App.vue so the wiring stays in one place.
  */
 const props = defineProps<{
   selectedAppId: string | null
@@ -104,65 +94,65 @@ function onContribute() {
 </script>
 
 <template>
-  <div ref="root" class="ai-split">
+  <div ref="root" class="ai-menu">
     <button
-      class="ai-split-main"
+      class="ai-menu-trigger"
       type="button"
       :aria-label="t('aiTopbarAsk')"
-      @click="onAsk"
-    >
-      <span aria-hidden="true" class="ai-split-sparkle">✨</span>
-      <span class="ai-split-label">{{ t('aiTopbarAsk') }}</span>
-    </button>
-    <button
-      class="ai-split-arrow"
-      type="button"
-      :aria-label="t('aiTopbarOpenMenu')"
+      :aria-haspopup="true"
       :aria-expanded="open"
-      aria-haspopup="menu"
-      @click="toggle"
+      @click="onAsk"
+      @contextmenu.prevent="toggle"
     >
-      <span aria-hidden="true">▾</span>
+      <span aria-hidden="true" class="ai-menu-sparkle">✨</span>
+      <span class="ai-menu-label">{{ t('aiTopbarAsk') }}</span>
+      <span
+        aria-hidden="true"
+        class="ai-menu-caret"
+        role="button"
+        tabindex="-1"
+        @click.stop="toggle"
+      >▾</span>
     </button>
-    <div v-if="open" class="ai-split-menu" role="menu" :aria-label="t('aiTopbarMenu')">
+    <div v-if="open" class="ai-menu-dropdown" role="menu" :aria-label="t('aiTopbarMenu')">
       <button
-        class="ai-split-item"
+        class="ai-menu-item"
         type="button"
         role="menuitem"
         :disabled="!props.selectedAppId"
         @click="onRecommend"
       >
-        <span class="ai-split-item-glyph" aria-hidden="true">🎯</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true">🎯</span>
         <span>{{ recommendLabel() }}</span>
       </button>
       <button
-        class="ai-split-item"
+        class="ai-menu-item"
         type="button"
         role="menuitem"
         @click="onAudit"
       >
-        <span class="ai-split-item-glyph" aria-hidden="true">🔍</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true">🔍</span>
         <span>{{ t('aiTopbarAudit') }}</span>
       </button>
       <button
-        class="ai-split-item"
+        class="ai-menu-item"
         type="button"
         role="menuitem"
         :disabled="!props.hasError"
         :title="props.hasError ? undefined : t('aiTopbarDiagnoseHint')"
         @click="onDiagnose"
       >
-        <span class="ai-split-item-glyph" aria-hidden="true">⚠️</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true">⚠️</span>
         <span>{{ t('aiTopbarDiagnose') }}</span>
       </button>
-      <hr class="ai-split-sep" aria-hidden="true" />
+      <hr class="ai-menu-sep" aria-hidden="true" />
       <button
-        class="ai-split-item"
+        class="ai-menu-item"
         type="button"
         role="menuitem"
         @click="onContribute"
       >
-        <span class="ai-split-item-glyph" aria-hidden="true">📝</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true">📝</span>
         <span>{{ t('aiTopbarContribute') }}</span>
       </button>
     </div>
@@ -170,125 +160,95 @@ function onContribute() {
 </template>
 
 <style scoped>
-.ai-split {
+.ai-menu {
   position: relative;
   display: inline-flex;
-  align-items: stretch;
-  border-radius: 10px;
-  overflow: visible;
   isolation: isolate;
 }
 
-.ai-split-main,
-.ai-split-arrow {
+.ai-menu-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  background: linear-gradient(135deg, rgba(122, 162, 247, 0.22), rgba(122, 162, 247, 0.08));
-  color: var(--moddin-text, #e8ecf2);
-  border: 1px solid rgba(122, 162, 247, 0.55);
-  font-weight: 600;
-  font-size: 0.85rem;
-  padding: 0.55rem 0.95rem;
+  gap: 6px;
+  background: transparent;
+  color: var(--moddin-text-soft, #c5cad3);
+  border: 1px solid var(--moddin-line, rgba(255, 255, 255, 0.12));
+  border-radius: 999px;
+  padding: 6px 10px 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 120ms ease, transform 80ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-
-.ai-split-main {
-  border-right: none;
-  border-top-left-radius: 10px;
-  border-bottom-left-radius: 10px;
-  padding-right: 0.7rem;
+.ai-menu-trigger:hover {
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.04));
+  border-color: rgba(122, 162, 247, 0.45);
+  color: inherit;
 }
-
-.ai-split-arrow {
-  border-top-right-radius: 10px;
-  border-bottom-right-radius: 10px;
-  padding: 0.55rem 0.6rem;
-  font-size: 0.95rem;
-  border-left: 1px solid rgba(122, 162, 247, 0.35);
-}
-
-.ai-split-main:hover,
-.ai-split-arrow:hover {
-  background: linear-gradient(135deg, rgba(122, 162, 247, 0.34), rgba(122, 162, 247, 0.16));
-  border-color: rgba(122, 162, 247, 0.8);
-}
-
-.ai-split-main:focus-visible,
-.ai-split-arrow:focus-visible {
-  outline: 2px solid rgba(122, 162, 247, 0.85);
+.ai-menu-trigger:focus-visible {
+  outline: 2px solid rgba(122, 162, 247, 0.6);
   outline-offset: 2px;
 }
 
-.ai-split-main:active,
-.ai-split-arrow:active {
-  transform: translateY(1px);
-}
+.ai-menu-sparkle { font-size: 13px; }
+.ai-menu-label { white-space: nowrap; }
 
-.ai-split-sparkle {
-  font-size: 0.95rem;
+.ai-menu-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--moddin-text-muted, #9aa3b2);
+  cursor: pointer;
 }
+.ai-menu-caret:hover { background: rgba(255, 255, 255, 0.06); }
 
-.ai-split-menu {
+.ai-menu-dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   right: 0;
-  min-width: 240px;
-  max-width: 320px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px;
-  border-radius: 10px;
-  background: rgba(15, 19, 26, 0.98);
-  border: 1px solid rgba(122, 162, 247, 0.35);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
   z-index: 50;
+  min-width: 260px;
+  background: var(--moddin-surface, #15171c);
+  border: 1px solid var(--moddin-line, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
 }
 
-.ai-split-item {
+.ai-menu-item {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
   background: transparent;
-  border: none;
-  color: var(--moddin-text, #e8ecf2);
-  padding: 0.55rem 0.7rem;
+  color: inherit;
   border-radius: 6px;
-  text-align: left;
-  font-size: 0.85rem;
   cursor: pointer;
-  transition: background 100ms ease;
+  font-size: 13px;
+  text-align: left;
+  width: 100%;
 }
-
-.ai-split-item:hover:not(:disabled) {
-  background: rgba(122, 162, 247, 0.16);
+.ai-menu-item:hover:not(:disabled) {
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.05));
 }
-
-.ai-split-item:disabled {
-  opacity: 0.45;
+.ai-menu-item:disabled {
+  color: var(--moddin-text-muted, #9aa3b2);
   cursor: not-allowed;
 }
+.ai-menu-item-glyph { width: 18px; text-align: center; }
 
-.ai-split-item-glyph {
-  font-size: 1rem;
-  flex: 0 0 auto;
-}
-
-.ai-split-sep {
-  border: none;
-  border-top: 1px solid rgba(122, 162, 247, 0.18);
+.ai-menu-sep {
+  border: 0;
+  height: 1px;
+  background: var(--moddin-line-soft, rgba(255, 255, 255, 0.08));
   margin: 4px 6px;
-}
-
-@media (max-width: 720px) {
-  .ai-split-label {
-    /* keep the sparkle visible but tighten the wordmark on narrow viewports */
-    display: none;
-  }
-  .ai-split-main {
-    padding: 0.55rem 0.6rem;
-  }
 }
 </style>

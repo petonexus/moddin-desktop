@@ -70,71 +70,87 @@ function dismiss() {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 0.75rem;
-  background: linear-gradient(
-    90deg,
-    rgba(122, 162, 247, 0.18) 0%,
-    rgba(122, 162, 247, 0.06) 100%
-  );
-  border: 1px solid var(--moddin-accent, #7aa2f7);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
+  gap: 0.85rem;
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.025));
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.08));
+  border-left: 3px solid var(--moddin-accent, #7aa2f7);
+  border-radius: 6px;
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
 }
 
 .ai-game-banner-icon {
-  font-size: 1.4rem;
+  font-size: 1.05rem;
+  color: var(--moddin-accent, #7aa2f7);
 }
 
 .ai-game-banner-body strong {
   display: block;
-  font-size: 0.95rem;
-  color: var(--moddin-text, #e8ecf2);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--moddin-text-soft, #c5cad3);
 }
 
 .ai-game-banner-body p {
-  margin: 0.2rem 0 0;
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.82rem;
+  margin: 0.1rem 0 0;
+  color: var(--moddin-text-muted, #9aa3b2);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .ai-game-banner-actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
 }
 
 .ai-game-banner-primary {
-  background: var(--moddin-accent, #7aa2f7);
-  color: #0c0e15;
-  border: none;
-  border-radius: 6px;
-  padding: 0.45rem 0.9rem;
-  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--moddin-accent, #7aa2f7);
+  color: var(--moddin-accent, #7aa2f7);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 500;
   cursor: pointer;
+}
+
+.ai-game-banner-primary:hover {
+  background: rgba(122, 162, 247, 0.12);
 }
 
 .ai-game-banner-secondary {
   background: transparent;
-  border: 1px solid var(--moddin-accent, #7aa2f7);
-  color: var(--moddin-accent, #7aa2f7);
-  border-radius: 6px;
-  padding: 0.4rem 0.85rem;
-  font-size: 0.82rem;
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.12));
+  color: var(--moddin-text-muted, #9aa3b2);
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
   cursor: pointer;
+}
+
+.ai-game-banner-secondary:hover {
+  border-color: var(--moddin-text-soft, #c5cad3);
+  color: var(--moddin-text-soft, #c5cad3);
 }
 
 .ai-game-banner-dismiss {
   background: transparent;
-  border: 1px solid var(--moddin-border, #3a4252);
-  color: inherit;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  border: 1px solid transparent;
+  color: var(--moddin-text-muted, #9aa3b2);
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.9rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.ai-game-banner-dismiss:hover {
+  color: inherit;
+  background: var(--moddin-surface-3, rgba(255, 255, 255, 0.05));
 }
 </style>

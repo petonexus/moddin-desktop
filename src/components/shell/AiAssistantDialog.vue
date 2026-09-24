@@ -29,77 +29,25 @@ const {
   copyPromptToClipboard,
   validateYaml,
   save,
+  close,
   toggleRecommendation,
   installSelectedRecommendations,
 } = useAiAssistant()
+
 const dialogElement = ref<HTMLElement | null>(null)
-const { closeDialog } = useDialogLifecycle(open)
 
-function setMode(next: 'author' | 'improve' | 'diagnose' | 'recommend') {
-  mode.value = next
-  // When switching mode, drop any leftover validate/save state from
-  // the previous mode so the dialog starts clean.
-  validation.value = null
-  preview.value = null
-  saveResult.value = null
-}
+useDialogLifecycle(open)
 
-async function installRecommendations() {
-  const gameId = readSelectedGameId() ?? ''
-  const gameName = readSelectedGameName() ?? ''
-  await installSelectedRecommendations({
-    gameId,
-    gameName,
-    installDir: '',
-    executableDir: '',
-  })
-}
+const fallbackNotice = computed(() => {
+  // Show a banner explaining the dialog is using the local prompt
+  // template — only relevant when the Rust backend is missing the
+  // build_author_prompt command. Detected by the prompt text starting
+  // with "# Task" (our fallback marker) without an inline error.
+  return !error.value && promptText.value.startsWith('# Task') && step.value === 'prompt'
+})
 
-function readSelectedGameId(): string | null {
-  try {
-    return window.localStorage.getItem('moddin-selected-appId')
-  } catch {
-    return null
-  }
-}
-
-function readSelectedGameName(): string | null {
-  try {
-    return window.localStorage.getItem('moddin-selected-game-name')
-  } catch {
-    return null
-  }
-}
-
-function recommendationKey(type: string, id: string) {
-  return `${type}:${id}`
-}
-
-function confidenceLabel(confidence: number): string {
-  return `${Math.round(confidence * 100)}%`
-}
-
-interface AiRecommendation {
-  id: 'chatgpt' | 'claude' | 'gemini'
-  url: string
-}
-
-const aiRecommendations: AiRecommendation[] = [
-  { id: 'chatgpt', url: 'https://chatgpt.com/' },
-  { id: 'claude', url: 'https://claude.ai/' },
-  { id: 'gemini', url: 'https://gemini.google.com/' },
-]
-
-async function openExternal(url: string) {
-  // Defence in depth — only HTTPS links are ever passed in (the
-  // `aiRecommendations` list is hard-coded), but we still validate
-  // the scheme before handing it to the Rust command.
-  if (!/^https:\/\//i.test(url)) return
-  try {
-    await openAiAssistantLink(url)
-  } catch {
-    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer')
-  }
+function closeDialog() {
+  open.value = false
 }
 
 function closeOnBackdrop(event: MouseEvent) {
@@ -108,24 +56,42 @@ function closeOnBackdrop(event: MouseEvent) {
   }
 }
 
-const modeLabel = computed(() => {
-  if (step.value === 'preview' || step.value === 'saved') {
-    return t('aiAssistantStepReview')
+const modeMeta = computed(() => {
+  switch (mode.value) {
+    case 'recommend':
+      return { glyph: '🎯', key: 'aiAssistantModeRecommend' }
+    case 'diagnose':
+      return { glyph: '⚠️', key: 'aiAssistantModeDiagnose' }
+    case 'improve':
+      return { glyph: '🛠️', key: 'aiAssistantModeImprove' }
+    case 'author':
+    default:
+      return { glyph: '✨', key: 'aiAssistantModeAuthor' }
   }
-  if (step.value === 'paste') {
-    return t('aiAssistantStepPaste')
-  }
-  if (step.value === 'review') {
-    return t('aiAssistantStepReviewRecommendations')
-  }
-  if (step.value === 'installing') {
-    return t('aiAssistantStepInstalling')
-  }
-  if (mode.value === 'improve') return t('aiAssistantModeImprove')
-  if (mode.value === 'diagnose') return t('aiAssistantModeDiagnose')
-  if (mode.value === 'recommend') return t('aiAssistantModeRecommend')
-  return t('aiAssistantModeAuthor')
 })
+
+const verbosityLabel = computed(() =>
+  verbosity.value === 'basic'
+    ? t('aiAssistantVerbosityBasic')
+    : t('aiAssistantVerbosityAdvanced'),
+)
+
+function pickMode(next: 'author' | 'recommend' | 'diagnose' | 'improve') {
+  // setMode lives on the singleton — go through the public hook
+  void next
+  useAiAssistant().setMode(next)
+}
+
+function onCopyAndOpen() {
+  copyPromptToClipboard()
+  const url =
+    locale.value.startsWith('pt')
+      ? 'https://chatgpt.com/?model=auto'
+      : locale.value.startsWith('es')
+        ? 'https://chatgpt.com/?model=auto'
+        : 'https://chatgpt.com/?model=auto'
+  void openAiAssistantLink(url)
+}
 </script>
 
 <template>
@@ -139,10 +105,10 @@ const modeLabel = computed(() => {
       tabindex="-1"
     >
       <header class="ai-header">
-        <div>
-          <small>AI</small>
+        <div class="ai-header-text">
+          <small class="ai-eyebrow">{{ t('aiAssistantEyebrow') }}</small>
           <h2>{{ t('aiAssistantTitle') }}</h2>
-          <p>{{ modeLabel }}</p>
+          <p>{{ t(modeMeta.key) }}</p>
         </div>
         <button
           class="ai-icon-button"
@@ -154,357 +120,135 @@ const modeLabel = computed(() => {
         </button>
       </header>
 
-      <!-- Mode tabs (author / improve / diagnose / recommend) -->
-      <div class="ai-mode-tabs" role="tablist">
+      <div class="ai-body">
+        <!-- Primary CTA card: the dominant action for the current mode. -->
         <button
           type="button"
-          role="tab"
-          :class="{ active: mode === 'author' }"
-          :aria-selected="mode === 'author'"
-          @click="setMode('author')"
+          class="ai-primary-cta"
+          @click="regeneratePrompt"
+          :disabled="busy"
         >
-          {{ t('aiAssistantModeAuthor') }}
+          <span class="ai-primary-glyph" aria-hidden="true">{{ modeMeta.glyph }}</span>
+          <span class="ai-primary-text">
+            <span class="ai-primary-title">{{ t('aiAssistantPrimaryCta') }}</span>
+            <span class="ai-primary-sub">{{ t('aiAssistantPrimaryCtaHint') }}</span>
+          </span>
         </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: mode === 'improve' }"
-          :aria-selected="mode === 'improve'"
-          @click="setMode('improve')"
-        >
-          {{ t('aiAssistantModeImprove') }}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: mode === 'diagnose' }"
-          :aria-selected="mode === 'diagnose'"
-          @click="setMode('diagnose')"
-        >
-          {{ t('aiAssistantModeDiagnose') }}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :class="{ active: mode === 'recommend' }"
-          :aria-selected="mode === 'recommend'"
-          @click="setMode('recommend')"
-        >
-          {{ t('aiAssistantModeRecommend') }}
-        </button>
-      </div>
 
-      <!-- Verbosity toggle (basic = passo a passo, advanced = direto) -->
-      <div class="ai-verbosity-toggle" role="tablist" :aria-label="t('aiAssistantVerbosityLabel')">
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="verbosity === 'basic'"
-          :class="{ active: verbosity === 'basic' }"
-          @click="setVerbosity('basic')"
-        >
-          {{ t('aiAssistantVerbosityBasic') }}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="verbosity === 'advanced'"
-          :class="{ active: verbosity === 'advanced' }"
-          @click="setVerbosity('advanced')"
-        >
-          {{ t('aiAssistantVerbosityAdvanced') }}
-        </button>
-      </div>
+        <!-- Secondary chips: switch between modes without leaving the flow. -->
+        <div class="ai-mode-chips" role="tablist" :aria-label="t('aiAssistantModePicker')">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'recommend'"
+            :class="['ai-chip', { 'is-active': mode === 'recommend' }]"
+            @click="pickMode('recommend')"
+          >
+            <span aria-hidden="true">🎯</span> {{ t('aiAssistantChipRecommend') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'diagnose'"
+            :class="['ai-chip', { 'is-active': mode === 'diagnose' }]"
+            @click="pickMode('diagnose')"
+          >
+            <span aria-hidden="true">⚠️</span> {{ t('aiAssistantChipDiagnose') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'improve'"
+            :class="['ai-chip', { 'is-active': mode === 'improve' }]"
+            @click="pickMode('improve')"
+          >
+            <span aria-hidden="true">🛠️</span> {{ t('aiAssistantChipImprove') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'author'"
+            :class="['ai-chip', { 'is-active': mode === 'author' }]"
+            @click="pickMode('author')"
+          >
+            <span aria-hidden="true">✨</span> {{ t('aiAssistantChipAuthor') }}
+          </button>
+        </div>
 
-      <div v-if="error" class="ai-error" role="alert">
-        {{ error }}
-      </div>
+        <hr class="ai-divider" aria-hidden="true" />
 
-      <!-- Step 1: prompt -->
-      <div v-if="step === 'prompt'" class="ai-step">
-        <!-- Basic-mode onboarding cards. Only shown the first time the
-             dialog opens (intent is still empty). -->
-        <details
-          v-if="verbosity === 'basic' && !intent"
-          class="ai-onboarding"
-          open
-        >
-          <summary>{{ t('aiAssistantBasicOnboardingTitle') }}</summary>
-          <ol class="ai-onboarding-steps">
-            <li>{{ t('aiAssistantBasicOnboardingStep1') }}</li>
-            <li>{{ t('aiAssistantBasicOnboardingStep2') }}</li>
-            <li>{{ t('aiAssistantBasicOnboardingStep3') }}</li>
-            <li>{{ t('aiAssistantBasicOnboardingStep4') }}</li>
-          </ol>
-          <div class="ai-ai-list">
-            <p>{{ t('aiAssistantBasicAiListLabel') }}</p>
-            <div class="ai-ai-buttons">
+        <!-- Intent: the only required user input. Big, single-field. -->
+        <label class="ai-field">
+          <span class="ai-field-label">{{ t('aiAssistantIntentLabel') }}</span>
+          <textarea
+            v-model="intent"
+            class="ai-textarea"
+            rows="3"
+            :placeholder="t('aiAssistantIntentPlaceholder')"
+          />
+          <small class="ai-field-hint">{{ t('aiAssistantIntentHint') }}</small>
+        </label>
+
+        <!-- Verbosity: collapsed by default. Users who want to change
+             it can, but the default ("basic") works for 90% of cases. -->
+        <details class="ai-advanced">
+          <summary>{{ t('aiAssistantAdvancedTitle') }}</summary>
+          <div class="ai-advanced-body">
+            <span class="ai-field-label">{{ t('aiAssistantVerbosityLabel') }}</span>
+            <div class="ai-verbosity-toggle" role="tablist">
               <button
-                v-for="rec in aiRecommendations"
-                :key="rec.id"
                 type="button"
-                class="ai-ai-button"
-                @click="openExternal(rec.url)"
+                role="tab"
+                :aria-selected="verbosity === 'basic'"
+                :class="['ai-chip', { 'is-active': verbosity === 'basic' }]"
+                @click="setVerbosity('basic')"
               >
-                {{ t(`aiAssistantBasicAi${rec.id.charAt(0).toUpperCase()}${rec.id.slice(1)}`) }}
-                <span aria-hidden="true">↗</span>
+                {{ t('aiAssistantVerbosityBasic') }}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="verbosity === 'advanced'"
+                :class="['ai-chip', { 'is-active': verbosity === 'advanced' }]"
+                @click="setVerbosity('advanced')"
+              >
+                {{ t('aiAssistantVerbosityAdvanced') }}
               </button>
             </div>
+            <small class="ai-field-hint">{{ t('aiAssistantAdvancedHint', { value: verbosityLabel }) }}</small>
           </div>
         </details>
 
-        <label class="ai-field">
-          <span>{{ t('aiAssistantIntentLabel') }}</span>
-          <textarea
-            v-model="intent"
-            rows="4"
-            :placeholder="t('aiAssistantIntentPlaceholder')"
-            :disabled="busy"
-          />
-          <small>{{ t('aiAssistantIntentHint') }}</small>
-        </label>
+        <hr class="ai-divider" aria-hidden="true" />
 
-        <div class="ai-actions">
-          <button
-            class="ai-secondary"
-            type="button"
-            :disabled="busy"
-            @click="regeneratePrompt()"
-          >
-            {{ t('aiAssistantRegenerate') }}
-          </button>
-          <button
-            class="ai-secondary"
-            type="button"
-            :disabled="!promptText"
-            @click="copyPromptToClipboard()"
-          >
-            {{ promptCopied
-              ? t('aiAssistantCopied')
-              : t('aiAssistantCopyPrompt') }}
-          </button>
-        </div>
-
+        <!-- Output: the prompt to paste into the AI. -->
         <label class="ai-field">
-          <span>{{ t('aiAssistantPromptLabel') }}</span>
+          <span class="ai-field-label">{{ t('aiAssistantPromptLabel') }}</span>
           <textarea
             v-model="promptText"
-            class="ai-prompt-area"
-            rows="14"
+            class="ai-textarea ai-textarea-output"
+            rows="8"
             readonly
+            :placeholder="t('aiAssistantPromptPlaceholder')"
           />
-          <small v-if="verbosity === 'basic'">
-            {{ t('aiAssistantPromptHintBasic') }}
-          </small>
+          <small class="ai-field-hint" v-if="fallbackNotice">{{ t('aiAssistantFallbackNotice') }}</small>
         </label>
 
-        <div class="ai-actions ai-actions-right">
-          <button class="ai-primary" type="button" @click="step = 'paste'">
-            {{ t('aiAssistantContinueToPaste') }}
-          </button>
+        <!-- Errors stay visible but small, attached to the output they
+             affect. Never replaces the action buttons. -->
+        <div v-if="error" class="ai-inline-error" role="alert">
+          {{ error }}
         </div>
       </div>
 
-      <!-- Step 2: paste YAML -->
-      <div v-if="step === 'paste'" class="ai-step">
-        <label class="ai-field">
-          <span>{{ t('aiAssistantPasteLabel') }}</span>
-          <textarea
-            v-model="yamlInput"
-            rows="16"
-            :placeholder="t('aiAssistantPastePlaceholder')"
-            :disabled="busy"
-            class="ai-yaml-area"
-          />
-        </label>
-
-        <div v-if="validation && !validation.ok" class="ai-error" role="alert">
-          <strong>{{ t('aiAssistantValidationFailed') }}</strong>
-          <ul>
-            <li v-for="(line, index) in validation.errors" :key="index">{{ line }}</li>
-          </ul>
-        </div>
-
-        <div class="ai-actions ai-actions-right">
-          <button
-            class="ai-secondary"
-            type="button"
-            :disabled="busy"
-            @click="step = 'prompt'"
-          >
-            {{ t('aiAssistantBack') }}
-          </button>
-          <button
-            class="ai-primary"
-            type="button"
-            :disabled="busy || !yamlInput.trim()"
-            @click="validateYaml()"
-          >
-            {{ busy
-              ? t('aiAssistantValidating')
-              : t('aiAssistantValidate') }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Step 3a: review recommendations (only in recommend mode) -->
-      <div v-if="step === 'review'" class="ai-step">
-        <p class="ai-recommendations-intro">
-          {{ t('aiAssistantRecommendationsFound', { count: recommendations.length }) }}
-        </p>
-        <ul class="ai-recommendations-list">
-          <li
-            v-for="rec in recommendations"
-            :key="recommendationKey(rec.type, rec.id)"
-            class="ai-recommendation-row"
-          >
-            <label class="ai-recommendation-checkbox">
-              <input
-                type="checkbox"
-                :checked="selectedRecommendations.has(recommendationKey(rec.type, rec.id))"
-                @change="toggleRecommendation(recommendationKey(rec.type, rec.id))"
-              />
-              <span>
-                <strong>{{ rec.id }}</strong>
-                <span class="ai-recommendation-type">{{ rec.type }}</span>
-                <span class="ai-recommendation-confidence">
-                  {{ t('aiAssistantRecommendationConfidence', { value: confidenceLabel(rec.confidence) }) }}
-                </span>
-                <small>{{ rec.reason }}</small>
-              </span>
-            </label>
-          </li>
-        </ul>
-        <div class="ai-actions ai-actions-right">
-          <button
-            class="ai-secondary"
-            type="button"
-            @click="step = 'paste'"
-          >
-            {{ t('aiAssistantBack') }}
-          </button>
-          <button
-            class="ai-primary"
-            type="button"
-            :disabled="busy || selectedRecommendations.size === 0"
-            @click="installRecommendations()"
-          >
-            {{ t('aiAssistantInstallSelected', { count: selectedRecommendations.size }) }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Step 3b: installing recommendations (progress) -->
-      <div v-if="step === 'installing'" class="ai-step">
-        <p class="ai-recommendations-intro">
-          {{ t('aiAssistantInstallingRecommendations') }}
-        </p>
-        <ul class="ai-recommendations-list">
-          <li
-            v-for="rec in recommendations"
-            :key="recommendationKey(rec.type, rec.id)"
-            class="ai-recommendation-row"
-          >
-            <span class="ai-recommendation-status">
-              <template v-if="recommendationInstallStatus[recommendationKey(rec.type, rec.id)] === 'done'">✓</template>
-              <template v-else-if="recommendationInstallStatus[recommendationKey(rec.type, rec.id)] === 'failed'">✕</template>
-              <template v-else-if="recommendationInstallStatus[recommendationKey(rec.type, rec.id)] === 'running'">•</template>
-              <template v-else>○</template>
-            </span>
-            <span>
-              <strong>{{ rec.id }}</strong>
-              <small>{{ rec.reason }}</small>
-            </span>
-          </li>
-        </ul>
-      </div>
-
-      <!-- Step 3: preview / confirm save -->
-      <div v-if="step === 'preview' && specSummary" class="ai-step">
-        <div class="ai-summary">
-          <h3>{{ specSummary.displayName }}</h3>
-          <p class="ai-summary-meta">
-            <code>{{ specSummary.id }}</code>
-            <span>·</span>
-            <span>{{ specSummary.category }}</span>
-            <span>·</span>
-            <span>{{ specSummary.status }}</span>
-          </p>
-          <ul class="ai-summary-stats">
-            <li>
-              <strong>{{ specSummary.installSteps }}</strong>
-              <span>{{ t('aiAssistantStatInstallSteps') }}</span>
-            </li>
-            <li>
-              <strong>{{ specSummary.uninstallSteps }}</strong>
-              <span>{{ t('aiAssistantStatUninstallSteps') }}</span>
-            </li>
-            <li>
-              <strong>{{ specSummary.verifyChecks }}</strong>
-              <span>{{ t('aiAssistantStatVerifyChecks') }}</span>
-            </li>
-            <li>
-              <strong>{{ specSummary.configFields.length }}</strong>
-              <span>{{ t('aiAssistantStatConfigFields') }}</span>
-            </li>
-          </ul>
-          <p v-if="specSummary.configFields.length > 0" class="ai-config-fields">
-            <span>{{ t('aiAssistantConfigFieldsLabel') }}</span>
-            <code v-for="field in specSummary.configFields" :key="field">
-              {{ field }}
-            </code>
-          </p>
-          <p v-if="specSummary.safetyNotes.length > 0" class="ai-notes">
-            <strong>{{ t('aiAssistantSafetyNotes') }}</strong>
-            <span v-for="(note, index) in specSummary.safetyNotes" :key="index">
-              ⚠ {{ note }}
-            </span>
-          </p>
-        </div>
-
-        <details v-if="preview" class="ai-preview-plan">
-          <summary>{{ t('aiAssistantPreviewPlan') }}</summary>
-          <pre>{{ preview.plan }}</pre>
-        </details>
-
-        <div class="ai-actions ai-actions-right">
-          <button
-            class="ai-secondary"
-            type="button"
-            :disabled="busy"
-            @click="step = 'paste'"
-          >
-            {{ t('aiAssistantBack') }}
-          </button>
-          <button
-            class="ai-primary"
-            type="button"
-            :disabled="busy"
-            @click="save()"
-          >
-            {{ busy
-              ? t('aiAssistantSaving')
-              : t('aiAssistantSave') }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Step 4: saved -->
-      <div v-if="step === 'saved' && saveResult" class="ai-step">
-        <div class="ai-success" role="status">
-          <strong>{{ t('aiAssistantSavedHeading', { id: saveResult.id }) }}</strong>
-          <p>{{ t('aiAssistantSavedBody') }}</p>
-          <code class="ai-saved-path">{{ saveResult.path }}</code>
-          <p v-if="saveResult.overwrote" class="ai-overwrite-note">
-            {{ t('aiAssistantOverwrote') }}
-          </p>
-        </div>
-        <div class="ai-actions ai-actions-right">
-          <button class="ai-primary" type="button" @click="closeDialog">
-            {{ t('aiAssistantDone') }}
-          </button>
-        </div>
-      </div>
+      <footer class="ai-footer">
+        <button class="btn btn-ghost" type="button" @click="copyPromptToClipboard" :disabled="!promptText">
+          <span aria-hidden="true">📋</span> {{ t('aiAssistantCopyPrompt') }}
+        </button>
+        <button class="btn btn-primary" type="button" @click="onCopyAndOpen" :disabled="!promptText">
+          <span aria-hidden="true">✨</span> {{ t('aiAssistantCopyAndOpen') }}
+        </button>
+      </footer>
     </section>
   </div>
 </template>
@@ -513,459 +257,201 @@ const modeLabel = computed(() => {
 .ai-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 9100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 16px;
 }
 
 .ai-panel {
-  width: min(760px, 96vw);
-  max-height: 90vh;
-  overflow: auto;
-  background: var(--moddin-surface, #141823);
+  background: var(--moddin-surface, #15171c);
   color: var(--moddin-text, #e8ecf2);
-  border-radius: 12px;
-  padding: 1.25rem 1.5rem 1.5rem;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+  border-radius: 16px;
+  border: 1px solid var(--moddin-line, rgba(255, 255, 255, 0.08));
+  width: min(640px, 100%);
+  max-height: min(820px, calc(100vh - 32px));
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
 .ai-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.06));
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 12px;
 }
 
-.ai-header small {
-  letter-spacing: 0.08em;
+.ai-header-text { display: grid; gap: 2px; min-width: 0; }
+.ai-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--moddin-accent, #7aa2f7);
-  font-size: 0.75rem;
   font-weight: 700;
 }
-
-.ai-header h2 {
-  margin: 0.1rem 0 0.2rem;
-  font-size: 1.1rem;
-}
-
-.ai-header p {
-  margin: 0;
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.85rem;
-}
+.ai-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.ai-header p { margin: 0; color: var(--moddin-text-muted, #9aa3b2); font-size: 13px; }
 
 .ai-icon-button {
   background: transparent;
-  border: 1px solid var(--moddin-border, #3a4252);
-  color: inherit;
+  color: var(--moddin-text-muted, #9aa3b2);
+  border: 1px solid transparent;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 1.1rem;
+  font-size: 18px;
+  line-height: 1;
+}
+.ai-icon-button:hover { background: var(--moddin-surface-2, rgba(255, 255, 255, 0.04)); }
+
+.ai-body {
+  padding: 16px 24px;
+  display: grid;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
 }
 
-.ai-mode-tabs {
+.ai-primary-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  background: linear-gradient(135deg, rgba(122, 162, 247, 0.32), rgba(122, 162, 247, 0.14));
+  border: 1px solid rgba(122, 162, 247, 0.7);
+  color: inherit;
+  border-radius: 12px;
+  padding: 16px 20px;
+  cursor: pointer;
+  font: inherit;
+  transition: background 120ms ease, transform 80ms ease;
+}
+.ai-primary-cta:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(122, 162, 247, 0.45), rgba(122, 162, 247, 0.22));
+}
+.ai-primary-cta:active:not(:disabled) { transform: translateY(1px); }
+.ai-primary-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.ai-primary-glyph { font-size: 28px; }
+.ai-primary-text { display: grid; gap: 2px; min-width: 0; }
+.ai-primary-title { font-size: 16px; font-weight: 700; }
+.ai-primary-sub { font-size: 12px; color: var(--moddin-text-muted, #9aa3b2); }
+
+.ai-mode-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--moddin-border, #3a4252);
+  gap: 6px;
 }
 
-.ai-mode-tabs button {
-  background: transparent;
-  border: 0;
-  color: var(--moddin-muted, #8c93a3);
-  padding: 0.45rem 0.85rem;
-  font-size: 0.82rem;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-
-.ai-mode-tabs button.active {
-  color: var(--moddin-accent, #7aa2f7);
-  border-bottom-color: var(--moddin-accent, #7aa2f7);
-  font-weight: 600;
-}
-
-.ai-verbosity-toggle {
-  display: inline-flex;
-  align-self: flex-start;
-  border: 1px solid var(--moddin-border, #3a4252);
+.ai-chip {
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.04));
+  color: var(--moddin-text-muted, #9aa3b2);
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.06));
   border-radius: 999px;
-  overflow: hidden;
-  background: var(--moddin-surface-2, #1a1f29);
-}
-
-.ai-verbosity-toggle button {
-  background: transparent;
-  border: 0;
-  color: var(--moddin-muted, #8c93a3);
-  padding: 0.35rem 0.9rem;
-  font-size: 0.8rem;
+  padding: 6px 12px;
+  font-size: 12px;
   cursor: pointer;
-}
-
-.ai-verbosity-toggle button.active {
-  background: var(--moddin-accent, #7aa2f7);
-  color: #0c0e15;
-  font-weight: 600;
-}
-
-.ai-step {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.ai-onboarding {
-  background: var(--moddin-surface-2, #1a1f29);
-  border: 1px solid var(--moddin-border, #3a4252);
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.85rem;
-}
-
-.ai-onboarding summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--moddin-accent, #7aa2f7);
-}
-
-.ai-onboarding-steps {
-  margin: 0.5rem 0;
-  padding-left: 1.2rem;
-  color: var(--moddin-muted, #8c93a3);
-}
-
-.ai-onboarding-steps li {
-  margin-bottom: 0.25rem;
-}
-
-.ai-ai-list {
-  margin-top: 0.6rem;
-}
-
-.ai-ai-list > p {
-  margin: 0 0 0.4rem;
-  font-size: 0.78rem;
-  color: var(--moddin-muted, #8c93a3);
-}
-
-.ai-ai-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.ai-ai-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  background: transparent;
-  border: 1px solid var(--moddin-border, #3a4252);
-  color: var(--moddin-text, #e8ecf2);
-  padding: 0.35rem 0.7rem;
-  border-radius: 999px;
-  font-size: 0.78rem;
-  cursor: pointer;
+  gap: 4px;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.ai-chip:hover { background: var(--moddin-surface-3, rgba(255, 255, 255, 0.08)); color: inherit; }
+.ai-chip.is-active {
+  background: rgba(122, 162, 247, 0.18);
+  border-color: rgba(122, 162, 247, 0.55);
+  color: inherit;
 }
 
-.ai-ai-button:hover {
-  border-color: var(--moddin-accent, #7aa2f7);
+.ai-divider {
+  border: 0;
+  height: 1px;
+  background: var(--moddin-line-soft, rgba(255, 255, 255, 0.06));
+  margin: 0;
 }
 
 .ai-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-}
-
-.ai-field > span {
-  font-weight: 600;
-  color: var(--moddin-muted, #8c93a3);
-}
-
-.ai-field small {
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.75rem;
-}
-
-.ai-field textarea {
-  background: var(--moddin-surface-2, #1a1f29);
-  color: inherit;
-  border: 1px solid var(--moddin-border, #3a4252);
-  border-radius: 6px;
-  padding: 0.55rem 0.7rem;
-  font-family: 'Cascadia Code', 'Consolas', monospace;
-  font-size: 0.85rem;
-  resize: vertical;
-}
-
-.ai-field textarea:disabled {
-  opacity: 0.6;
-}
-
-.ai-prompt-area {
-  min-height: 220px;
-}
-
-.ai-yaml-area {
-  min-height: 260px;
-}
-
-.ai-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.ai-actions-right {
-  justify-content: flex-end;
-}
-
-.ai-primary {
-  background: var(--moddin-accent, #7aa2f7);
-  color: #0c0e15;
-  border: none;
-  border-radius: 6px;
-  padding: 0.45rem 1rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ai-primary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ai-secondary {
-  background: transparent;
-  border: 1px solid var(--moddin-accent, #7aa2f7);
-  color: var(--moddin-accent, #7aa2f7);
-  border-radius: 6px;
-  padding: 0.4rem 0.9rem;
-  cursor: pointer;
-}
-
-.ai-secondary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ai-error {
-  background: rgba(255, 90, 90, 0.12);
-  border: 1px solid rgba(255, 90, 90, 0.4);
-  color: #ff8c8c;
-  padding: 0.5rem 0.7rem;
-  border-radius: 6px;
-  font-size: 0.85rem;
-}
-
-.ai-error ul {
-  margin: 0.3rem 0 0;
-  padding-left: 1.2rem;
-}
-
-.ai-success {
-  background: rgba(40, 200, 120, 0.12);
-  border: 1px solid rgba(40, 200, 120, 0.4);
-  color: #2ecf86;
-  padding: 0.7rem 0.9rem;
-  border-radius: 6px;
-  font-size: 0.9rem;
-}
-
-.ai-saved-path {
-  display: block;
-  margin-top: 0.4rem;
-  word-break: break-all;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 0.4rem 0.5rem;
-  border-radius: 4px;
-  color: inherit;
-  font-size: 0.78rem;
-}
-
-.ai-overwrite-note {
-  margin: 0.4rem 0 0;
-  font-style: italic;
-  color: var(--moddin-warning, #f0b432);
-}
-
-.ai-summary h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.ai-summary-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0.2rem 0 0.6rem;
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.85rem;
-}
-
-.ai-summary-meta code {
-  background: var(--moddin-surface-2, #1a1f29);
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-}
-
-.ai-summary-stats {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.ai-summary-stats li {
-  background: var(--moddin-surface-2, #1a1f29);
-  border: 1px solid var(--moddin-border, #3a4252);
-  border-radius: 6px;
-  padding: 0.4rem 0.7rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.1rem;
-  min-width: 80px;
-}
-
-.ai-summary-stats strong {
-  font-size: 1.1rem;
-}
-
-.ai-summary-stats span {
-  font-size: 0.72rem;
-  color: var(--moddin-muted, #8c93a3);
-  text-align: center;
-}
-
-.ai-config-fields,
-.ai-notes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
-  font-size: 0.8rem;
-  color: var(--moddin-muted, #8c93a3);
-}
-
-.ai-config-fields code {
-  background: var(--moddin-surface-2, #1a1f29);
-  padding: 0.05rem 0.35rem;
-  border-radius: 4px;
-  color: var(--moddin-text, #e8ecf2);
-}
-
-.ai-notes {
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.ai-preview-plan {
-  background: var(--moddin-surface-2, #1a1f29);
-  border: 1px solid var(--moddin-border, #3a4252);
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8rem;
-}
-
-.ai-preview-plan summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--moddin-muted, #8c93a3);
-}
-
-.ai-preview-plan pre {
-  margin: 0.5rem 0 0;
-  white-space: pre-wrap;
-  font-family: 'Cascadia Code', 'Consolas', monospace;
-  font-size: 0.78rem;
-}
-
-.ai-recommendations-intro {
-  margin: 0;
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.85rem;
-}
-
-.ai-recommendations-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  max-height: 360px;
-  overflow-y: auto;
-}
-
-.ai-recommendation-row {
-  background: var(--moddin-surface-2, #1a1f29);
-  border: 1px solid var(--moddin-border, #3a4252);
-  border-radius: 6px;
-  padding: 0.5rem 0.7rem;
-  font-size: 0.85rem;
   display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 0.5rem;
-  align-items: start;
+  gap: 6px;
 }
-
-.ai-recommendation-checkbox {
-  display: contents;
-}
-
-.ai-recommendation-checkbox > input {
-  margin-top: 0.2rem;
-}
-
-.ai-recommendation-checkbox > span {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.ai-recommendation-checkbox strong {
-  font-family: 'Cascadia Code', 'Consolas', monospace;
-}
-
-.ai-recommendation-checkbox small {
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.78rem;
-}
-
-.ai-recommendation-type {
-  display: inline-block;
-  background: rgba(122, 162, 247, 0.15);
-  color: var(--moddin-accent, #7aa2f7);
-  font-size: 0.7rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 999px;
-  margin-left: 0.4rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.ai-recommendation-confidence {
-  display: inline-block;
-  margin-left: 0.4rem;
-  color: var(--moddin-muted, #8c93a3);
-  font-size: 0.75rem;
-}
-
-.ai-recommendation-status {
-  text-align: center;
+.ai-field-label {
+  font-size: 12px;
   font-weight: 600;
+  color: var(--moddin-text-muted, #9aa3b2);
+}
+.ai-field-hint { font-size: 11px; color: var(--moddin-text-muted, #9aa3b2); }
+
+.ai-textarea {
+  width: 100%;
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: 13px/1.5 ui-monospace, "Cascadia Mono", "JetBrains Mono", monospace;
+  resize: vertical;
+  min-height: 64px;
+}
+.ai-textarea:focus {
+  outline: 2px solid rgba(122, 162, 247, 0.45);
+  outline-offset: 1px;
+}
+.ai-textarea-output {
+  background: var(--moddin-surface-3, rgba(0, 0, 0, 0.18));
+}
+
+.ai-advanced {
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.06));
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--moddin-surface-2, rgba(255, 255, 255, 0.02));
+}
+.ai-advanced > summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--moddin-text-muted, #9aa3b2);
+  list-style: none;
+}
+.ai-advanced > summary::marker,
+.ai-advanced > summary::-webkit-details-marker { display: none; }
+.ai-advanced[open] > summary { color: inherit; }
+.ai-advanced-body { padding: 0 0 12px; display: grid; gap: 8px; }
+
+.ai-inline-error {
+  background: var(--moddin-danger-bg, rgba(255, 80, 80, 0.12));
+  color: var(--moddin-danger, #ff8a8a);
+  border: 1px solid var(--moddin-danger-line, rgba(255, 80, 80, 0.3));
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.ai-footer {
+  padding: 12px 24px;
+  border-top: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.06));
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--moddin-surface, #15171c);
+}
+.ai-footer .btn { padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.ai-footer .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ai-footer .btn-ghost {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.12));
+}
+.ai-footer .btn-primary {
+  background: linear-gradient(135deg, #7aa2f7, #5b8def);
+  color: #0c0e12;
+  border: none;
+  font-weight: 700;
 }
 </style>

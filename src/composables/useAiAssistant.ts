@@ -106,6 +106,16 @@ function setVerbosity(next: AuthorPromptVerbosity) {
   void regeneratePrompt()
 }
 
+function setMode(next: AuthorPromptMode) {
+  if (mode.value === next) return
+  mode.value = next
+  context.value = { ...context.value, mode: next }
+  // Reset to the first step so the user lands on the prompt screen for
+  // the new mode (instead of staying on a stale preview/review).
+  step.value = 'prompt'
+  void regeneratePrompt()
+}
+
 async function regeneratePrompt() {
   busy.value = true
   error.value = null
@@ -425,6 +435,7 @@ export function useAiAssistant() {
     // actions
     openFor,
     openAiAssistantRecommendations,
+    setMode,
     setVerbosity,
     regeneratePrompt,
     copyPromptToClipboard,
