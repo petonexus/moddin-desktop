@@ -1756,10 +1756,17 @@ onUnmounted(() => {
       <section v-if="activeView === 'library'" class="page">
         <div v-if="error" class="callout callout-danger" role="alert">
           <AppIcon class="callout-icon" name="alert" />
-          <div>
+          <div class="callout-body">
             <strong>{{ t('libraryScanFailed') }}</strong>
             <p>{{ error }}</p>
           </div>
+          <button
+            class="btn btn-sm callout-action"
+            type="button"
+            @click="aiTopbar.diagnose"
+          >
+            {{ t('aiExplainError') }}
+          </button>
         </div>
 
         <div class="library-layout">
