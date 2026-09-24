@@ -29,6 +29,11 @@ const ptBR = {
   sourceGame: 'escolhido para o jogo',
   sourceSystem: 'padrão do Windows',
   sourceNone: 'nenhum',
+  errorGenericTitle: 'Não consegui ler o estado do VR agora.',
+  errorGenericWhy: 'O Windows recusou a consulta. Tente atualizar daqui a pouco. Se persistir, abra uma issue em github.com/petonexus/moddin-desktop.',
+  errorUacTitle: 'O Windows pediu permissão de administrador e ela foi negada.',
+  errorUacWhy: 'Sem essa permissão, o Moddin não consegue trocar o runtime OpenXR. Tente de novo e clique em "Sim" na janela do Windows.',
+  errorRawToggle: 'Ver detalhe técnico',
 } as const
 
 const openXrMessages = defineLocalizedCopy(
@@ -62,6 +67,11 @@ const openXrMessages = defineLocalizedCopy(
     sourceGame: 'picked for this game',
     sourceSystem: 'Windows default',
     sourceNone: 'none',
+    errorGenericTitle: 'Could not read the VR state right now.',
+    errorGenericWhy: 'Windows refused the query. Try refreshing in a few seconds. If it persists, open an issue at github.com/petonexus/moddin-desktop.',
+    errorUacTitle: 'Windows asked for administrator permission and it was denied.',
+    errorUacWhy: 'Without that, Moddin cannot switch the OpenXR runtime. Try again and click "Yes" on the Windows prompt.',
+    errorRawToggle: 'Show technical detail',
   },
   {
     button: 'Sistema de VR',
@@ -92,6 +102,11 @@ const openXrMessages = defineLocalizedCopy(
     sourceGame: 'elegido para el juego',
     sourceSystem: 'predeterminado de Windows',
     sourceNone: 'ninguno',
+    errorGenericTitle: 'No pude leer el estado de VR ahora mismo.',
+    errorGenericWhy: 'Windows rechazó la consulta. Intenta actualizar en unos segundos. Si persiste, abre un issue en github.com/petonexus/moddin-desktop.',
+    errorUacTitle: 'Windows pidió permiso de administrador y fue denegado.',
+    errorUacWhy: 'Sin ese permiso, Moddin no puede cambiar el runtime OpenXR. Intenta otra vez y haz clic en "Sí" en la ventana de Windows.',
+    errorRawToggle: 'Ver detalle técnico',
   },
 )
 
