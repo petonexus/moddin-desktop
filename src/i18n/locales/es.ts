@@ -89,7 +89,7 @@ const es = {
   moduleVrLaunch: 'Jugar en VR',
   moduleVrLaunchDescription: 'Revisa tu visor, ajusta los gráficos para VR y abre el juego listo para jugar.',
   moduleObsVr: 'Grabar en VR con OBS',
-  moduleObsVrDescription: 'Crea en OBS una escena que captura el juego en VR, lista para grabar o transmitir.',
+  moduleObsVrDescription: 'Crea en OBS una escena que captura el juego durante la sesión de VR, lista para grabar o transmitir.',
   moduleOptiScaler: 'OptiScaler',
   moduleOptiScalerDescription: 'Cambia el reescalador del juego (DLSS, FSR o XeSS) para ganar FPS o calidad de imagen.',
   moduleOfxr: 'Fotogramas extra en VR (OFXR)',
@@ -184,6 +184,7 @@ const es = {
   optiConflictsHint: 'Encontramos archivos de otros mods que usan el mismo punto de entrada. Podrían entrar en conflicto.',
   optiSafetyOnline: 'No uses OptiScaler en partidas online con anti-cheat. Cierra el juego antes de instalar o deshacer.',
   optiSafetyEldenRing: 'En Elden Ring, OptiScaler solo funciona junto con un mod que añada DLSS/FSR al juego (como ERSS-FG). El juego original no lo tiene.',
+  optiSafetyStalker2: 'Usa DLSS o XeSS como entrada del reescalador — las entradas FSR 3.1 dan mala calidad de imagen. En sesiones UEVR (STALKER 2 VR), usa OptiScaler solo si tienes GPU AMD o necesitas fallback de upscaler; en NVIDIA el DLSS nativo del juego ya funciona.',
 
   // OFXR
   ofxrMode: 'Modo',
@@ -217,6 +218,7 @@ const es = {
   cheekyReshadeAddon: 'Complemento de ReShade',
   cheekyNoteCyberpunk: 'El autor del mod aún no ha probado Cyberpunk 2077.',
   cheekyNoteEldenRing: 'Elden Ring no está en la lista oficial de juegos probados.',
+  cheekyNoteStalker2: 'STALKER 2 trae DLSS nativo, pero no hay caso confirmado público de Cheeky + STALKER 2 + UEVR. Es plausible, todavía sin probar por la comunidad.',
   cheekySafetyReshade: 'Necesita ReShade (64 bits con soporte de complementos) instalado en este juego.',
   cheekySafetyOpenXr: 'Para VR, ejecuta una vez CheekyOpenXRSetup.exe de la misma versión. Moddin no ejecuta instaladores de terceros por ti.',
   cheekySafetyOneIntegration: 'No lo uses junto con el plugin Cheeky de UEVR en el mismo juego.',
@@ -251,6 +253,8 @@ const es = {
   cheekyGuideRisks: 'Ten en cuenta',
   cheekyGuideCyberpunkDecision: 'El juego tiene DLSS, pero el autor aún no confirmó que funcione. Pruébalo con calma.',
   cheekyGuideCyberpunkRoute: 'Instala solo el complemento de ReShade en la carpeta del juego. Si juegas en VR, ejecuta también el instalador Cheeky OpenXR.',
+  cheekyGuideStalker2Decision: 'STALKER 2 trae DLSS nativo, pero el camino Cheeky + UEVR no se ha confirmado públicamente. Trátalo como plausible pero sin documentar.',
+  cheekyGuideStalker2Route: 'Instala el plugin Cheeky del UEVR (ZIP completo) en el directorio de configuración del UEVR — no en la carpeta del juego. Mantén DLSS encendido dentro de STALKER 2.',
   cheekyGuideEldenDecision: 'Elden Ring no trae DLSS de serie. Primero instala un mod que lo añada (como ERSS-FG).',
   cheekyGuideEldenRoute: 'Primero confirma que el mod de DLSS funciona en el juego. Después instala el complemento de ReShade con Moddin.',
   cheekyGuideReShadePrerequisite: 'ReShade de 64 bits con soporte de complementos, instalado para la versión de DirectX/Vulkan que usa el juego.',

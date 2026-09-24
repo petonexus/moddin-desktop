@@ -218,7 +218,17 @@ function moduleCardState(module: ToolModuleDefinition): ModuleCardState {
 }
 
 function moduleCardTag(module: ToolModuleDefinition): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } | null {
-  if (module.id !== 'cheeky-foveated-dlss') return null
+  // Show a compatibility chip for any module that carries an explicit
+  // `compatibilityStatus` in its catalog config — not only Cheeky.
+  // Catalog authors can mark research findings as `proven`, `experimental`,
+  // `risky`, or `not_working` per-game; the chip surfaces that for the player.
+  const hasExplicitCompat = Object.prototype.hasOwnProperty.call(module.config ?? {}, 'compatibilityStatus')
+  if (!hasExplicitCompat) {
+    // Legacy path: keep the original Cheeky-only chip behaviour so older
+    // catalog entries (without an explicit compatibilityStatus) still
+    // surface a 'unverified' chip when the engine preset says so.
+    if (module.id !== 'cheeky-foveated-dlss') return null
+  }
   const status = compatibilityStatus(module)
   const tone = status === 'proven' ? 'success' : status === 'experimental' ? 'warning' : status === 'unverified' ? 'neutral' : 'danger'
   return { label: compatibilityStatusLabel(status), tone }
@@ -369,11 +379,24 @@ function cheekyResearchStateLabel(state: CheekyResearchState) {
 function cheekyResearchGuide(module: ToolModuleDefinition): CheekyResearchGuide {
   const gameId = selectedGame.value?.catalog?.id
   const isEldenRing = gameId === 'elden-ring'
+  const isStalker2 = gameId === 'stalker-2'
 
   return {
     state: isEldenRing ? 'prerequisite' : 'experimental',
-    decision: t(isEldenRing ? 'cheekyGuideEldenDecision' : 'cheekyGuideCyberpunkDecision'),
-    route: t(isEldenRing ? 'cheekyGuideEldenRoute' : 'cheekyGuideCyberpunkRoute'),
+    decision: t(
+      isEldenRing
+        ? 'cheekyGuideEldenDecision'
+        : isStalker2
+          ? 'cheekyGuideStalker2Decision'
+          : 'cheekyGuideCyberpunkDecision',
+    ),
+    route: t(
+      isEldenRing
+        ? 'cheekyGuideEldenRoute'
+        : isStalker2
+          ? 'cheekyGuideStalker2Route'
+          : 'cheekyGuideCyberpunkRoute',
+    ),
     prerequisites: [
       ...(isEldenRing ? [t('cheekyGuideEldenProviderPrerequisite')] : []),
       t('cheekyGuideReShadePrerequisite'),
@@ -415,6 +438,7 @@ function cheekyGameCompatibilityNote(module: ToolModuleDefinition) {
   const gameId = selectedGame.value?.catalog?.id
   if (gameId === 'cyberpunk-2077') return t('cheekyNoteCyberpunk')
   if (gameId === 'elden-ring') return t('cheekyNoteEldenRing')
+  if (gameId === 'stalker-2') return t('cheekyNoteStalker2')
   return ''
 }
 
@@ -720,6 +744,7 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
 function optiScalerSafetyNotes(gameId: string): string[] {
   const notes = [t('optiSafetyOnline')]
   if (gameId === 'elden-ring') notes.push(t('optiSafetyEldenRing'))
+  if (gameId === 'stalker-2') notes.push(t('optiSafetyStalker2'))
   return notes
 }
 

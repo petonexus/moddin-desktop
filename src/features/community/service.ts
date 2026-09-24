@@ -7,13 +7,13 @@ export function listCapabilities() {
 }
 
 export function fetchCommunityCatalog(forceRefresh: boolean, ttlSeconds: number) {
-  return invoke<CommunityFetchResult>('community_catalog_fetch', { forceRefresh, ttlSeconds })
+  return invoke<CommunityFetchResult>('community_catalog_fetch', { request: { forceRefresh, ttlSeconds } })
 }
 
 export function setCommunityCatalogTtl(ttlSeconds: number) {
-  return invoke<number>('community_catalog_set_ttl', { ttlSeconds })
+  return invoke<number>('community_catalog_set_ttl', { request: { ttlSeconds } })
 }
 
 export function installCommunityCapability(request: CommunityInstallRequest) {
-  return invoke<CommunityInstallResult>('community_capability_install', { ...request })
+  return invoke<CommunityInstallResult>('community_capability_install', { request })
 }
