@@ -1,67 +1,86 @@
+/*
+ * Design tokens — the single source of truth for colour, type, spacing,
+ * radius and motion. Components must reference these variables instead of
+ * hard-coding hex values, so every surface speaks the same visual language.
+ */
 :root {
   color-scheme: dark;
 
-  /* Surfaces */
-  --moddin-bg: #090d12;
-  --moddin-surface-1: #0f151d;
-  --moddin-surface-2: #141c26;
-  --moddin-surface-3: #1a2430;
-  --moddin-surface-raised: #111923;
-  --moddin-surface-overlay: rgba(9, 13, 18, 0.86);
+  /* Surfaces: each step is one level of elevation. */
+  --moddin-bg: #0a0d12;
+  --moddin-surface-1: #10151c;
+  --moddin-surface-2: #161c25;
+  --moddin-surface-3: #1d2530;
+  --moddin-surface-sunken: #0c1016;
+  --moddin-overlay: rgba(4, 6, 10, 0.72);
 
   /* Lines */
-  --moddin-line-soft: #1c2732;
-  --moddin-line: #263442;
-  --moddin-line-strong: #344455;
+  --moddin-line-soft: #1b222c;
+  --moddin-line: #252e3a;
+  --moddin-line-strong: #33404f;
 
-  /* Text */
-  --moddin-text: #eef2f7;
-  --moddin-text-soft: #c7d0dc;
-  --moddin-text-muted: #8d9aa9;
-  --moddin-text-faint: #647181;
+  /* Text: primary → secondary → muted → faint. */
+  --moddin-text: #eef1f6;
+  --moddin-text-soft: #c3cbd6;
+  --moddin-text-muted: #8a95a4;
+  --moddin-text-faint: #5f6a79;
 
   /* Brand */
-  --moddin-accent: #8a70ff;
-  --moddin-accent-strong: #6f54f2;
-  --moddin-accent-soft: rgba(138, 112, 255, 0.14);
-  --moddin-accent-softer: rgba(138, 112, 255, 0.08);
-  --moddin-accent-ring: rgba(138, 112, 255, 0.3);
+  --moddin-accent: #8b72ff;
+  --moddin-accent-strong: #7358f5;
+  --moddin-accent-text: #c4b8ff;
+  --moddin-accent-soft: rgba(139, 114, 255, 0.14);
+  --moddin-accent-ring: rgba(139, 114, 255, 0.35);
 
-  /* Semantic */
-  --moddin-success: #8de2b1;
-  --moddin-success-bg: #13291d;
-  --moddin-warning: #efd093;
-  --moddin-warning-bg: #332817;
-  --moddin-danger: #f0aeb9;
-  --moddin-danger-bg: #341820;
-  --moddin-info: #a8cbff;
-  --moddin-info-bg: #162943;
+  /* Semantic: foreground / tinted background / border. */
+  --moddin-success: #7fdca6;
+  --moddin-success-bg: rgba(64, 190, 120, 0.12);
+  --moddin-success-line: rgba(64, 190, 120, 0.3);
+  --moddin-info: #9cc3ff;
+  --moddin-info-bg: rgba(90, 150, 255, 0.12);
+  --moddin-info-line: rgba(90, 150, 255, 0.3);
+  --moddin-warning: #f0c878;
+  --moddin-warning-bg: rgba(240, 180, 70, 0.12);
+  --moddin-warning-line: rgba(240, 180, 70, 0.32);
+  --moddin-danger: #f29aa8;
+  --moddin-danger-bg: rgba(230, 80, 105, 0.12);
+  --moddin-danger-line: rgba(230, 80, 105, 0.34);
+  --moddin-neutral: #a6b0bd;
+  --moddin-neutral-bg: rgba(160, 175, 195, 0.1);
+
+  /* Type scale */
+  --moddin-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --moddin-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --moddin-text-xs: 11px;
+  --moddin-text-sm: 12px;
+  --moddin-text-md: 13px;
+  --moddin-text-base: 14px;
+  --moddin-text-lg: 16px;
+  --moddin-text-xl: 20px;
+  --moddin-text-2xl: 26px;
+
+  /* Spacing (4px grid) */
+  --moddin-space-1: 4px;
+  --moddin-space-2: 8px;
+  --moddin-space-3: 12px;
+  --moddin-space-4: 16px;
+  --moddin-space-5: 20px;
+  --moddin-space-6: 24px;
+  --moddin-space-8: 32px;
 
   /* Geometry */
-  --moddin-radius-xs: 7px;
-  --moddin-radius-sm: 10px;
-  --moddin-radius-md: 13px;
-  --moddin-radius-lg: 17px;
-  --moddin-radius-xl: 22px;
+  --moddin-radius-sm: 6px;
+  --moddin-radius-md: 10px;
+  --moddin-radius-lg: 14px;
+  --moddin-radius-pill: 999px;
 
   /* Motion */
   --moddin-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --moddin-fast: 120ms;
   --moddin-normal: 180ms;
 
-  /* Shadows */
-  --moddin-shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.18);
-  --moddin-shadow-md: 0 18px 50px rgba(0, 0, 0, 0.25);
-  --moddin-shadow-lg: 0 28px 90px rgba(0, 0, 0, 0.45);
-
-  /* Compatibility aliases while the legacy stylesheet is decomposed. */
-  --surface-0: var(--moddin-bg);
-  --surface-1: var(--moddin-surface-1);
-  --surface-2: var(--moddin-surface-2);
-  --surface-3: var(--moddin-surface-3);
-  --line: var(--moddin-line);
-  --line-subtle: var(--moddin-line-soft);
-  --text-muted: var(--moddin-text-muted);
-  --accent: var(--moddin-accent);
-  --accent-soft: var(--moddin-accent-soft);
+  /* Elevation */
+  --moddin-shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.18);
+  --moddin-shadow-md: 0 14px 40px rgba(0, 0, 0, 0.32);
+  --moddin-shadow-lg: 0 28px 80px rgba(0, 0, 0, 0.5);
 }

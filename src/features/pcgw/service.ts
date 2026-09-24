@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import type { PcgwLookupResult, PcgwSummary } from '../types/pcgw'
+import { invokeDebug as invoke } from '../../debug'
+import type { PcgwLookupResult, PcgwSummary } from '../../types/pcgw'
 
 /**
  * Look up a PCGamingWiki summary for the given slug. When the local

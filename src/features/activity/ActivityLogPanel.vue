@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '../../components/ui/AppIcon.vue'
 import { dateLocaleFor } from '../../i18n/locale'
 import { activityCopyForLocale } from './copy'
 import { useActivityLogPanel } from './useActivityLogPanel'
@@ -33,82 +34,105 @@ function formatDate(timestamp: number) {
   }).format(new Date(timestamp))
 }
 
+function levelBadge(level: string) {
+  if (level === 'success') return 'badge-success'
+  if (level === 'error') return 'badge-danger'
+  if (level === 'warning') return 'badge-warning'
+  return 'badge-info'
+}
+
+function onToggle(id: string, event: Event) {
+  const isOpen = (event.target as HTMLDetailsElement).open
+  if (isOpen !== expanded.value.has(id)) toggleDetails(id)
+}
+
 async function clearLogs() {
   await clearLogsAction(copy.value.confirmClear)
 }
 </script>
 
 <template>
-  <button class="activity-fab" type="button" @click="openPanel">
-    <span>≡</span>
-    {{ copy.button }}
+  <button class="nav-item" type="button" @click="openPanel">
+    <AppIcon name="activity" />
+    <span>{{ copy.button }}</span>
   </button>
 
-  <div v-if="open" class="activity-backdrop" @click.self="closePanel">
-    <section
-      ref="dialogElement"
-      class="activity-panel"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="copy.title"
-      tabindex="-1"
-    >
-      <header class="activity-header">
-        <div>
-          <small>ACTIVITY</small>
-          <h2>{{ copy.title }}</h2>
-          <p>{{ copy.subtitle }}</p>
-        </div>
-        <button class="activity-icon-button" type="button" :aria-label="copy.close" @click="closePanel">×</button>
-      </header>
+  <Teleport to="body">
+    <div v-if="open" class="dialog-backdrop" @click.self="closePanel">
+      <section
+        ref="dialogElement"
+        class="dialog dialog-lg"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="copy.title"
+        tabindex="-1"
+      >
+        <header class="dialog-header">
+          <div>
+            <h2>{{ copy.title }}</h2>
+            <p class="dialog-description">{{ copy.subtitle }}</p>
+          </div>
+          <button class="btn btn-icon" type="button" :aria-label="copy.close" @click="closePanel">
+            <AppIcon name="close" :size="18" />
+          </button>
+        </header>
 
-      <div class="activity-toolbar">
-        <input v-model="search" type="search" :placeholder="copy.search" />
-        <select v-model="level">
-          <option value="all">{{ copy.all }}</option>
-          <option value="success">{{ copy.success }}</option>
-          <option value="error">{{ copy.error }}</option>
-          <option value="warning">{{ copy.warning }}</option>
-          <option value="info">{{ copy.info }}</option>
-        </select>
-        <button class="activity-secondary" type="button" :disabled="loading" @click="refresh">{{ copy.refresh }}</button>
-        <button class="activity-danger" type="button" :disabled="clearing || logs.length === 0" @click="clearLogs">{{ copy.clear }}</button>
-      </div>
-
-      <p class="activity-storage">{{ copy.storage }}</p>
-      <div v-if="error" class="activity-error">{{ error }}</div>
-      <div v-if="loading && logs.length === 0" class="activity-empty">{{ copy.refresh }}…</div>
-      <div v-else-if="filteredLogs.length === 0" class="activity-empty">{{ copy.empty }}</div>
-
-      <div v-else class="activity-list">
-        <article v-for="entry in filteredLogs" :key="entry.id" class="activity-entry" :class="`level-${entry.level}`">
-          <div class="activity-entry-top">
-            <div class="activity-entry-title">
-              <span class="activity-level">{{ copy[entry.level] }}</span>
-              <strong>{{ entry.action }}</strong>
-              <time>{{ formatDate(entry.timestamp) }}</time>
-            </div>
-            <button
-              v-if="Object.keys(entry.details).length || entry.transactionId || entry.gameId"
-              class="activity-link"
-              type="button"
-              @click="toggleDetails(entry.id)"
-            >
-              {{ copy.details }}
+        <div class="dialog-body">
+          <div class="activity-toolbar">
+            <input v-model="search" class="input" type="search" :placeholder="copy.search" />
+            <select v-model="level" class="select">
+              <option value="all">{{ copy.all }}</option>
+              <option value="success">{{ copy.success }}</option>
+              <option value="error">{{ copy.error }}</option>
+              <option value="warning">{{ copy.warning }}</option>
+              <option value="info">{{ copy.info }}</option>
+            </select>
+            <button class="btn btn-sm" type="button" :disabled="loading" @click="refresh">
+              <AppIcon name="refresh" :size="14" />
+              {{ copy.refresh }}
             </button>
           </div>
 
-          <p>{{ entry.message }}</p>
-
-          <div v-if="expanded.has(entry.id)" class="activity-details">
-            <div v-if="entry.gameId"><span>{{ copy.game }}</span><code>{{ entry.gameId }}</code></div>
-            <div v-if="entry.transactionId"><span>{{ copy.transaction }}</span><code>{{ entry.transactionId }}</code></div>
-            <div v-for="(value, key) in entry.details" :key="key"><span>{{ key }}</span><code>{{ value }}</code></div>
+          <div v-if="error" class="callout callout-danger">{{ error }}</div>
+          <div v-if="loading && logs.length === 0" class="empty-state"><span class="spinner" /></div>
+          <div v-else-if="filteredLogs.length === 0" class="empty-state">
+            <AppIcon name="activity" :size="28" />
+            <span>{{ copy.empty }}</span>
           </div>
-        </article>
-      </div>
-    </section>
-  </div>
+
+          <div v-else class="activity-list">
+            <article v-for="entry in filteredLogs" :key="entry.id" class="activity-entry" :class="`level-${entry.level}`">
+              <div class="activity-entry-top">
+                <span class="badge" :class="levelBadge(entry.level)">{{ copy[entry.level] }}</span>
+                <strong>{{ entry.action }}</strong>
+                <time>{{ formatDate(entry.timestamp) }}</time>
+              </div>
+              <p>{{ entry.message }}</p>
+
+              <details
+                v-if="Object.keys(entry.details).length || entry.transactionId || entry.gameId"
+                class="disclosure activity-details"
+                :open="expanded.has(entry.id)"
+                @toggle="onToggle(entry.id, $event)"
+              >
+                <summary>{{ copy.details }}</summary>
+                <dl>
+                  <div v-if="entry.gameId"><dt>{{ copy.game }}</dt><dd>{{ entry.gameId }}</dd></div>
+                  <div v-if="entry.transactionId"><dt>{{ copy.transaction }}</dt><dd>{{ entry.transactionId }}</dd></div>
+                  <div v-for="(value, key) in entry.details" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></div>
+                </dl>
+              </details>
+            </article>
+          </div>
+        </div>
+
+        <footer class="dialog-footer">
+          <span class="footer-hint">{{ copy.storage }}</span>
+          <button class="btn btn-danger btn-sm" type="button" :disabled="clearing || logs.length === 0" @click="clearLogs">{{ copy.clear }}</button>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped src="./activity-log-panel.css"></style>

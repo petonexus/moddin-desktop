@@ -4,6 +4,31 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Windows `CREATE_NO_WINDOW` process creation flag.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Keeps console helpers (`tasklist`, `reg.exe`, `powershell.exe`, …) from
+/// flashing a terminal window every time Moddin runs them. Only use it for
+/// console tools Moddin drives in the background — never for games or GUI apps
+/// the user expects to see.
+pub trait HideConsole {
+    fn hide_console(&mut self) -> &mut Self;
+}
+
+impl HideConsole for Command {
+    #[cfg(windows)]
+    fn hide_console(&mut self) -> &mut Self {
+        use std::os::windows::process::CommandExt;
+        self.creation_flags(CREATE_NO_WINDOW)
+    }
+
+    #[cfg(not(windows))]
+    fn hide_console(&mut self) -> &mut Self {
+        self
+    }
+}
+
 const PROCESS_SNAPSHOT_TTL: Duration = Duration::from_millis(750);
 
 struct ProcessSnapshot {
@@ -32,6 +57,7 @@ fn snapshot_contains(tasklist_csv: &str, image_name: &str) -> bool {
 
 fn capture_tasklist_csv() -> Option<String> {
     let output = Command::new("tasklist")
+        .hide_console()
         .args(["/FO", "CSV", "/NH"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

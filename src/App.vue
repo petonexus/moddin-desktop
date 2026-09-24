@@ -18,8 +18,16 @@ import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortc
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
 import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
+import AppIcon from './components/ui/AppIcon.vue'
+import BaseDialog from './components/ui/BaseDialog.vue'
+import ChangePreview from './components/ui/ChangePreview.vue'
+import ToastStack from './components/ui/ToastStack.vue'
+import GlobalTools from './components/shell/GlobalTools.vue'
+import GameList from './features/library/GameList.vue'
+import ModuleCard, { type ModuleCardState, type ModuleCardUpdate } from './features/library/ModuleCard.vue'
+import HistoryView from './features/history/HistoryView.vue'
 
-type ViewName = 'library' | 'transactions'
+type ViewName = 'library' | 'history'
 type CheekyResearchState = 'experimental' | 'prerequisite'
 type ModuleFilter = 'all' | ModuleCategory
 
@@ -43,11 +51,12 @@ const inspectionError = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const success = ref<string | null>(null)
 const search = ref('')
-const supportedOnly = ref(false)
+const supportedOnly = ref(true)
 const activeModuleFilter = ref<ModuleFilter>('all')
 const selectedAppId = ref<string | null>(null)
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
+const busyModuleId = ref<string | null>(null)
 const verificationBusyKey = ref<string | null>(null)
 const verificationBusyKeys = ref(new Set<string>())
 const rollbackBusyId = ref<string | null>(null)
@@ -102,8 +111,22 @@ const moduleCategories: ModuleCategory[] = ['vr', 'graphics', 'qol', 'system']
 const { t, locale } = useI18n()
 
 function storeLabel(store: InstalledGame['store']) {
-  return store === 'epic' ? t('storeEpic') : t('storeSteam')
+  if (store === 'epic') return t('storeEpic')
+  if (store === 'gog') return t('storeGog')
+  return t('storeSteam')
 }
+
+function gameDisplayName(game: InstalledGame) {
+  return findCatalogGameByInstalledGame(game)?.name ?? game.name
+}
+
+function catalogModCount(game: InstalledGame) {
+  return findCatalogGameByInstalledGame(game)?.modules.filter((module) => module.status === 'available').length ?? 0
+}
+
+const blockedReason = computed(() => (selectedGameRunning.value ? t('gameRunningBlocked') : undefined))
+const dialogBlocked = computed(() => moduleBusy.value || inspectionLoading.value || selectedGameRunning.value)
+const activeTransactionCount = computed(() => transactions.value.filter((item) => item.status === 'applied').length)
 
 const supportedInstalledGames = computed(() =>
   installedGames.value.filter((game) => findCatalogGameByInstalledGame(game)),
@@ -171,16 +194,53 @@ const primaryModule = computed(() => {
     ?? null
 })
 
-const moduleStatusSummary = computed(() => {
-  const modules = selectedGame.value?.catalog?.modules ?? []
-  const statuses = modules.map((module) => moduleVerification(module)?.status ?? 'unknown')
+const moduleProgress = computed(() => {
+  const states = (selectedGame.value?.catalog?.modules ?? [])
+    .filter((module) => module.status === 'available')
+    .map(moduleCardState)
   return {
-    unknown: statuses.filter((status) => status === 'unknown').length,
-    installed: statuses.filter((status) => status === 'installed').length,
-    ready: statuses.filter((status) => status === 'ready').length,
-    attention: statuses.filter((status) => status === 'attention').length,
+    total: states.length,
+    active: states.filter((state) => state === 'active').length,
+    attention: states.filter((state) => state === 'attention').length,
+    checking: states.includes('checking'),
   }
 })
+
+function moduleCardState(module: ToolModuleDefinition): ModuleCardState {
+  if (module.status !== 'available') return 'planned'
+  const verification = moduleVerification(module)
+  if (!verification) return moduleVerificationPending(module) ? 'checking' : 'unknown'
+  if (verification.status === 'installed') return 'active'
+  if (verification.status === 'ready') return 'available'
+  if (verification.status === 'attention') return 'attention'
+  return 'unknown'
+}
+
+function moduleCardTag(module: ToolModuleDefinition): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } | null {
+  if (module.id !== 'cheeky-foveated-dlss') return null
+  const status = compatibilityStatus(module)
+  const tone = status === 'proven' ? 'success' : status === 'experimental' ? 'warning' : status === 'unverified' ? 'neutral' : 'danger'
+  return { label: compatibilityStatusLabel(status), tone }
+}
+
+function moduleCardUpdate(module: ToolModuleDefinition): ModuleCardUpdate | null {
+  // Hide the whole update area when the recipe has nowhere to look; showing
+  // "no update source" on every card was noise the user could not act on.
+  if (module.status !== 'available' || !moduleHasUpdateSource(module)) return null
+  const update = moduleUpdate(module)
+  const available = update?.status === 'available'
+  return {
+    hasSource: true,
+    available,
+    summary: available ? t('updateAvailableShort', { version: update?.latestVersion ?? '?' }) : moduleUpdateSummary(module),
+    releaseUrl: update?.releaseUrl ?? null,
+    busy: moduleUpdateBusy(module),
+  }
+}
+
+function moduleRemoveLabel(module: ToolModuleDefinition) {
+  return module.status === 'available' && activeModuleTransaction(module) ? t('actionRemove') : null
+}
 
 const availableModuleCategories = computed(() => {
   const modules = selectedGame.value?.catalog?.modules ?? []
@@ -202,22 +262,34 @@ function moduleCategoryCount(category: ModuleCategory) {
   return (selectedGame.value?.catalog?.modules ?? []).filter((module) => module.category === category).length
 }
 
-function moduleChecklistSummary(module: ToolModuleDefinition) {
-  const verification = moduleVerification(module)
-  if (!verification) return t('verificationNotChecked')
-  const passed = verification.checks.filter((item) => item.passed).length
-  return t('checksSummary', { passed, total: verification.checks.length })
+const localizedModuleNames: Record<string, string> = {
+  'vr-launch': 'moduleVrLaunch',
+  'obs-vr': 'moduleObsVr',
+  optiscaler: 'moduleOptiScaler',
+  'ofxr-framegen': 'moduleOfxr',
+  'cheeky-foveated-dlss': 'moduleCheeky',
+  uevr: 'moduleUevr',
+  openxr: 'moduleOpenXr',
+  'desktop-shortcut': 'moduleDesktopShortcut',
+}
+
+function moduleNameById(id: string, fallback = id) {
+  const key = localizedModuleNames[id]
+  return key ? t(key) : fallback
 }
 
 function moduleName(module: ToolModuleDefinition) {
-  if (module.id === 'vr-launch') return t('moduleVrLaunch')
-  if (module.id === 'obs-vr') return t('moduleObsVr')
-  if (module.id === 'optiscaler') return t('moduleOptiScaler')
-  if (module.id === 'ofxr-framegen') return t('moduleOfxr')
-  if (module.id === 'cheeky-foveated-dlss') return t('moduleCheeky')
-  if (module.id === 'uevr') return t('moduleUevr')
-  if (module.id === 'openxr') return t('moduleOpenXr')
-  return module.name
+  return moduleNameById(module.id, module.name)
+}
+
+function gameNameById(gameId: string) {
+  return gameCatalog.find((game) => game.id === gameId)?.name ?? gameId
+}
+
+function transactionBlockedReason(transaction: TransactionRecord) {
+  return selectedGameRunning.value && transaction.gameId === selectedGame.value?.catalog?.id
+    ? t('gameRunningBlocked')
+    : undefined
 }
 
 function moduleDescription(module: ToolModuleDefinition) {
@@ -233,12 +305,6 @@ function moduleDescription(module: ToolModuleDefinition) {
 
 function categoryLabel(category: ToolModuleDefinition['category']) {
   return t(`category${category.charAt(0).toUpperCase()}${category.slice(1)}`)
-}
-
-function statusLabel(status: TransactionRecord['status']) {
-  if (status === 'applied') return t('statusApplied')
-  if (status === 'rolled_back') return t('statusRolledBack')
-  return status
 }
 
 function moduleKey(module: ToolModuleDefinition) {
@@ -346,16 +412,8 @@ function cheekyCompatibilityEvidence() {
 function cheekyGameCompatibilityNote(module: ToolModuleDefinition) {
   if (module.id !== 'cheeky-foveated-dlss') return ''
   const gameId = selectedGame.value?.catalog?.id
-  if (locale.value === 'pt-BR') {
-    if (gameId === 'cyberpunk-2077') return 'Cyberpunk 2077 foi citado pelo autor como não testado.'
-    if (gameId === 'elden-ring') return 'Elden Ring não aparece na lista oficial de jogos testados.'
-  } else if (locale.value === 'es') {
-    if (gameId === 'cyberpunk-2077') return 'El autor indicó que Cyberpunk 2077 no había sido probado.'
-    if (gameId === 'elden-ring') return 'Elden Ring no aparece en la lista oficial de juegos probados.'
-  } else {
-    if (gameId === 'cyberpunk-2077') return 'The author described Cyberpunk 2077 as untested.'
-    if (gameId === 'elden-ring') return 'Elden Ring is not on the official tested-games list.'
-  }
+  if (gameId === 'cyberpunk-2077') return t('cheekyNoteCyberpunk')
+  if (gameId === 'elden-ring') return t('cheekyNoteEldenRing')
   return ''
 }
 
@@ -455,30 +513,22 @@ function moduleUpdateBusy(module: ToolModuleDefinition) {
   return updateBusyKeys.value.has(moduleKey(module))
 }
 
-function moduleUpdateLabel(status: ModuleUpdate['status']) {
-  if (status === 'available') return t('updateAvailable')
-  if (status === 'current') return t('updateCurrent')
-  if (status === 'unavailable') return t('updatesNotConfigured')
-  if (status === 'error') return t('updateCheckFailed')
-  return t('updatesNotChecked')
-}
-
 function moduleUpdateSummary(module: ToolModuleDefinition) {
   const update = moduleUpdate(module)
-  if (!moduleHasUpdateSource(module)) return t('updatesNotConfigured')
-  if (!update) return t('updatesNotChecked')
+  if (!moduleHasUpdateSource(module)) return t('updateNoSource')
+  if (!update) return t('updateNotChecked')
   if (update.status === 'available') {
     return t('updateAvailableSummary', { version: update.latestVersion ?? '?' })
   }
   if (update.status === 'current') {
     return t('updateCurrentSummary', { version: update.latestVersion ?? update.currentVersion ?? '?' })
   }
-  if (update.status === 'unavailable') return t('updatesNotConfigured')
-  if (update.status === 'error') return t('updateCheckFailed')
+  if (update.status === 'unavailable') return t('updateNoSource')
+  if (update.status === 'error') return t('updateFailed')
   if (update.status === 'unknown' && update.latestVersion) {
-    return t('updateVersionUnknownSummary', { version: update.latestVersion })
+    return t('updateUnknownLocalSummary', { version: update.latestVersion })
   }
-  return t('updateVersionUnknown')
+  return t('updateUnknownLocal')
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -495,21 +545,20 @@ function moduleActionsBlocked(module: ToolModuleDefinition) {
     || selectedGameRunning.value
 }
 
-function verificationStatusLabel(status: ModuleVerification['status']) {
-  if (status === 'installed') return t('verificationInstalled')
-  if (status === 'ready') return t('verificationReady')
-  if (status === 'attention') return t('verificationAttention')
-  return t('verificationNotChecked')
+function moduleActionLabel(module: ToolModuleDefinition) {
+  if (module.status !== 'available') return t('statePlanned')
+  if (busyModuleId.value === module.id) return t('actionOpening')
+  if (module.id === 'vr-launch') return t('actionLaunchVr')
+  if (module.id === 'desktop-shortcut') return t('actionCreateShortcut')
+  if (moduleVerification(module)?.status === 'installed') {
+    return module.id === 'optiscaler' || module.id === 'uevr' ? t('actionReinstall') : t('actionApplyAgain')
+  }
+  return t('actionInstall')
 }
 
-function moduleActionLabel(module: ToolModuleDefinition) {
-  const verification = moduleVerification(module)
-  if (module.id === 'vr-launch') return t('reviewAndLaunch')
-  if (module.id === 'desktop-shortcut') return module.name
-  if (verification?.status === 'installed') {
-    return module.id === 'optiscaler' || module.id === 'uevr' ? t('reinstall') : t('applyAgain')
-  }
-  return t('configure')
+function moduleActionPrimary(module: ToolModuleDefinition) {
+  // Once a mod is active, re-running it is a secondary gesture.
+  return module.id === 'vr-launch' || moduleVerification(module)?.status !== 'installed'
 }
 
 function moduleTransactionKind(module: ToolModuleDefinition) {
@@ -577,6 +626,7 @@ async function refreshGames() {
   error.value = null
   try {
     installedGames.value = await invoke<InstalledGame[]>('detect_installed_games')
+    if (!supportedInstalledGames.value.length) supportedOnly.value = false
     if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
       selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
     } else {
@@ -667,26 +717,8 @@ function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
 }
 
 function optiScalerSafetyNotes(gameId: string): string[] {
-  if (locale.value === 'pt-BR') {
-    const notes = ['Não use OptiScaler em sessões online com anti-cheat. Feche o jogo antes de instalar ou reverter arquivos.']
-    if (gameId === 'elden-ring') {
-      notes.push('No Elden Ring, o OptiScaler requer um mod que forneça entradas de upscaling/FG, como o ERSS-FG; o jogo vanilla não fornece essas entradas.')
-    }
-    return notes
-  }
-
-  if (locale.value === 'es') {
-    const notes = ['No uses OptiScaler en sesiones online con anti-cheat. Cierra el juego antes de instalar o revertir archivos.']
-    if (gameId === 'elden-ring') {
-      notes.push('En Elden Ring, OptiScaler requiere un mod que proporcione entradas de escalado/FG, como ERSS-FG; el juego vanilla no ofrece esas entradas.')
-    }
-    return notes
-  }
-
-  const notes = ['Do not use OptiScaler in online sessions with anti-cheat. Close the game before installing or rolling files back.']
-  if (gameId === 'elden-ring') {
-    notes.push('On Elden Ring, OptiScaler requires a mod that provides upscaler/FG inputs, such as ERSS-FG; the vanilla game does not provide those inputs.')
-  }
+  const notes = [t('optiSafetyOnline')]
+  if (gameId === 'elden-ring') notes.push(t('optiSafetyEldenRing'))
   return notes
 }
 
@@ -718,30 +750,7 @@ function buildOptiScalerRequest(module: ToolModuleDefinition): OptiScalerRequest
 }
 
 function cheekySafetyNotes(): string[] {
-  if (locale.value === 'pt-BR') {
-    return [
-      'Requer ReShade 64-bit com suporte completo a add-ons instalado no mesmo jogo.',
-      'Para VR em OpenXR, execute o CheekyOpenXRSetup.exe da mesma release uma vez; o Moddin não executa instaladores de terceiros automaticamente.',
-      'Não use o add-on do ReShade junto com o plugin UEVR do Cheeky no mesmo jogo.',
-      'Ative DLSS no jogo e ajuste a foveação pelo painel do ReShade depois da instalação.',
-    ]
-  }
-
-  if (locale.value === 'es') {
-    return [
-      'Requiere ReShade de 64 bits con soporte completo de add-ons instalado en el mismo juego.',
-      'Para VR en OpenXR, ejecuta una vez CheekyOpenXRSetup.exe de la misma release; Moddin no ejecuta instaladores de terceros automáticamente.',
-      'No uses el add-on de ReShade junto con el plugin UEVR de Cheeky en el mismo juego.',
-      'Activa DLSS en el juego y ajusta la foveación desde el panel de ReShade después de instalarlo.',
-    ]
-  }
-
-  return [
-    'Requires 64-bit ReShade with full add-on support installed for the same game.',
-    'For OpenXR VR, run CheekyOpenXRSetup.exe from the matching release once; Moddin does not run third-party installers automatically.',
-    'Do not use the Cheeky ReShade add-on together with the Cheeky UEVR plugin in the same game.',
-    'Enable DLSS in the game and tune foveation through the ReShade panel after installation.',
-  ]
+  return [t('cheekySafetyReshade'), t('cheekySafetyOpenXr'), t('cheekySafetyOneIntegration'), t('cheekySafetyEnableDlss')]
 }
 
 function buildCheekyRequest(module: ToolModuleDefinition): CheekyFoveatedDlssRequest | null {
@@ -779,6 +788,15 @@ async function configureModule(module: ToolModuleDefinition) {
     return
   }
 
+  busyModuleId.value = module.id
+  try {
+    await openModulePreview(module)
+  } finally {
+    busyModuleId.value = null
+  }
+}
+
+async function openModulePreview(module: ToolModuleDefinition) {
   if (await desktopShortcut.open(module, selectedGame.value)) return
 
   const vrRequest = buildVrLaunchRequest(module)
@@ -864,10 +882,8 @@ async function launchVrGame() {
       ofxrRequest,
     })
     vrLaunchDialog.value = null
-    success.value = t('vrLaunchSuccess', { game: request.gameName, pid: result.processId })
-    if (result.transaction) {
-      success.value += ` ${t('vrConfigBackupCreated', { id: `${result.transaction.id.slice(0, 13)}…` })}`
-    }
+    success.value = t('vrLaunchSuccess', { game: request.gameName })
+    if (result.transaction) success.value += ` ${t('vrConfigSaved')}`
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -894,10 +910,7 @@ async function applyObsConfiguration() {
       request: obsDialog.value.request,
     })
     obsDialog.value = null
-    success.value = t('configuredSuccess', {
-      source: configuredSource,
-      id: `${transaction.id.slice(0, 13)}…`,
-    })
+    success.value = t('installSuccess', { name: configuredSource })
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -922,10 +935,7 @@ async function applyOptiScaler() {
     const request = optiScalerDialog.value.request
     const transaction = await invoke<TransactionRecord>('install_optiscaler', { request })
     optiScalerDialog.value = null
-    success.value = t('configuredSuccess', {
-      source: `OptiScaler ${request.version}`,
-      id: `${transaction.id.slice(0, 13)}…`,
-    })
+    success.value = t('installSuccess', { name: `OptiScaler ${request.version}` })
     await refreshTransactions()
     await inspectSelectedGame()
     await verifyAvailableModules()
@@ -953,11 +963,8 @@ async function applyOfxr() {
     if (!result.armed) throw new Error(t('ofxrActivationFailed'))
     ofxrDialog.value = null
     success.value = result.transaction
-      ? t('configuredSuccess', {
-          source: `OFXR Bridge ${request.version}`,
-          id: `${result.transaction.id.slice(0, 13)}â€¦`,
-        })
-      : t('ofxrConfiguredState')
+      ? t('installSuccess', { name: moduleNameById('ofxr-framegen') })
+      : t('ofxrReadyForLaunch')
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -982,10 +989,7 @@ async function applyCheeky() {
     const request = cheekyDialog.value.request
     const transaction = await invoke<CheekyFoveatedDlssResult>('install_cheeky_foveated_dlss', { request })
     cheekyDialog.value = null
-    success.value = t('configuredSuccess', {
-      source: `Cheeky Foveated DLSS ${request.version}`,
-      id: `${transaction.id.slice(0, 13)}…`,
-    })
+    success.value = t('installSuccess', { name: moduleNameById('cheeky-foveated-dlss') })
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -1010,10 +1014,7 @@ async function applyUevr() {
     const request = uevrDialog.value.request
     const transaction = await invoke<UevrResult>('install_uevr', { request })
     uevrDialog.value = null
-    success.value = t('configuredSuccess', {
-      source: `${uevrBackendLabel(request.backend)} ${transaction.metadata?.version ?? ''}`.trim(),
-      id: `${transaction.id.slice(0, 13)}…`,
-    })
+    success.value = t('installSuccess', { name: `${uevrBackendLabel(request.backend)} ${transaction.metadata?.version ?? ''}`.trim() })
     await refreshTransactions()
     await verifyAvailableModules()
   } catch (err) {
@@ -1047,8 +1048,8 @@ async function rollback(transaction: TransactionRecord) {
 
 function formatTransactionDate(timestamp: number) {
   return new Intl.DateTimeFormat(locale.value, {
-    dateStyle: 'short',
-    timeStyle: 'medium',
+    dateStyle: 'medium',
+    timeStyle: 'short',
   }).format(new Date(timestamp))
 }
 
@@ -1293,7 +1294,7 @@ async function verifyModule(
         check(t('checkGameClosed'), !preview.gameRunning),
         check(t('checkManagedInstall'), !preview.manualInstallDetected),
         check(t('checkProxyAvailable'), Boolean(preview.selectedProxy)),
-        check(t('checkVersion'), installed, preview.installed ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+        check(t('checkVersion'), installed, preview.installed ? t('installedVersion', { version: preview.installedVersion }) : undefined),
       ], preview.gameRunning, expectedAppId, expectedGeneration)
     } else if (module.id === 'vr-launch') {
       const request = buildVrLaunchRequest(module)
@@ -1333,7 +1334,7 @@ async function verifyModule(
       saveModuleVerification(module, status, verificationSummary(status), [
         check(t('checkExecutable'), preview.executableExists),
         check(t('checkOfxrInstalled'), preview.installed && preview.trayInstalled),
-        check(t('checkVersion'), preview.installed && preview.installedVersion === request.version, preview.installedVersion ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+        check(t('checkVersion'), preview.installed && preview.installedVersion === request.version, preview.installedVersion ? t('installedVersion', { version: preview.installedVersion }) : undefined),
         check(t('checkOfxrConfig'), preview.configured),
         check(t('checkOfxrTray'), preview.trayRunning),
         check(t('checkOfxrArmed'), preview.armed),
@@ -1354,7 +1355,7 @@ async function verifyModule(
         check(t('checkGameClosed'), !preview.gameRunning),
         check(t('checkManagedInstall'), !preview.manualInstallDetected),
         check(t('checkCheekyAddon'), preview.installed),
-        check(t('checkVersion'), installed, preview.installed ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+        check(t('checkVersion'), installed, preview.installed ? t('installedVersion', { version: preview.installedVersion }) : undefined),
       ], preview.gameRunning, expectedAppId, expectedGeneration)
     } else if (module.id === 'uevr') {
       const request = buildUevrRequest(module)
@@ -1375,7 +1376,7 @@ async function verifyModule(
         check(t('checkUevrBackend'), preview.selectedVersion !== null, preview.backendLabel),
         check(t('checkGameClosed'), !preview.gameRunning && !preview.uevrRunning),
         check(t('checkManagedInstall'), !preview.manualInstallDetected),
-        check(t('checkVersion'), installed, preview.installedVersion ? `${t('installedVersion')}: ${preview.installedVersion}` : undefined),
+        check(t('checkVersion'), installed, preview.installedVersion ? t('installedVersion', { version: preview.installedVersion }) : undefined),
       ], preview.gameRunning || preview.uevrRunning, expectedAppId, expectedGeneration)
     }
 
@@ -1450,7 +1451,7 @@ async function checkModuleUpdate(
         const preview = await withTimeout(
           invoke<OptiScalerPreview>('preview_optiscaler', { request }),
           UPDATE_CHECK_TIMEOUT_MS,
-          'OptiScaler update check timed out.',
+          t('updateFailed'),
         )
         currentVersion = preview.installedVersion ?? request.version
       }
@@ -1461,7 +1462,7 @@ async function checkModuleUpdate(
         const preview = await withTimeout(
           invoke<OfxrPreview>('preview_ofxr', { request }),
           UPDATE_CHECK_TIMEOUT_MS,
-          'OFXR update check timed out.',
+          t('updateFailed'),
         )
         currentVersion = preview.installedVersion ?? request.version
       }
@@ -1472,7 +1473,7 @@ async function checkModuleUpdate(
         const preview = await withTimeout(
           invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request }),
           UPDATE_CHECK_TIMEOUT_MS,
-          'Cheeky Foveated DLSS update check timed out.',
+          t('updateFailed'),
         )
         currentVersion = preview.installedVersion ?? request.version
       }
@@ -1481,7 +1482,7 @@ async function checkModuleUpdate(
 
     const result = await withTimeout(invoke<ModuleUpdate>('check_module_update', {
       request: { currentVersion, updateUrl },
-    }), UPDATE_CHECK_TIMEOUT_MS, 'The update check timed out. Please try again.')
+    }), UPDATE_CHECK_TIMEOUT_MS, t('updateFailed'))
     if (selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
       moduleUpdates.value[key] = { ...result, checkedAt: Date.now() }
     }
@@ -1576,7 +1577,7 @@ async function switchView(view: ViewName) {
   activeView.value = view
   actionError.value = null
   success.value = null
-  if (view === 'transactions') await refreshTransactions()
+  if (view === 'history') await refreshTransactions()
 }
 
 function clearSelectionWorkTimers() {
@@ -1617,7 +1618,10 @@ function scheduleGameStatePoll() {
     gameStatePoll = null
     const expectedAppId = selectedAppId.value
     const expectedGeneration = selectionGeneration
-    if (activeView.value === 'library' && gameContextForAppId(expectedAppId)) {
+    // Skip the process check while the window is minimised or hidden: nobody
+    // is looking, and each check spawns a helper process on Windows.
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible'
+    if (visible && activeView.value === 'library' && gameContextForAppId(expectedAppId)) {
       await inspectSelectedGame(true, expectedAppId, expectedGeneration)
     }
     scheduleGameStatePoll()
@@ -1663,1047 +1667,626 @@ onUnmounted(() => {
   <div class="app-shell" :lang="locale">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">M</div>
+        <div class="brand-mark" aria-hidden="true">M</div>
         <div>
           <strong>Moddin</strong>
-          <span>{{ t('brandTagline') }}</span>
+          <small>{{ t('brandTagline') }}</small>
         </div>
       </div>
 
-      <nav class="nav-list">
-        <button class="nav-item" :class="{ active: activeView === 'library' }" @click="switchView('library')">
-          {{ t('library') }}
+      <nav class="nav-section" :aria-label="t('navMain')">
+        <button
+          class="nav-item"
+          type="button"
+          :aria-current="activeView === 'library' ? 'page' : undefined"
+          @click="switchView('library')"
+        >
+          <AppIcon name="library" />
+          <span>{{ t('navLibrary') }}</span>
+          <span v-if="supportedInstalledGames.length" class="nav-count">{{ supportedInstalledGames.length }}</span>
         </button>
-        <button class="nav-item" :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')">
-          {{ t('transactions') }}
+        <button
+          class="nav-item"
+          type="button"
+          :aria-current="activeView === 'history' ? 'page' : undefined"
+          @click="switchView('history')"
+        >
+          <AppIcon name="history" />
+          <span>{{ t('navHistory') }}</span>
+          <span v-if="activeTransactionCount" class="nav-count">{{ activeTransactionCount }}</span>
         </button>
       </nav>
 
-      <div class="sidebar-footer">
-        <label class="language-control">
-          <span>{{ t('language') }}</span>
-          <select v-model="locale">
+      <div class="nav-section">
+        <span class="nav-label">{{ t('navTools') }}</span>
+        <GlobalTools />
+      </div>
+
+      <footer class="sidebar-footer">
+        <label>
+          <span class="sr-only">{{ t('language') }}</span>
+          <select v-model="locale" class="select">
             <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <span>{{ t('bootstrap') }}</span>
-        <small>{{ t('catalogGames', { count: gameCatalog.length }) }}</small>
-      </div>
+        <small>{{ t('appVersion', { version: '0.1.0', count: gameCatalog.length }) }}</small>
+      </footer>
     </aside>
 
     <main class="main-content">
-      <div class="notification-stack" aria-live="polite">
-        <div v-if="success" class="success-banner">
-          <strong>{{ t('done') }}</strong>
-          <span>{{ success }}</span>
-        </div>
-        <div v-if="actionError" class="error-banner">
-          <strong>{{ t('actionFailed') }}</strong>
-          <span>{{ actionError }}</span>
-        </div>
-      </div>
-
-      <section v-if="activeView === 'library'" class="library-view">
-        <header class="topbar">
+      <section v-if="activeView === 'library'" class="page">
+        <div v-if="error" class="callout callout-danger" role="alert">
+          <AppIcon class="callout-icon" name="alert" />
           <div>
-            <p class="eyebrow">{{ t('localLibrary') }}</p>
-            <h1>{{ t('installedGames') }}</h1>
-            <p class="subtle">
-              {{ t('detectedSupported', { detected: installedGames.length, supported: supportedInstalledGames.length }) }}
-            </p>
+            <strong>{{ t('libraryScanFailed') }}</strong>
+            <p>{{ error }}</p>
           </div>
-          <button class="secondary-button" :class="{ 'is-loading': loading }" :disabled="loading" @click="refreshGames">
-            {{ loading ? t('scanning') : t('rescanLibraries') }}
-          </button>
-        </header>
-
-        <div class="library-controls">
-          <div class="game-filter-control" :aria-label="t('supportedOnly')">
-            <button
-              class="filter-button"
-              :class="{ active: !supportedOnly }"
-              :aria-pressed="!supportedOnly"
-              @click="supportedOnly = false"
-            >
-              {{ t('allGames') }}
-            </button>
-            <button
-              class="filter-button"
-              :class="{ active: supportedOnly }"
-              :aria-pressed="supportedOnly"
-              @click="supportedOnly = true"
-            >
-              {{ t('supportedOnly') }}
-            </button>
-          </div>
-          <input v-model="search" type="search" :placeholder="t('searchPlaceholder')" />
         </div>
 
-        <div v-if="error" class="error-banner">
-          <strong>{{ t('libraryScanFailed') }}</strong>
-          <span>{{ error }}</span>
-        </div>
+        <div class="library-layout">
+          <GameList
+            v-model:search="search"
+            v-model:supported-only="supportedOnly"
+            :games="filteredGames"
+            :selected-app-id="selectedAppId"
+            :loading="loading"
+            :total-count="installedGames.length"
+            :supported-count="supportedInstalledGames.length"
+            :mod-count="catalogModCount"
+            :display-name="gameDisplayName"
+            @select="selectedAppId = $event"
+            @rescan="refreshGames"
+          />
 
-        <section class="workspace">
-          <div class="game-list-panel">
-            <div class="panel-heading">
-              <div>
-                <span>{{ supportedOnly ? t('supportedOnly') : t('allGames') }}</span>
-                <strong>{{ t('shownGames', { count: filteredGames.length }) }}</strong>
-              </div>
-            </div>
-            <div v-if="loading" class="empty-state">
-              <span class="loading-state" role="status" aria-live="polite">
-                <span class="loading-spinner" aria-hidden="true"></span>
-                {{ t('scanningLibraries') }}
-              </span>
-            </div>
-            <div v-else-if="filteredGames.length === 0" class="empty-state">{{ t('noGamesFound') }}</div>
-
-            <button
-              v-for="game in filteredGames"
-              :key="game.appId"
-              class="game-row"
-              :class="{ selected: selectedAppId === game.appId }"
-              @click="selectedAppId = game.appId"
-            >
-              <div class="game-icon">{{ game.name.slice(0, 1).toUpperCase() }}</div>
-              <div class="game-copy">
-                <strong>{{ game.name }}</strong>
-                <span>{{ game.installDir }}</span>
-              </div>
-              <span v-if="findCatalogGameByInstalledGame(game)" class="status supported">{{ t('supported') }}</span>
-              <span v-else class="status unsupported">{{ t('detected') }}</span>
-            </button>
-          </div>
-
-          <div class="details-panel">
-            <div v-if="!selectedGame" class="empty-state details-empty">
-              {{ t('selectGame') }}
+          <div class="panel game-detail">
+            <div v-if="!selectedGame" class="empty-state game-detail-empty">
+              <AppIcon name="gamepad" :size="32" />
+              <strong>{{ t('selectGameTitle') }}</strong>
+              <span>{{ t('selectGameHint') }}</span>
             </div>
 
             <template v-else>
-              <div class="details-header">
-                <div>
-                  <p class="eyebrow">{{ t('storeApp', { store: storeLabel(selectedGame.installed.store), id: selectedGame.installed.appId }) }}</p>
-                  <h2>{{ selectedGame.installed.name }}</h2>
-                  <p class="path">{{ selectedGame.installed.installDir }}</p>
+              <header class="game-hero">
+                <div class="game-hero-copy">
+                  <p class="overline">{{ storeLabel(selectedGame.installed.store) }}</p>
+                  <h1>{{ selectedGame.catalog?.name ?? selectedGame.installed.name }}</h1>
+                  <div v-if="selectedGame.catalog && moduleProgress.total" class="game-progress">
+                    <div class="progress-track" aria-hidden="true">
+                      <span :style="{ width: `${(moduleProgress.active / moduleProgress.total) * 100}%` }" />
+                    </div>
+                    <span>{{ t('progressSummary', { active: moduleProgress.active, total: moduleProgress.total }) }}</span>
+                    <span v-if="moduleProgress.attention" class="badge badge-warning">
+                      {{ t('progressAttention', { count: moduleProgress.attention }, moduleProgress.attention) }}
+                    </span>
+                    <span v-else-if="moduleProgress.checking" class="badge is-loading">{{ t('progressChecking') }}</span>
+                  </div>
                 </div>
-                <div class="details-header-actions">
-                  <span v-if="selectedGame.catalog" class="status supported">{{ t('catalogMatch') }}</span>
-                  <span v-else class="status unsupported">{{ t('noRecipes') }}</span>
-                  <button
-                    v-if="primaryModule"
-                    class="primary-button"
-                    :class="{ 'is-loading': moduleBusy }"
-                    :disabled="moduleActionsBlocked(primaryModule)"
-                    :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
-                    @click="configureModule(primaryModule)"
-                  >
-                    {{ moduleBusy ? t('checking') : moduleActionLabel(primaryModule) }}
-                  </button>
+                <button
+                  v-if="primaryModule?.id === 'vr-launch'"
+                  class="btn btn-primary btn-lg"
+                  :class="{ 'is-loading': busyModuleId === primaryModule.id }"
+                  type="button"
+                  :disabled="moduleActionsBlocked(primaryModule)"
+                  :title="blockedReason"
+                  @click="configureModule(primaryModule)"
+                >
+                  <AppIcon v-if="busyModuleId !== primaryModule.id" name="play" />
+                  {{ moduleActionLabel(primaryModule) }}
+                </button>
+              </header>
+
+              <div v-if="selectedGameRunning" class="callout callout-warning" role="status">
+                <AppIcon class="callout-icon" name="info" />
+                <div>
+                  <strong>{{ t('gameRunningTitle') }}</strong>
+                  <p>{{ t('gameRunningHint') }}</p>
                 </div>
               </div>
 
               <template v-if="selectedGame.catalog">
-                <section class="setup-overview-section" :aria-label="t('setupOverview')">
-                  <div class="overview-heading">
-                    <h3>{{ t('setupOverview') }}</h3>
-                    <span>{{ selectedGame.catalog.modules.length }} {{ t('modules') }}</span>
-                  </div>
-                  <div class="setup-overview">
-                    <div class="setup-stat">
-                      <span>{{ t('verificationNotChecked') }}</span>
-                      <strong>{{ moduleStatusSummary.unknown }}</strong>
+                <section class="mods-section">
+                  <div class="section-heading">
+                    <div>
+                      <h2>{{ t('modsTitle') }}</h2>
+                      <p>{{ t('modsSubtitle') }}</p>
                     </div>
-                    <div class="setup-stat configured">
-                      <span>{{ t('verificationInstalled') }}</span>
-                      <strong>{{ moduleStatusSummary.installed }}</strong>
-                    </div>
-                    <div class="setup-stat ready">
-                      <span>{{ t('verificationReady') }}</span>
-                      <strong>{{ moduleStatusSummary.ready }}</strong>
-                    </div>
-                    <div class="setup-stat attention">
-                      <span>{{ t('verificationAttention') }}</span>
-                      <strong>{{ moduleStatusSummary.attention }}</strong>
-                    </div>
-                  </div>
-                </section>
-
-                <div class="section-title module-section-title">
-                  <div>
-                    <h3>{{ t('toolsRecipes') }}</h3>
-                    <p>{{ t('previewChanges') }}</p>
-                  </div>
-                  <div class="module-filter-control" :aria-label="t('filterTools')">
-                    <button
-                      class="filter-button"
-                      :class="{ active: activeModuleFilter === 'all' }"
-                      :aria-pressed="activeModuleFilter === 'all'"
-                      @click="activeModuleFilter = 'all'"
-                    >
-                      {{ t('allTools') }}
-                    </button>
-                    <button
-                      v-for="category in availableModuleCategories"
-                      :key="category"
-                      class="filter-button"
-                      :class="{ active: activeModuleFilter === category }"
-                      :aria-pressed="activeModuleFilter === category"
-                      @click="activeModuleFilter = category"
-                    >
-                      {{ categoryLabel(category) }} {{ moduleCategoryCount(category) }}
-                    </button>
-                  </div>
-                </div>
-
-                <div v-if="selectedGameRunning" class="game-running-banner">
-                  <strong>{{ t('gameRunningBanner') }}</strong>
-                </div>
-
-                <div class="module-groups">
-                  <section v-for="group in moduleGroups" :key="group.category" class="module-group">
-                    <header class="module-group-heading">
-                      <h4>{{ categoryLabel(group.category) }}</h4>
-                      <span>{{ group.modules.length }} {{ t('modules') }}</span>
-                    </header>
-
-                    <div class="module-grid">
-                      <article v-for="module in group.modules" :key="module.id" class="module-card">
-                    <div class="module-topline">
-                      <div class="module-states">
-                        <span
-                          v-if="moduleVerification(module)?.status !== 'installed'"
-                          class="module-state"
-                          :class="module.status"
-                        >
-                          {{ t(module.status) }}
-                        </span>
-                        <span
-                          v-if="moduleVerificationPending(module)"
-                          class="module-loading-state"
-                          role="status"
-                          aria-live="polite"
-                        >
-                          <span class="loading-spinner" aria-hidden="true"></span>
-                          {{ inspectionLoading && !moduleVerificationBusy(module) ? t('inspecting') : t('verifying') }}
-                        </span>
-                        <span
-                          v-if="moduleVerification(module)"
-                          class="module-check-state"
-                          :class="moduleVerification(module)?.status"
-                        >
-                          {{ verificationStatusLabel(moduleVerification(module)!.status) }}
-                        </span>
-                        <span
-                          v-if="module.id === 'cheeky-foveated-dlss'"
-                          class="compatibility-state"
-                          :class="compatibilityStatus(module)"
-                        >
-                          {{ compatibilityStatusLabel(compatibilityStatus(module)) }}
-                        </span>
-                      </div>
-                    </div>
-                    <h4>{{ moduleName(module) }}</h4>
-                    <p>{{ moduleDescription(module) }}</p>
-
-                    <details v-if="module.id === 'cheeky-foveated-dlss'" class="module-details compatibility-panel">
-                      <summary>{{ t('technicalDetails') }}</summary>
-                      <div class="module-detail-content">
-                      <div class="compatibility-heading">
-                        <div>
-                          <strong>{{ t('compatibilityStatus') }}</strong>
-                          <small>{{ compatibilityStatusSummary(module) }}</small>
-                        </div>
-                        <span
-                          class="research-state"
-                          :class="cheekyResearchGuide(module).state"
-                        >
-                          {{ cheekyResearchStateLabel(cheekyResearchGuide(module).state) }}
-                        </span>
-                      </div>
-                      <p class="compatibility-decision">{{ cheekyResearchGuide(module).decision }}</p>
-                      <small class="compatibility-evidence">{{ cheekyCompatibilityEvidence() }}</small>
-                      <div class="compatibility-actions">
-                        <button class="secondary-button compact" @click="cheekyGuideDialog = module">
-                          {{ t('viewCompatibilityGuide') }}
-                        </button>
-                        <button class="secondary-button compact" @click="openCompatibilityReport(module)">
-                          {{ t('recordTest') }}
-                        </button>
-                      </div>
-                      </div>
-                    </details>
-
-                    <details v-if="module.id === 'uevr'" class="module-details compatibility-panel uevr-panel">
-                      <summary>{{ t('technicalDetails') }}</summary>
-                      <div class="module-detail-content">
-                      <div class="compatibility-heading">
-                        <div>
-                          <strong>{{ t('uevrEngine') }}</strong>
-                          <small v-if="inspectionLoading && !gameInspection" class="inline-loading" role="status">
-                            <span class="loading-spinner" aria-hidden="true"></span>
-                            {{ t('inspecting') }}
-                          </small>
-                          <small v-else>
-                            {{ gameInspection?.engine ?? t('notDetected') }}
-                            <template v-if="gameInspection?.engineVersion"> · {{ gameInspection.engineVersion }}</template>
-                            <template v-if="gameInspection?.engineConfidence"> · {{ gameInspection.engineConfidence }}</template>
-                          </small>
-                        </div>
-                        <span
-                          v-if="inspectionLoading && !gameInspection"
-                          class="research-state loading"
-                          role="status"
-                        >
-                          <span class="loading-spinner" aria-hidden="true"></span>
-                          {{ t('inspecting') }}
-                        </span>
-                        <span
-                          v-else
-                          class="research-state"
-                          :class="gameInspection?.engine === 'Unreal Engine' ? 'available' : 'prerequisite'"
-                        >
-                          {{ gameInspection?.engine === 'Unreal Engine' ? t('uevrEngineEligible') : t('uevrEngineBlocked') }}
-                        </span>
-                      </div>
-                      <label class="uevr-backend-picker">
-                        <span>{{ t('uevrBackend') }}</span>
-                        <select
-                          :value="selectedUevrBackend(module)"
-                          :disabled="moduleBusy || selectedGameRunning"
-                          @change="onUevrBackendChange(module, $event)"
-                        >
-                          <option
-                            v-for="option in uevrBackendOptions(module)"
-                            :key="option.id"
-                            :value="option.id"
-                            :disabled="option.compatibility === 'not_working'"
-                          >
-                            {{ uevrBackendLabel(option.id) }} · {{ uevrBackendCompatibilityLabel(option.compatibility) }}
-                          </option>
-                        </select>
-                      </label>
-                      <small class="compatibility-evidence">{{ t('uevrCompatibilityHint') }}</small>
-                      </div>
-                    </details>
-
-                    <details
-                      v-if="moduleVerification(module)"
-                      class="module-details verification-details"
-                      :open="moduleVerification(module)?.status === 'attention'"
-                    >
-                      <summary>
-                        <span>{{ moduleVerification(module)?.summary }}</span>
-                        <small>{{ moduleChecklistSummary(module) }}</small>
-                      </summary>
-                      <div class="module-detail-content module-verification">
-                      <div class="verification-heading">
-                        <strong>{{ moduleVerification(module)?.summary }}</strong>
-                        <small>{{ t('verifiedAt', { date: formatTransactionDate(moduleVerification(module)!.checkedAt) }) }}</small>
-                      </div>
-                      <ul class="verification-checklist">
-                        <li
-                          v-for="item in moduleVerification(module)?.checks"
-                          :key="item.label"
-                          :class="item.passed ? 'passed' : 'failed'"
-                        >
-                          <span aria-hidden="true">{{ item.passed ? '✓' : '!' }}</span>
-                          <div>
-                            <strong>{{ item.label }}</strong>
-                            <small v-if="item.detail">{{ item.detail }}</small>
-                          </div>
-                        </li>
-                      </ul>
-                      </div>
-                    </details>
-
-                    <div v-if="module.status === 'available'" class="module-update-row">
-                      <div class="module-update-copy">
-                        <strong>{{ t('updates') }}</strong>
-                        <small>{{ moduleUpdateSummary(module) }}</small>
-                      </div>
-                      <span
-                        v-if="moduleUpdate(module)?.status === 'available'"
-                        class="module-update-state available"
-                      >
-                        {{ moduleUpdateLabel(moduleUpdate(module)!.status) }}
-                      </span>
-                      <div class="module-update-actions">
-                        <a
-                          v-if="moduleUpdate(module)?.releaseUrl"
-                          class="text-button compact"
-                          :href="moduleUpdate(module)!.releaseUrl!"
-                          target="_blank"
-                          rel="noreferrer"
-                          @click.prevent="openRelease(moduleUpdate(module)!.releaseUrl)"
-                        >
-                          {{ t('openRelease') }}
-                        </a>
-                        <button
-                          v-if="moduleHasUpdateSource(module)"
-                          class="secondary-button compact"
-                          :class="{ 'is-loading': moduleUpdateBusy(module) }"
-                          :disabled="moduleUpdateBusy(module) || selectedGameRunning"
-                          @click="checkModuleUpdate(module)"
-                        >
-                          {{ moduleUpdateBusy(module) ? t('checkingUpdates') : t('checkUpdates') }}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div class="module-actions">
-                      <button
-                        class="secondary-button compact"
-                        :class="{ 'is-loading': moduleVerificationBusy(module) }"
-                        :disabled="module.status !== 'available' || moduleVerificationBusy(module) || selectedGameRunning"
-                        @click="verifyModule(module)"
-                      >
-                        {{ moduleVerificationBusy(module) ? t('verifying') : t('verify') }}
+                    <div v-if="availableModuleCategories.length > 1" class="segmented" role="group" :aria-label="t('modsTitle')">
+                      <button type="button" :aria-pressed="activeModuleFilter === 'all'" @click="activeModuleFilter = 'all'">
+                        {{ t('filterAllMods') }}
                       </button>
                       <button
-                        class="module-button"
-                        :class="{ 'is-loading': moduleBusy }"
-                        :disabled="moduleActionsBlocked(module)"
-                        :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
-                        @click="configureModule(module)"
+                        v-for="category in availableModuleCategories"
+                        :key="category"
+                        type="button"
+                        :aria-pressed="activeModuleFilter === category"
+                        @click="activeModuleFilter = category"
                       >
-                        {{ module.status === 'available' ? (moduleBusy ? t('checking') : moduleActionLabel(module)) : t('comingNext') }}
+                        {{ categoryLabel(category) }} <span class="count">{{ moduleCategoryCount(category) }}</span>
                       </button>
                     </div>
-                    <button
-                      v-if="module.status === 'available' && activeModuleTransaction(module)"
-                      class="text-button danger-action"
-                      :disabled="moduleBusy || inspectionLoading || selectedGameRunning"
-                      :title="selectedGameRunning ? t('gameRunningActionBlocked') : undefined"
-                      @click="removeModule(module)"
-                    >
-                      {{ module.id === 'optiscaler'
-                        ? t('uninstallOptiScaler')
-                        : module.id === 'cheeky-foveated-dlss'
-                          ? t('uninstallCheeky')
-                          : module.id === 'uevr'
-                            ? t('uninstallUevr')
-                          : t('removeConfiguration') }}
-                    </button>
-                      </article>
+                  </div>
+
+                  <section v-for="group in moduleGroups" :key="group.category" class="mod-group">
+                    <h3 class="mod-group-title">{{ categoryLabel(group.category) }}</h3>
+                    <div class="mod-grid">
+                      <ModuleCard
+                        v-for="module in group.modules"
+                        :key="module.id"
+                        :name="moduleName(module)"
+                        :description="moduleDescription(module)"
+                        :state="moduleCardState(module)"
+                        :tag="moduleCardTag(module)"
+                        :action-label="moduleActionLabel(module)"
+                        :action-primary="moduleActionPrimary(module)"
+                        :action-busy="busyModuleId === module.id"
+                        :action-disabled="moduleActionsBlocked(module)"
+                        :blocked-reason="blockedReason"
+                        :verification="moduleVerification(module)"
+                        :checked-at-label="moduleVerification(module) ? t('checkedAt', { date: formatTransactionDate(moduleVerification(module)!.checkedAt) }) : undefined"
+                        :verify-busy="moduleVerificationBusy(module)"
+                        :remove-label="moduleRemoveLabel(module)"
+                        :update="moduleCardUpdate(module)"
+                        @action="configureModule(module)"
+                        @verify="verifyModule(module)"
+                        @remove="removeModule(module)"
+                        @check-update="checkModuleUpdate(module)"
+                        @open-release="openRelease(moduleUpdate(module)?.releaseUrl ?? null)"
+                      >
+                        <template v-if="module.id === 'cheeky-foveated-dlss'" #details>
+                          <section class="detail-block">
+                            <h5 class="detail-title">{{ t('compatibilityStatus') }}</h5>
+                            <p class="detail-copy">{{ cheekyResearchGuide(module).decision }}</p>
+                            <p v-if="compatibilityReport(module)" class="detail-copy text-faint">{{ compatibilityStatusSummary(module) }}</p>
+                            <div class="detail-row">
+                              <button class="btn btn-sm" type="button" @click="cheekyGuideDialog = module">{{ t('viewCompatibilityGuide') }}</button>
+                              <button class="btn btn-ghost btn-sm" type="button" @click="openCompatibilityReport(module)">{{ t('recordTest') }}</button>
+                            </div>
+                          </section>
+                        </template>
+                        <template v-else-if="module.id === 'uevr'" #details>
+                          <section class="detail-block">
+                            <div class="detail-row spread">
+                              <h5 class="detail-title">{{ t('uevrEngineLabel') }}</h5>
+                              <span v-if="inspectionLoading && !gameInspection" class="badge is-loading">{{ t('inspecting') }}</span>
+                              <span v-else class="badge" :class="gameInspection?.engine === 'Unreal Engine' ? 'badge-success' : 'badge-warning'">
+                                {{ gameInspection?.engine === 'Unreal Engine' ? t('uevrEngineEligible') : t('uevrEngineBlocked') }}
+                              </span>
+                            </div>
+                            <p class="detail-copy">
+                              {{ gameInspection?.engine ?? t('unknownEngine') }}<template v-if="gameInspection?.engineVersion"> · {{ gameInspection.engineVersion }}</template>
+                            </p>
+                            <label class="field">
+                              <span>{{ t('uevrBackend') }}</span>
+                              <select
+                                class="select"
+                                :value="selectedUevrBackend(module)"
+                                :disabled="moduleBusy || selectedGameRunning"
+                                @change="onUevrBackendChange(module, $event)"
+                              >
+                                <option
+                                  v-for="option in uevrBackendOptions(module)"
+                                  :key="option.id"
+                                  :value="option.id"
+                                  :disabled="option.compatibility === 'not_working'"
+                                >
+                                  {{ uevrBackendLabel(option.id) }} ({{ uevrBackendCompatibilityLabel(option.compatibility) }})
+                                </option>
+                              </select>
+                              <small>{{ t('uevrCompatibilityHint') }}</small>
+                            </label>
+                          </section>
+                        </template>
+                      </ModuleCard>
                     </div>
                   </section>
-                </div>
+                </section>
 
-                <details class="advanced-panel">
+                <details class="disclosure advanced-panel">
                   <summary>
-                    <span>{{ t('advancedDiagnostics') }}</span>
-                    <small>{{ t('advancedDiagnosticsHint') }}</small>
+                    <span>{{ t('advancedTitle') }}</span>
+                    <small>{{ t('advancedHint') }}</small>
                   </summary>
-                  <div class="advanced-content">
-                <div class="metadata-card">
-                  <div>
-                    <span>{{ t('executable') }}</span>
-                    <strong>{{ selectedGame.catalog.executable }}</strong>
-                  </div>
-                  <div>
-                    <span>{{ t('storeLibrary') }}</span>
-                    <strong>{{ selectedGame.installed.libraryPath }}</strong>
-                  </div>
-                </div>
-
-                <div class="environment-card">
-                  <div class="environment-heading">
-                    <div>
-                      <span class="environment-label">{{ t('gameEnvironment') }}</span>
-                      <h3>{{ t('injectionReadiness') }}</h3>
-                    </div>
-                    <button class="secondary-button compact" :class="{ 'is-loading': inspectionLoading }" :disabled="inspectionLoading" @click="inspectSelectedGame()">
-                      {{ inspectionLoading ? t('inspecting') : t('rescan') }}
-                    </button>
-                  </div>
-
-                  <div v-if="inspectionLoading && !gameInspection" class="environment-message">
-                    <span class="loading-state" role="status" aria-live="polite">
-                      <span class="loading-spinner" aria-hidden="true"></span>
-                      {{ t('inspectingDirectory') }}
-                    </span>
-                  </div>
-                  <div v-else-if="inspectionError" class="environment-message danger">{{ inspectionError }}</div>
-                  <template v-else-if="gameInspection">
-                    <div class="environment-row">
-                      <span>{{ t('executable') }}</span>
-                      <strong :class="gameInspection.executableExists ? 'ok-text' : 'danger-text'">
-                        {{ gameInspection.executableExists ? t('found') : t('missing') }}
-                      </strong>
-                    </div>
-                    <code class="environment-path">{{ gameInspection.executablePath }}</code>
-
-                    <div class="environment-row">
-                      <span>{{ t('detectedEngine') }}</span>
-                      <strong :class="gameInspection.engine === 'Unreal Engine' ? 'ok-text' : 'warning-text'">
-                        {{ gameInspection.engine ?? t('unknownEngine') }}
-                        <template v-if="gameInspection.engineVersion"> · {{ gameInspection.engineVersion }}</template>
-                      </strong>
-                    </div>
-                    <ul v-if="gameInspection.engineEvidence.length" class="engine-evidence">
-                      <li v-for="evidence in gameInspection.engineEvidence" :key="evidence">{{ evidence }}</li>
-                    </ul>
-
-                    <div class="environment-row proxy-row">
-                      <span>{{ t('proxyDlls') }}</span>
-                      <strong :class="gameInspection.proxyDlls.length ? 'warning-text' : 'ok-text'">
-                        {{ gameInspection.proxyDlls.length ? t('detectedCount', { count: gameInspection.proxyDlls.length }) : t('noneDetected') }}
-                      </strong>
-                    </div>
-
-                    <div v-if="gameInspection.proxyDlls.length" class="dll-list">
-                      <div v-for="dll in gameInspection.proxyDlls" :key="dll.path" class="dll-row">
-                        <strong>{{ dll.name }}</strong>
-                        <span>{{ formatFileSize(dll.sizeBytes) }}</span>
-                        <code>{{ dll.path }}</code>
+                  <div class="advanced-body">
+                    <dl class="info-list">
+                      <div>
+                        <dt>{{ t('advancedInstallFolder') }}</dt>
+                        <dd class="path-text">{{ selectedGame.installed.installDir }}</dd>
                       </div>
+                      <div>
+                        <dt>{{ t('advancedExecutable') }}</dt>
+                        <dd class="path-text">{{ gameInspection?.executablePath ?? selectedGame.catalog.executable }}</dd>
+                      </div>
+                      <div>
+                        <dt>{{ t('advancedStoreId') }}</dt>
+                        <dd>{{ storeLabel(selectedGame.installed.store) }} · {{ selectedGame.installed.appId }}</dd>
+                      </div>
+                      <div v-if="gameInspection">
+                        <dt>{{ t('advancedEngine') }}</dt>
+                        <dd>
+                          {{ gameInspection.engine ?? t('unknownEngine') }}<template v-if="gameInspection.engineVersion"> · {{ gameInspection.engineVersion }}</template>
+                        </dd>
+                      </div>
+                      <div v-if="gameInspection">
+                        <dt>{{ t('advancedModFiles') }}</dt>
+                        <dd>
+                          <template v-if="gameInspection.proxyDlls.length">
+                            <span v-for="dll in gameInspection.proxyDlls" :key="dll.path" class="dll-chip" :title="dll.path">
+                              {{ dll.name }} · {{ formatFileSize(dll.sizeBytes) }}
+                            </span>
+                          </template>
+                          <span v-else class="text-muted">{{ t('advancedNoModFiles') }}</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <p v-if="inspectionError" class="callout callout-danger">{{ inspectionError }}</p>
+                    <div>
+                      <button class="btn btn-sm" :class="{ 'is-loading': inspectionLoading }" type="button" :disabled="inspectionLoading" @click="inspectSelectedGame()">
+                        {{ inspectionLoading ? t('inspecting') : t('advancedRescan') }}
+                      </button>
                     </div>
-                    <p v-else class="environment-note">{{ t('noCommonProxy') }}</p>
-                  </template>
-                </div>
                   </div>
                 </details>
               </template>
 
-              <div v-else class="unsupported-copy">
-                <h3>{{ t('gameDetectedNotCataloged') }}</h3>
-                <p>{{ t('gameDetectedDescription') }}</p>
+              <div v-else class="empty-state">
+                <AppIcon name="info" :size="28" />
+                <strong>{{ t('notCataloguedTitle') }}</strong>
+                <span>{{ t('notCataloguedHint') }}</span>
               </div>
             </template>
           </div>
-        </section>
+        </div>
       </section>
 
-      <section v-else class="transactions-view">
-        <header class="topbar transactions-topbar">
-          <div>
-            <p class="eyebrow">{{ t('rollbackHistory') }}</p>
-            <h1>{{ t('transactions') }}</h1>
-            <p class="subtle">{{ t('everyDestructive') }}</p>
-          </div>
-          <button class="secondary-button" :class="{ 'is-loading': transactionsLoading }" :disabled="transactionsLoading" @click="refreshTransactions">
-            {{ transactionsLoading ? t('refreshing') : t('refresh') }}
-          </button>
-        </header>
-
-        <section class="transactions-panel">
-          <div v-if="transactionsLoading && transactions.length === 0" class="empty-state">
-            <span class="loading-state" role="status" aria-live="polite">
-              <span class="loading-spinner" aria-hidden="true"></span>
-              {{ t('loadingTransactions') }}
-            </span>
-          </div>
-          <div v-else-if="transactions.length === 0" class="empty-state">{{ t('noTransactions') }}</div>
-
-          <article v-for="transaction in transactions" :key="transaction.id" class="transaction-row">
-            <div class="transaction-state" :class="transaction.status"></div>
-            <div class="transaction-copy">
-              <div class="transaction-title-row">
-                <strong>{{ transaction.label }}</strong>
-                <span class="status" :class="transaction.status === 'applied' ? 'supported' : 'unsupported'">
-                  {{ statusLabel(transaction.status) }}
-                </span>
-              </div>
-              <span>{{ formatTransactionDate(transaction.createdAt) }} · {{ transaction.kind }} · {{ transaction.gameId }}</span>
-              <code>{{ transaction.targetPath }}</code>
-            </div>
-            <button
-              class="secondary-button"
-              :class="{ 'is-loading': rollbackBusyId === transaction.id }"
-              :disabled="transaction.status !== 'applied'
-                || rollbackBusyId === transaction.id
-                || inspectionLoading
-                || (selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id)"
-              :title="selectedGameRunning && transaction.gameId === selectedGame?.catalog?.id ? t('gameRunningActionBlocked') : undefined"
-              @click="rollback(transaction)"
-            >
-              {{ rollbackBusyId === transaction.id ? t('restoring') : t('undo') }}
-            </button>
-          </article>
-        </section>
-      </section>
+      <HistoryView
+        v-else
+        :transactions="transactions"
+        :loading="transactionsLoading"
+        :busy-id="rollbackBusyId"
+        :game-name="gameNameById"
+        :kind-label="moduleNameById"
+        :format-date="formatTransactionDate"
+        :blocked-reason="transactionBlockedReason"
+        @refresh="refreshTransactions"
+        @undo="rollback"
+      />
     </main>
 
-    <div v-if="obsDialog" class="modal-backdrop" @click.self="obsDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('preview') }}</p>
-            <h2>{{ obsDialog.request.sourceName }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="obsDialog = null">×</button>
+    <ToastStack
+      :success="success"
+      :error="actionError"
+      @dismiss-success="success = null"
+      @dismiss-error="actionError = null"
+    />
+
+    <BaseDialog
+      v-if="obsDialog"
+      :eyebrow="t('previewEyebrow')"
+      :title="moduleNameById('obs-vr')"
+      :description="obsDialog.request.gameName"
+      @close="obsDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact"><span>{{ t('obsCollection') }}</span><strong>{{ obsDialog.preview.collectionName ?? t('notFound') }}</strong></div>
+        <div class="fact"><span>{{ t('obsScene') }}</span><strong>{{ obsDialog.request.sceneName }}</strong></div>
+        <div class="fact"><span>{{ t('obsSource') }}</span><strong>{{ obsDialog.request.sourceName }}</strong></div>
+      </div>
+      <ChangePreview :changes="obsDialog.preview.changes" :warnings="obsDialog.preview.warnings" :location="obsDialog.preview.collectionFile" />
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="obsDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!obsDialog.preview.canApply || dialogBlocked" @click="applyObsConfiguration">
+          {{ moduleBusy ? t('previewWorking') : t('previewApply') }}
+        </button>
+      </template>
+    </BaseDialog>
+
+    <BaseDialog
+      v-if="optiScalerDialog"
+      :eyebrow="t('previewEyebrow')"
+      :title="moduleNameById('optiscaler')"
+      :description="optiScalerDialog.request.gameName"
+      @close="optiScalerDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact"><span>{{ t('factVersion') }}</span><strong>{{ optiScalerDialog.request.version }}</strong></div>
+        <div class="fact"><span>{{ t('factLoadedVia') }}</span><strong>{{ optiScalerDialog.preview.selectedProxy ?? t('notFound') }}</strong></div>
+        <div class="fact">
+          <span>{{ t('factStatus') }}</span>
+          <strong>{{ optiScalerDialog.preview.installed ? t('factInstalled', { version: optiScalerDialog.preview.installedVersion ?? '?' }) : t('factNotInstalled') }}</strong>
         </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('collection') }}</span>
-            <strong>{{ obsDialog.preview.collectionName ?? t('notFound') }}</strong>
-          </div>
-          <div>
-            <span>{{ t('scene') }}</span>
-            <strong>{{ obsDialog.request.sceneName }}</strong>
-          </div>
-          <div>
-            <span>{{ t('executable') }}</span>
-            <strong>{{ obsDialog.request.executableName }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul v-if="obsDialog.preview.changes.length">
-            <li v-for="change in obsDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-          <p v-else>{{ t('noSafePlan') }}</p>
-        </div>
-
-        <div v-if="obsDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in obsDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </div>
-
-        <p v-if="obsDialog.preview.collectionFile" class="path modal-path">{{ obsDialog.preview.collectionFile }}</p>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="obsDialog = null">{{ t('cancel') }}</button>
-          <button
-            class="primary-button"
-            :class="{ 'is-loading': moduleBusy }"
-            :disabled="!obsDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
-            @click="applyObsConfiguration"
-          >
-            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
-          </button>
-        </div>
-      </section>
-    </div>
-
-    <div v-if="optiScalerDialog" class="modal-backdrop" @click.self="optiScalerDialog = null">
-      <section class="modal-card optiscaler-modal">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('preview') }} · OPTISCALER</p>
-            <h2>OptiScaler {{ optiScalerDialog.request.version }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="optiScalerDialog = null">×</button>
-        </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>Version</span>
-            <strong>{{ optiScalerDialog.request.version }}</strong>
-          </div>
-          <div>
-            <span>Proxy DLL</span>
-            <strong>{{ optiScalerDialog.preview.selectedProxy ?? t('notFound') }}</strong>
-          </div>
-          <div>
-            <span>Status</span>
-            <strong>{{ optiScalerDialog.preview.installed ? `Installed ${optiScalerDialog.preview.installedVersion ?? ''}` : 'Not installed' }}</strong>
-          </div>
-        </div>
-
-        <div v-if="optiScalerDialog.preview.conflicts.length" class="preview-block warnings">
-          <h3>Proxy DLL conflicts</h3>
-          <ul>
+      </div>
+      <ChangePreview :changes="optiScalerDialog.preview.changes" :warnings="optiScalerDialog.preview.warnings" :location="optiScalerDialog.preview.executableDirectory">
+        <section v-if="optiScalerDialog.preview.conflicts.length" class="dialog-section">
+          <h3>{{ t('optiConflictsTitle') }}</h3>
+          <p>{{ t('optiConflictsHint') }}</p>
+          <ul class="note-list">
             <li v-for="conflict in optiScalerDialog.preview.conflicts" :key="conflict.path">
-              {{ conflict.name }} · {{ formatFileSize(conflict.sizeBytes) }} · {{ conflict.path }}
+              {{ conflict.name }} · {{ formatFileSize(conflict.sizeBytes) }}
             </li>
           </ul>
-        </div>
+        </section>
+      </ChangePreview>
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!optiScalerDialog.preview.canApply || dialogBlocked" @click="applyOptiScaler">
+          {{ moduleBusy ? t('previewWorking') : (optiScalerDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
+        </button>
+      </template>
+    </BaseDialog>
 
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul v-if="optiScalerDialog.preview.changes.length">
-            <li v-for="change in optiScalerDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-          <p v-else>{{ t('noSafePlan') }}</p>
-        </div>
+    <BaseDialog
+      v-if="cheekyDialog"
+      :eyebrow="t('previewEyebrow')"
+      :title="moduleNameById('cheeky-foveated-dlss')"
+      :description="cheekyDialog.request.gameName"
+      @close="cheekyDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact"><span>{{ t('factVersion') }}</span><strong>{{ cheekyDialog.request.version }}</strong></div>
+        <div class="fact"><span>{{ t('factLoadedVia') }}</span><strong>{{ t('cheekyReshadeAddon') }}</strong></div>
+      </div>
+      <ChangePreview :changes="cheekyDialog.preview.changes" :warnings="cheekyDialog.preview.warnings" :location="cheekyDialog.preview.addonPath" />
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="cheekyDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!cheekyDialog.preview.canApply || dialogBlocked" @click="applyCheeky">
+          {{ moduleBusy ? t('previewWorking') : (cheekyDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
+        </button>
+      </template>
+    </BaseDialog>
 
-        <div v-if="optiScalerDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in optiScalerDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
+    <BaseDialog
+      v-if="uevrDialog"
+      :eyebrow="t('previewEyebrow')"
+      :title="moduleNameById('uevr')"
+      :description="uevrDialog.request.gameName"
+      @close="uevrDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact">
+          <span>{{ t('advancedEngine') }}</span>
+          <strong>{{ uevrDialog.preview.engine ?? t('unknownEngine') }}{{ uevrDialog.preview.engineVersion ? ` · ${uevrDialog.preview.engineVersion}` : '' }}</strong>
         </div>
+        <div class="fact"><span>{{ t('uevrBackend') }}</span><strong>{{ uevrBackendLabel(uevrDialog.request.backend) }}</strong></div>
+        <div class="fact"><span>{{ t('factVersion') }}</span><strong>{{ uevrDialog.preview.selectedVersion ?? t('notDetected') }}</strong></div>
+      </div>
+      <ChangePreview :changes="uevrDialog.preview.changes" :warnings="uevrDialog.preview.warnings" :location="uevrDialog.preview.installDirectory" />
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="uevrDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!uevrDialog.preview.canApply || dialogBlocked" @click="applyUevr">
+          {{ moduleBusy ? t('previewWorking') : (uevrDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
+        </button>
+      </template>
+    </BaseDialog>
 
-        <p class="path modal-path">{{ optiScalerDialog.preview.executableDirectory }}</p>
+    <BaseDialog
+      v-if="ofxrDialog"
+      :eyebrow="t('previewEyebrow')"
+      :title="moduleNameById('ofxr-framegen')"
+      :description="ofxrDialog.request.gameName"
+      @close="ofxrDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact"><span>{{ t('factVersion') }}</span><strong>{{ ofxrDialog.request.version }}</strong></div>
+        <div class="fact"><span>{{ t('ofxrMode') }}</span><strong>{{ ofxrDialog.request.backend }}</strong></div>
+        <div class="fact"><span>{{ t('factStatus') }}</span><strong>{{ ofxrDialog.preview.armed ? t('ofxrConfiguredState') : t('ofxrNotConfiguredState') }}</strong></div>
+      </div>
+      <ChangePreview
+        :changes="ofxrDialog.preview.changes"
+        :warnings="ofxrDialog.preview.warnings"
+        :location="ofxrDialog.preview.installDirectory"
+        :empty-text="t('ofxrReadyForLaunch')"
+      />
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="ofxrDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!ofxrDialog.preview.canApply || dialogBlocked" @click="applyOfxr">
+          {{ moduleBusy ? t('previewWorking') : t('ofxrInstallAndArm') }}
+        </button>
+      </template>
+    </BaseDialog>
 
-        <div class="modal-actions">
-          <button class="secondary-button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
-          <button
-            class="primary-button"
-            :class="{ 'is-loading': moduleBusy }"
-            :disabled="!optiScalerDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
-            @click="applyOptiScaler"
-          >
-            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
-          </button>
+    <BaseDialog
+      v-if="vrLaunchDialog"
+      :eyebrow="t('vrLaunchEyebrow')"
+      :title="vrLaunchDialog.request.gameName"
+      :description="t('vrLaunchDescription')"
+      @close="vrLaunchDialog = null"
+    >
+      <div class="fact-grid">
+        <div class="fact"><span>{{ t('vrRuntime') }}</span><strong>{{ vrLaunchDialog.preview.activeOpenXrRuntime ?? t('notDetected') }}</strong></div>
+        <div v-if="vrLaunchDialog.request.arguments.length" class="fact">
+          <span>{{ t('launchArguments') }}</span><strong>{{ vrLaunchDialog.request.arguments.join(' ') }}</strong>
         </div>
+      </div>
+
+      <div v-if="ofxrLaunchRequest" class="callout callout-info">
+        <AppIcon class="callout-icon" name="info" />
+        <div>
+          <strong>{{ t('ofxrBeforeLaunch') }}</strong>
+          <p>{{ ofxrReadyForLaunch ? t('ofxrReadyForLaunch') : t('ofxrWillPrepare') }}</p>
+        </div>
+      </div>
+
+      <section v-if="vrLaunchDialog.request.recommendations.length" class="dialog-section">
+        <h3>{{ t('recommendedGraphics') }}</h3>
+        <ul class="note-list">
+          <li v-for="item in vrLaunchDialog.request.recommendations" :key="`${item.label}-${item.value}`">
+            <strong>{{ item.label }}:</strong> {{ item.value }}
+          </li>
+        </ul>
       </section>
-    </div>
 
-    <div v-if="cheekyDialog" class="modal-backdrop" @click.self="cheekyDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('preview') }} · CHEEKY FOVEATED DLSS</p>
-            <h2>Cheeky Foveated DLSS {{ cheekyDialog.request.version }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="cheekyDialog = null">×</button>
-        </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('cheekyVersion') }}</span>
-            <strong>{{ cheekyDialog.request.version }}</strong>
-          </div>
-          <div>
-            <span>{{ t('cheekyIntegration') }}</span>
-            <strong>{{ t('cheekyReshadeAddon') }}</strong>
-          </div>
-          <div>
-            <span>{{ t('cheekyAddon') }}</span>
-            <strong>{{ cheekyDialog.request.addonFile }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul v-if="cheekyDialog.preview.changes.length">
-            <li v-for="change in cheekyDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-          <p v-else>{{ t('noSafePlan') }}</p>
-        </div>
-
-        <div v-if="cheekyDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in cheekyDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </div>
-
-        <p class="path modal-path">{{ cheekyDialog.preview.addonPath }}</p>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="cheekyDialog = null">{{ t('cancel') }}</button>
-          <button
-            class="primary-button"
-            :class="{ 'is-loading': moduleBusy }"
-            :disabled="!cheekyDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
-            @click="applyCheeky"
-          >
-            {{ moduleBusy ? t('applying') : t('applyWithBackup') }}
-          </button>
-        </div>
+      <section v-if="vrLaunchDialog.preview.settings.some((setting) => setting.willChange)" class="dialog-section">
+        <h3>{{ t('settingsToApply') }}</h3>
+        <ul class="step-list setting-list">
+          <li v-for="setting in vrLaunchDialog.preview.settings.filter((item) => item.willChange)" :key="`${setting.section}-${setting.key}`">
+            <span>{{ setting.key }}</span>
+            <span class="from">{{ setting.currentValue ?? t('notConfigured') }}</span>
+            <span aria-hidden="true">→</span>
+            <span class="to">{{ setting.value }}</span>
+          </li>
+        </ul>
       </section>
-    </div>
 
-    <div v-if="uevrDialog" class="modal-backdrop" @click.self="uevrDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('preview') }} · UEVR</p>
-            <h2>{{ uevrDialog.request.gameName }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="uevrDialog = null">×</button>
+      <ChangePreview
+        :changes="vrLaunchDialog.preview.changes"
+        :warnings="vrLaunchDialog.preview.warnings"
+        :location="vrLaunchDialog.preview.configPath"
+        :show-backup-note="Boolean(vrLaunchDialog.preview.configPath)"
+      />
+      <template #footer>
+        <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
+        <button class="btn" type="button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!vrLaunchDialog.preview.canLaunch || dialogBlocked" @click="launchVrGame">
+          <AppIcon v-if="!moduleBusy" name="play" />
+          {{ moduleBusy ? t('launching') : (ofxrReadyForLaunch ? t('launchVr') : t('activateAndLaunch')) }}
+        </button>
+      </template>
+    </BaseDialog>
+
+    <BaseDialog
+      v-if="cheekyGuideDialog"
+      size="lg"
+      :eyebrow="moduleNameById('cheeky-foveated-dlss')"
+      :title="t('compatibilityGuide')"
+      :description="t('cheekyGuideResearchBased')"
+      @close="cheekyGuideDialog = null"
+    >
+      <div class="callout" :class="cheekyResearchGuide(cheekyGuideDialog).state === 'prerequisite' ? 'callout-warning' : 'callout-info'">
+        <AppIcon class="callout-icon" :name="cheekyResearchGuide(cheekyGuideDialog).state === 'prerequisite' ? 'alert' : 'info'" />
+        <div>
+          <strong>{{ cheekyResearchStateLabel(cheekyResearchGuide(cheekyGuideDialog).state) }}</strong>
+          <p>{{ cheekyResearchGuide(cheekyGuideDialog).decision }}</p>
         </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('uevrEngine') }}</span>
-            <strong>{{ uevrDialog.preview.engine ?? t('unknownEngine') }}{{ uevrDialog.preview.engineVersion ? ` · ${uevrDialog.preview.engineVersion}` : '' }}</strong>
-          </div>
-          <div>
-            <span>{{ t('uevrBackend') }}</span>
-            <strong>{{ uevrDialog.preview.backendLabel }}</strong>
-          </div>
-          <div>
-            <span>{{ t('uevrResolvedVersion') }}</span>
-            <strong>{{ uevrDialog.preview.selectedVersion ?? t('notDetected') }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul v-if="uevrDialog.preview.changes.length">
-            <li v-for="change in uevrDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-          <p v-else>{{ t('noSafePlan') }}</p>
-        </div>
-
-        <div v-if="uevrDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in uevrDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </div>
-
-        <p class="path modal-path">{{ uevrDialog.preview.installDirectory }}</p>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="uevrDialog = null">{{ t('cancel') }}</button>
-          <button
-            class="primary-button"
-            :class="{ 'is-loading': moduleBusy }"
-            :disabled="!uevrDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
-            @click="applyUevr"
-          >
-            {{ moduleBusy ? t('applying') : t('uevrInstall') }}
-          </button>
-        </div>
+      </div>
+      <section class="dialog-section">
+        <h3>{{ t('cheekyGuideRoute') }}</h3>
+        <p>{{ cheekyResearchGuide(cheekyGuideDialog).route }}</p>
       </section>
-    </div>
-
-    <div v-if="cheekyGuideDialog" class="modal-backdrop" @click.self="cheekyGuideDialog = null">
-      <section class="modal-card compatibility-guide-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('cheekyGuideResearchBased') }} · CHEEKY FOVEATED DLSS</p>
-            <h2>{{ t('compatibilityGuide') }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="cheekyGuideDialog = null">×</button>
-        </div>
-
-        <div class="guide-decision-card">
-          <span
-            class="research-state"
-            :class="cheekyResearchGuide(cheekyGuideDialog).state"
-          >
-            {{ cheekyResearchStateLabel(cheekyResearchGuide(cheekyGuideDialog).state) }}
-          </span>
-          <div>
-            <span>{{ t('cheekyGuideDecision') }}</span>
-            <strong>{{ cheekyResearchGuide(cheekyGuideDialog).decision }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('cheekyGuideRoute') }}</h3>
-          <p>{{ cheekyResearchGuide(cheekyGuideDialog).route }}</p>
-        </div>
-
-        <div class="preview-block guide-list">
-          <h3>{{ t('cheekyGuidePrerequisites') }}</h3>
-          <ul>
-            <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).prerequisites" :key="item">{{ item }}</li>
-          </ul>
-        </div>
-
-        <div class="preview-block guide-list">
-          <h3>{{ t('cheekyGuideTestChecklist') }}</h3>
-          <ol>
-            <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).validation" :key="item">{{ item }}</li>
-          </ol>
-        </div>
-
-        <div class="preview-block warnings">
-          <h3>{{ t('cheekyGuideRisks') }}</h3>
+      <section class="dialog-section">
+        <h3>{{ t('cheekyGuidePrerequisites') }}</h3>
+        <ul class="change-list">
+          <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).prerequisites" :key="item">
+            <AppIcon name="check" :size="14" /><span>{{ item }}</span>
+          </li>
+        </ul>
+      </section>
+      <section class="dialog-section">
+        <h3>{{ t('cheekyGuideTestChecklist') }}</h3>
+        <ol class="step-list">
+          <li v-for="item in cheekyResearchGuide(cheekyGuideDialog).validation" :key="item">{{ item }}</li>
+        </ol>
+      </section>
+      <div class="callout callout-warning">
+        <AppIcon class="callout-icon" name="alert" />
+        <div>
+          <strong>{{ t('cheekyGuideRisks') }}</strong>
           <p>{{ cheekyResearchGuide(cheekyGuideDialog).risk }}</p>
         </div>
+      </div>
+      <template #footer>
+        <button class="btn" type="button" @click="cheekyGuideDialog = null">{{ t('close') }}</button>
+        <button class="btn btn-primary" type="button" @click="openCompatibilityReport(cheekyGuideDialog)">{{ t('recordTest') }}</button>
+      </template>
+    </BaseDialog>
 
-        <div class="modal-actions">
-          <button class="secondary-button" @click="cheekyGuideDialog = null">{{ t('close') }}</button>
-          <button class="primary-button" @click="openCompatibilityReport(cheekyGuideDialog)">
-            {{ t('recordTest') }}
-          </button>
-        </div>
-      </section>
-    </div>
-
-    <div v-if="compatibilityDialog" class="modal-backdrop" @click.self="compatibilityDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('compatibilityTestTitle') }} · CHEEKY FOVEATED DLSS</p>
-            <h2>{{ compatibilityDialog.gameName }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="compatibilityDialog = null">×</button>
-        </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('cheekyVersion') }}</span>
-            <strong>{{ compatibilityDialog.version }}</strong>
-          </div>
-          <div>
-            <span>{{ t('compatibilityTestStatus') }}</span>
-            <strong>{{ compatibilityStatusLabel(compatibilityDraftStatus) }}</strong>
-          </div>
-        </div>
-
-        <div class="compatibility-form">
-          <label>
-            <span>{{ t('compatibilityTestStatus') }}</span>
-            <select v-model="compatibilityDraftStatus">
-              <option value="unverified">{{ t('compatibilityUnverified') }}</option>
-              <option value="experimental">{{ t('compatibilityExperimental') }}</option>
-              <option value="proven">{{ t('compatibilityProven') }}</option>
-              <option value="risky">{{ t('compatibilityRisky') }}</option>
-              <option value="not_working">{{ t('compatibilityNotWorking') }}</option>
-            </select>
-          </label>
-          <label>
-            <span>{{ t('compatibilityTestNotes') }}</span>
-            <textarea v-model="compatibilityDraftNote" rows="4" :placeholder="t('compatibilityTestNotesPlaceholder')" />
-          </label>
-        </div>
-
-        <div class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <p>{{ cheekyCompatibilityEvidence() }}</p>
-        </div>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="compatibilityDialog = null">{{ t('cancel') }}</button>
-          <button class="primary-button" @click="saveCompatibilityReport">{{ t('saveTestResult') }}</button>
-        </div>
-      </section>
-    </div>
-
-    <div v-if="ofxrDialog" class="modal-backdrop" @click.self="ofxrDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('preview') }} Â· OFXR FRAMEGEN</p>
-            <h2>OFXR Bridge {{ ofxrDialog.request.version }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="ofxrDialog = null">Ã—</button>
-        </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('ofxrVersion') }}</span>
-            <strong>{{ ofxrDialog.request.version }} (V{{ ofxrDialog.request.implementationVersion }})</strong>
-          </div>
-          <div>
-            <span>{{ t('ofxrBackend') }}</span>
-            <strong>{{ ofxrDialog.request.backend }}</strong>
-          </div>
-          <div>
-            <span>{{ t('ofxrTray') }}</span>
-            <strong>{{ ofxrDialog.preview.armed ? t('ofxrConfiguredState') : t('ofxrNotConfiguredState') }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul v-if="ofxrDialog.preview.changes.length">
-            <li v-for="change in ofxrDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-          <p v-else>{{ t('ofxrReadyForLaunch') }}</p>
-        </div>
-
-        <div v-if="ofxrDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in ofxrDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </div>
-
-        <p class="path modal-path">{{ ofxrDialog.preview.installDirectory }}</p>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="ofxrDialog = null">{{ t('cancel') }}</button>
-          <button
-            class="primary-button"
-            :class="{ 'is-loading': moduleBusy }"
-            :disabled="!ofxrDialog.preview.canApply || moduleBusy || inspectionLoading || selectedGameRunning"
-            @click="applyOfxr"
-          >
-            {{ moduleBusy ? t('applying') : t('ofxrInstallAndArm') }}
-          </button>
-        </div>
-      </section>
-    </div>
+    <BaseDialog
+      v-if="compatibilityDialog"
+      :eyebrow="t('compatibilityTestTitle')"
+      :title="compatibilityDialog.gameName"
+      :description="t('compatibilityTestDescription', { module: moduleName(compatibilityDialog.module), version: compatibilityDialog.version })"
+      @close="compatibilityDialog = null"
+    >
+      <label class="field">
+        <span>{{ t('compatibilityTestStatus') }}</span>
+        <select v-model="compatibilityDraftStatus" class="select">
+          <option v-for="status in compatibilityStatuses" :key="status" :value="status">{{ compatibilityStatusLabel(status) }}</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>{{ t('compatibilityTestNotes') }}</span>
+        <textarea v-model="compatibilityDraftNote" class="textarea" rows="4" :placeholder="t('compatibilityTestNotesPlaceholder')" />
+        <small>{{ t('compatibilityTestPrivacy') }}</small>
+      </label>
+      <template #footer>
+        <button class="btn" type="button" @click="compatibilityDialog = null">{{ t('cancel') }}</button>
+        <button class="btn btn-primary" type="button" @click="saveCompatibilityReport">{{ t('saveTestResult') }}</button>
+      </template>
+    </BaseDialog>
 
     <DesktopShortcutDialog
       v-if="desktopShortcut.dialog.value"
-      :module-name="desktopShortcut.dialog.value.module.name"
+      :module-name="moduleName(desktopShortcut.dialog.value.module)"
       :preview="desktopShortcut.dialog.value.preview"
       :busy="moduleBusy"
       :disabled="inspectionLoading || selectedGameRunning"
       @close="desktopShortcut.close"
       @confirm="desktopShortcut.confirm"
     />
-
-    <div v-if="vrLaunchDialog" class="modal-backdrop" @click.self="vrLaunchDialog = null">
-      <section class="modal-card">
-        <div class="modal-heading">
-          <div>
-            <p class="eyebrow">{{ t('vrLaunchPreview') }}</p>
-            <h2>{{ vrLaunchDialog.request.gameName }}</h2>
-          </div>
-          <button class="icon-button" :aria-label="t('close')" @click="vrLaunchDialog = null">×</button>
-        </div>
-
-        <div class="preview-summary">
-          <div>
-            <span>{{ t('vrRuntime') }}</span>
-            <strong>{{ vrLaunchDialog.preview.activeOpenXrRuntime ?? t('notDetected') }}</strong>
-          </div>
-          <div>
-            <span>{{ t('executable') }}</span>
-            <strong>{{ vrLaunchDialog.request.executable }}</strong>
-          </div>
-          <div>
-            <span>{{ t('launchArguments') }}</span>
-            <strong>{{ vrLaunchDialog.request.arguments.join(' ') || t('none') }}</strong>
-          </div>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('recommendedGraphics') }}</h3>
-          <ul>
-            <li v-for="recommendation in vrLaunchDialog.request.recommendations" :key="`${recommendation.label}-${recommendation.value}`">
-              <strong>{{ recommendation.label }}:</strong> {{ recommendation.value }}
-            </li>
-          </ul>
-        </div>
-
-        <div v-if="ofxrLaunchRequest" class="preview-block ofxr-launch-block">
-          <h3>{{ t('ofxrBeforeLaunch') }}</h3>
-          <p>{{ ofxrReadyForLaunch ? t('ofxrReadyForLaunch') : t('ofxrWillPrepareBeforeLaunch') }}</p>
-        </div>
-
-        <div v-if="vrLaunchDialog.preview.settings.length" class="preview-block">
-          <h3>{{ t('settingsToApply') }}</h3>
-          <ul>
-            <li v-for="setting in vrLaunchDialog.preview.settings" :key="`${setting.section}-${setting.key}`">
-              <code>{{ setting.section }}.{{ setting.key }}</code>:
-              {{ setting.currentValue ?? t('notConfigured') }} → {{ setting.value }}
-            </li>
-          </ul>
-        </div>
-
-        <div class="preview-block">
-          <h3>{{ t('changes') }}</h3>
-          <ul>
-            <li v-for="change in vrLaunchDialog.preview.changes" :key="change">{{ change }}</li>
-          </ul>
-        </div>
-
-        <div v-if="vrLaunchDialog.preview.warnings.length" class="preview-block warnings">
-          <h3>{{ t('notes') }}</h3>
-          <ul>
-            <li v-for="warning in vrLaunchDialog.preview.warnings" :key="warning">{{ warning }}</li>
-          </ul>
-        </div>
-
-        <p v-if="vrLaunchDialog.preview.configPath" class="path modal-path">{{ vrLaunchDialog.preview.configPath }}</p>
-
-        <div class="modal-actions">
-          <button class="secondary-button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
-          <button class="primary-button" :class="{ 'is-loading': moduleBusy }" :disabled="!vrLaunchDialog.preview.canLaunch || moduleBusy || inspectionLoading || selectedGameRunning" @click="launchVrGame">
-            {{ moduleBusy ? t('launching') : (ofxrReadyForLaunch ? t('launchVr') : t('activateAndLaunch')) }}
-          </button>
-        </div>
-      </section>
-    </div>
   </div>
 </template>
+
+<style scoped>
+.library-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: var(--moddin-space-4);
+  min-height: 0;
+}
+
+.game-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--moddin-space-5);
+  overflow-y: auto;
+  padding: var(--moddin-space-6);
+}
+.game-detail-empty { flex: 1; }
+
+.game-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-5); }
+.game-hero-copy { display: grid; gap: var(--moddin-space-2); min-width: 0; }
+.game-hero h1 { overflow-wrap: anywhere; }
+
+.game-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-3); color: var(--moddin-text-muted); font-size: var(--moddin-text-md); }
+.progress-track { width: 120px; height: 6px; overflow: hidden; border-radius: var(--moddin-radius-pill); background: var(--moddin-surface-3); }
+.progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--moddin-success); transition: width var(--moddin-normal) var(--moddin-ease); }
+
+.mods-section { display: grid; gap: var(--moddin-space-5); }
+.section-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--moddin-space-3); }
+.section-heading p { margin-top: 2px; color: var(--moddin-text-muted); font-size: var(--moddin-text-md); }
+
+.mod-group { display: grid; gap: var(--moddin-space-3); }
+.mod-group-title { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--moddin-space-3); }
+
+.detail-block { display: grid; gap: var(--moddin-space-2); }
+.detail-title { margin: 0; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
+.detail-copy { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.detail-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-2); }
+.detail-row.spread { justify-content: space-between; }
+
+.advanced-panel { border: 1px solid var(--moddin-line-soft); border-radius: var(--moddin-radius-lg); padding: var(--moddin-space-4); }
+.advanced-panel > summary { color: var(--moddin-text-soft); font-size: var(--moddin-text-md); font-weight: 650; }
+.advanced-panel > summary small { color: var(--moddin-text-faint); font-weight: 500; }
+.advanced-body { display: grid; gap: var(--moddin-space-4); margin-top: var(--moddin-space-4); }
+
+.info-list { display: grid; gap: var(--moddin-space-3); margin: 0; }
+.info-list > div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: var(--moddin-space-3); }
+.info-list dt { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.info-list dd { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); margin: 0; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
+
+.dll-chip { border-radius: var(--moddin-radius-sm); padding: 2px 8px; color: var(--moddin-warning); background: var(--moddin-warning-bg); font-family: var(--moddin-mono); font-size: var(--moddin-text-xs); }
+
+@media (max-width: 960px) {
+  .library-layout { display: flex; flex: none; flex-direction: column; }
+  .library-layout :deep(.game-list) { flex: none; height: 300px; }
+  .game-detail { flex: none; overflow: visible; padding: var(--moddin-space-4); }
+  .game-hero { flex-direction: column; }
+  .info-list > div { grid-template-columns: 1fr; gap: 2px; }
+}
+</style>
