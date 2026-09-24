@@ -22,6 +22,45 @@ const loading = ref(false)
 const installingId = ref<string | null>(null)
 const error = ref<string | null>(null)
 const success = ref<string | null>(null)
+
+/**
+ * Translate raw backend errors into a friendly summary + a 'why' line the
+ * user can actually act on. We keep the raw message below for power users.
+ *
+ * Inspired by Microsoft HAI Guidelines G1/G2: make clear what went wrong
+ * and how the user can recover.
+ */
+const friendlyError = computed<{ title: string; why: string; showRaw: boolean } | null>(() => {
+  if (!error.value) return null
+  const raw = error.value
+  const c = copy.value
+  if (/signature|Verification equation/i.test(raw)) {
+    return {
+      title: c.errorSigTitle,
+      why: c.errorSigWhy,
+      showRaw: true,
+    }
+  }
+  if (/network|fetch|timeout|ENOTFOUND|ETIMEDOUT|Could not reach/i.test(raw)) {
+    return {
+      title: c.errorNetworkTitle,
+      why: c.errorNetworkWhy,
+      showRaw: true,
+    }
+  }
+  if (/not found|404|missing catalog|catalog\.json/i.test(raw)) {
+    return {
+      title: c.errorMissingTitle,
+      why: c.errorMissingWhy,
+      showRaw: true,
+    }
+  }
+  return {
+    title: c.errorGenericTitle,
+    why: c.errorGenericWhy,
+    showRaw: true,
+  }
+})
 const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
 
 const fetchResult = ref<CommunityFetchResult | null>(null)
@@ -192,7 +231,14 @@ onMounted(async () => {
             </small>
           </div>
 
-          <div v-if="error" class="callout callout-danger" role="alert">{{ error }}</div>
+          <div v-if="friendlyError" class="callout callout-danger" role="alert">
+            <strong>{{ friendlyError.title }}</strong>
+            <p>{{ friendlyError.why }}</p>
+            <details v-if="friendlyError.showRaw" class="callout-raw">
+              <summary>{{ copy.errorRawToggle }}</summary>
+              <code>{{ error }}</code>
+            </details>
+          </div>
           <div v-if="success" class="callout callout-info" role="status">{{ success }}</div>
 
           <div v-if="loading" class="empty-state">
