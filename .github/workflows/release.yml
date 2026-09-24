@@ -1,0 +1,43 @@
+name: Release
+
+# Publishes a GitHub release when a version tag is pushed.
+# The release body comes from `.release-notes-<tag>.md` at the repo root, and
+# its first line (a Markdown H1) becomes the release title. Tags with a
+# pre-release suffix (e.g. v0.1.0-beta.2) are published as pre-releases.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release from notes file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes=".release-notes-${TAG}.md"
+          if [ ! -f "$notes" ]; then
+            echo "::error::Missing $notes. Commit the release notes before pushing the tag."
+            exit 1
+          fi
+
+          title="$(head -n 1 "$notes" | sed 's/^# *//')"
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$title" \
+            --notes-file "$notes" \
+            "${prerelease[@]}"

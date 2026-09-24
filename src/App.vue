@@ -18,6 +18,7 @@ import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortc
 import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
 import type { ModuleUpdate } from './types/module-update'
 import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
+import { version as appVersion } from '../package.json'
 import AppIcon from './components/ui/AppIcon.vue'
 import BaseDialog from './components/ui/BaseDialog.vue'
 import ChangePreview from './components/ui/ChangePreview.vue'
@@ -1709,7 +1710,7 @@ onUnmounted(() => {
             <option v-for="option in localeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <small>{{ t('appVersion', { version: '0.1.0', count: gameCatalog.length }) }}</small>
+        <small>{{ t('appVersion', { version: appVersion, count: gameCatalog.length }) }}</small>
       </footer>
     </aside>
 

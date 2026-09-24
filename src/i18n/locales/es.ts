@@ -20,7 +20,7 @@ const es = {
   filterAll: 'Todos',
   rescanLibraries: 'Buscar juegos',
   scanning: 'Buscando…',
-  scanningLibraries: 'Buscando juegos en Steam, Epic y GOG…',
+  scanningLibraries: 'Buscando juegos en Steam y Epic…',
   noGamesFound: 'No se encontraron juegos',
   noGamesHint: 'Prueba otra búsqueda o pulsa "Buscar juegos".',
   libraryScanFailed: 'No pudimos leer tus bibliotecas de juegos.',
