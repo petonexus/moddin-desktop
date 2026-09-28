@@ -15,7 +15,6 @@ import type { TransactionRecord } from './types/transaction'
 import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
 import DesktopShortcutDialog from './features/desktop-shortcut/DesktopShortcutDialog.vue'
 import AiAssistantDialog from './components/shell/AiAssistantDialog.vue'
-import AiAssistantTrigger from './components/shell/AiAssistantTrigger.vue'
 import AiGameSuggestions from './components/shell/AiGameSuggestions.vue'
 import AiTopbarMenu from './components/shell/AiTopbarMenu.vue'
 import { useAiTopbarActions } from './composables/useAiTopbarActions'
@@ -32,6 +31,7 @@ import GlobalTools from './components/shell/GlobalTools.vue'
 import GameList from './features/library/GameList.vue'
 import ModuleCard, { type ModuleCardState, type ModuleCardUpdate } from './features/library/ModuleCard.vue'
 import HistoryView from './features/history/HistoryView.vue'
+import CapabilityModulesSection from './features/capability-modules/CapabilityModulesSection.vue'
 
 type ViewName = 'library' | 'history'
 type CheekyResearchState = 'experimental' | 'prerequisite'
@@ -1945,6 +1945,17 @@ onUnmounted(() => {
                   </section>
                 </section>
 
+                <CapabilityModulesSection
+                  :game-id="selectedGame.catalog.id"
+                  :game-name="selectedGame.catalog.name"
+                  :install-dir="selectedGame.installed.installDir"
+                  :executable-dir="gameInspection?.executableDirectory ?? null"
+                  :engine="selectedGame.catalog.enginePreset ?? null"
+                  :exclude-ids="selectedGame.catalog.modules.map((module) => module.id)"
+                  :transactions="transactions"
+                  @refresh-request="refreshTransactions"
+                />
+
                 <details class="disclosure advanced-panel">
                   <summary>
                     <span>{{ t('advancedTitle') }}</span>
@@ -2293,10 +2304,6 @@ onUnmounted(() => {
     />
 
     <AiAssistantDialog />
-    <AiAssistantTrigger
-      :selected-game-id="selectedGame?.catalog?.id ?? null"
-      :selected-game-name="selectedGame?.catalog?.name ?? null"
-    />
   </div>
 </template>
 

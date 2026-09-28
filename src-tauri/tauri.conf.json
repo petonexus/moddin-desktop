@@ -35,6 +35,10 @@
     "icon": [
       "icons/icon.ico"
     ],
+    "resources": [
+      "../moddin-runtime/node.exe",
+      "../moddin-runtime/moddin-agent"
+    ],
     "windows": {
       "wix": {
         "language": ["en-US"]

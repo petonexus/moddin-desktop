@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Shared types for the in-app "ask AI to author / improve / diagnose a
  * Moddin capability" workflow.
  *
@@ -101,4 +101,10 @@ export interface AuthorSaveResult {
   path: string
   overwrote: boolean
   errors: string[]
+  /**
+   * True when the save was refused because a local capability with the
+   * same id already exists. The UI offers an explicit "replace" action
+   * that re-runs the save with `overwrite = true`.
+   */
+  exists?: boolean
 }

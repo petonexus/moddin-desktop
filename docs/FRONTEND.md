@@ -41,6 +41,12 @@ src/
       service.ts
       types.ts
 
+    capability-modules/
+      CapabilityModulesSection.vue
+      service.ts
+      types.ts
+      useCapabilityModules.ts
+
     pcgw/
       service.ts
 

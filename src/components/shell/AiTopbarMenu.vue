@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '../ui/AppIcon.vue'
 
 /**
  * Compact AI menu that sits next to the primary game action. The
@@ -95,25 +96,27 @@ function onContribute() {
 
 <template>
   <div ref="root" class="ai-menu">
-    <button
-      class="ai-menu-trigger"
-      type="button"
-      :aria-label="t('aiTopbarAsk')"
-      :aria-haspopup="true"
-      :aria-expanded="open"
-      @click="onAsk"
-      @contextmenu.prevent="toggle"
-    >
-      <span aria-hidden="true" class="ai-menu-sparkle">✨</span>
-      <span class="ai-menu-label">{{ t('aiTopbarAsk') }}</span>
-      <span
-        aria-hidden="true"
+    <div class="ai-menu-pill">
+      <button
+        class="ai-menu-main"
+        type="button"
+        :aria-label="t('aiTopbarAsk')"
+        @click="onAsk"
+      >
+        <AppIcon name="ai" :size="13" />
+        <span class="ai-menu-label">{{ t('aiTopbarAsk') }}</span>
+      </button>
+      <button
+        type="button"
         class="ai-menu-caret"
-        role="button"
-        tabindex="-1"
+        :aria-label="t('aiTopbarOpenMenu')"
+        :aria-haspopup="true"
+        :aria-expanded="open"
         @click.stop="toggle"
-      >▾</span>
-    </button>
+      >
+        <AppIcon name="arrow-up" :size="12" />
+      </button>
+    </div>
     <div v-if="open" class="ai-menu-dropdown" role="menu" :aria-label="t('aiTopbarMenu')">
       <button
         class="ai-menu-item"
@@ -122,7 +125,7 @@ function onContribute() {
         :disabled="!props.selectedAppId"
         @click="onRecommend"
       >
-        <span class="ai-menu-item-glyph" aria-hidden="true">🎯</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true"><AppIcon name="check" :size="14" /></span>
         <span>{{ recommendLabel() }}</span>
       </button>
       <button
@@ -131,7 +134,7 @@ function onContribute() {
         role="menuitem"
         @click="onAudit"
       >
-        <span class="ai-menu-item-glyph" aria-hidden="true">🔍</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true"><AppIcon name="search" :size="14" /></span>
         <span>{{ t('aiTopbarAudit') }}</span>
       </button>
       <button
@@ -142,7 +145,7 @@ function onContribute() {
         :title="props.hasError ? undefined : t('aiTopbarDiagnoseHint')"
         @click="onDiagnose"
       >
-        <span class="ai-menu-item-glyph" aria-hidden="true">⚠️</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true"><AppIcon name="alert" :size="14" /></span>
         <span>{{ t('aiTopbarDiagnose') }}</span>
       </button>
       <hr class="ai-menu-sep" aria-hidden="true" />
@@ -152,7 +155,7 @@ function onContribute() {
         role="menuitem"
         @click="onContribute"
       >
-        <span class="ai-menu-item-glyph" aria-hidden="true">📝</span>
+        <span class="ai-menu-item-glyph" aria-hidden="true"><AppIcon name="external" :size="14" /></span>
         <span>{{ t('aiTopbarContribute') }}</span>
       </button>
     </div>
@@ -166,31 +169,41 @@ function onContribute() {
   isolation: isolate;
 }
 
-.ai-menu-trigger {
+.ai-menu-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   background: transparent;
   color: var(--moddin-text-soft, #c5cad3);
   border: 1px solid var(--moddin-line, rgba(255, 255, 255, 0.12));
   border-radius: 999px;
-  padding: 6px 10px 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
+  padding: 6px 8px 6px 12px;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
-.ai-menu-trigger:hover {
+.ai-menu-pill:hover {
   background: var(--moddin-surface-2, rgba(255, 255, 255, 0.04));
-  border-color: rgba(122, 162, 247, 0.45);
+  border-color: var(--moddin-accent-ring, rgba(139, 114, 255, 0.45));
   color: inherit;
 }
-.ai-menu-trigger:focus-visible {
-  outline: 2px solid rgba(122, 162, 247, 0.6);
+.ai-menu-pill:focus-within {
+  outline: 2px solid var(--moddin-accent, #8b72ff);
   outline-offset: 2px;
 }
 
-.ai-menu-sparkle { font-size: 13px; }
+.ai-menu-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
 .ai-menu-label { white-space: nowrap; }
 
 .ai-menu-caret {
@@ -199,13 +212,15 @@ function onContribute() {
   justify-content: center;
   width: 18px;
   height: 18px;
-  margin-left: 2px;
   border-radius: 4px;
-  font-size: 11px;
-  color: var(--moddin-text-muted, #9aa3b2);
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  color: inherit;
   cursor: pointer;
 }
 .ai-menu-caret:hover { background: rgba(255, 255, 255, 0.06); }
+.ai-menu-caret .app-icon { transform: rotate(180deg); }
 
 .ai-menu-dropdown {
   position: absolute;
@@ -243,7 +258,14 @@ function onContribute() {
   color: var(--moddin-text-muted, #9aa3b2);
   cursor: not-allowed;
 }
-.ai-menu-item-glyph { width: 18px; text-align: center; }
+.ai-menu-item-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  flex: 0 0 18px;
+  text-align: center;
+}
 
 .ai-menu-sep {
   border: 0;

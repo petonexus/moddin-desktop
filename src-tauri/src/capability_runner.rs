@@ -568,6 +568,25 @@ pub fn capability_list() -> Vec<CapabilitySummary> {
         .collect()
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityGetRequest {
+    pub capability_id: String,
+}
+
+/// Return the full spec for one capability. `capability_list` only
+/// surfaces summaries; the game-detail module cards need the complete
+/// recipe (`configSchema`, `safetyNotes`, `supportedEngines`, checks)
+/// to render their typed config form.
+#[tauri::command]
+pub fn capability_get(request: CapabilityGetRequest) -> Result<CapabilitySpec, String> {
+    let registry = CapabilityRegistry::load();
+    registry
+        .get(&request.capability_id)
+        .cloned()
+        .ok_or_else(|| format!("Unknown capability id '{}'.", request.capability_id))
+}
+
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityReloadRequest {
@@ -756,6 +775,24 @@ mod tests {
         let registry = CapabilityRegistry::load();
         assert!(registry.get("ofxr-bridge").is_some());
         assert!(registry.len() >= 1);
+    }
+
+    #[test]
+    fn capability_get_returns_spec_for_known_id() {
+        let result = capability_get(CapabilityGetRequest {
+            capability_id: "ofxr-bridge".to_owned(),
+        });
+        let spec = result.expect("ofxr-bridge is a built-in capability");
+        assert_eq!(spec.id, "ofxr-bridge");
+        assert_eq!(spec.origin, SpecOrigin::BuiltIn);
+    }
+
+    #[test]
+    fn capability_get_errors_for_unknown_id() {
+        let result = capability_get(CapabilityGetRequest {
+            capability_id: "no-such-capability".to_owned(),
+        });
+        assert!(result.is_err());
     }
 
     #[tokio::test]

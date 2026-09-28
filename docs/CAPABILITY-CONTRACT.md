@@ -166,6 +166,16 @@ ResolvedConfig.values = { backend: "fidelityfx", diagnostics: "0" }
 | `capability_install({ capabilityId, gameId, gameName, installDir, executableDir, config })` | Run `spec.install` and record a transaction.      |
 | `capability_uninstall({ capabilityId, gameId, installDir })` | Run `spec.uninstall` (or roll back the latest transaction). |
 | `capability_evaluate({ capabilityId, executableDir, config })` | Run every check in `spec.checks` and `spec.verify` and return a `VerificationReport`. |
+| `validate_capability_yaml({ yaml })`                 | Parse + schema/semantic-check an AI-drafted YAML (id shape, category/status enums, known step/check kinds). Returns an `AuthorSpecSummary`. |
+| `preview_capability_plan({ yaml })`                  | Render the human-readable dry-run plan the AI dialog shows before saving. |
+| `save_capability_yaml({ yaml, overwrite })`          | Validate and atomically write `%LOCALAPPDATA%\Moddin\capabilities\<id>.yaml` (with `.bak` backup). Refuses to shadow built-in ids; `overwrite` replaces a previous local file. |
+| `validate_recommendations_yaml({ yaml })`            | Validate the recommendation list the AI returns in `recommend` mode against the live registry. |
+
+The three authoring commands live in
+[`src-tauri/src/capability_authoring.rs`](../src-tauri/src/capability_authoring.rs)
+and back the in-app "Ask AI" flow (`src/features/ai-assistant/`); they reuse
+the same `CapabilitySpec` serde schema as the runner, so an AI-authored recipe
+is checked exactly like a shipped one.
 
 The TypeScript layer mirrors these as `install_capability`,
 `uninstall_capability`, `evaluate_capability`, and `list_capabilities`

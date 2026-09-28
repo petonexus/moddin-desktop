@@ -431,6 +431,17 @@ mod tests {
 
     #[test]
     fn reads_user_marker_and_infers_installed_state() {
+        // The marker lives under `%LOCALAPPDATA%\Moddin\tools`, so make
+        // the test hermetic: hold the shared env lock and point
+        // LOCALAPPDATA at a private dir for the whole body. Otherwise a
+        // concurrent env-mutating test can retarget (and delete) the
+        // directory between our write and read.
+        let _env = crate::test_support::env_lock();
+        let appdata = temp_root("appdata");
+        std::fs::create_dir_all(&appdata).expect("appdata dir");
+        let prev_appdata = std::env::var_os("LOCALAPPDATA");
+        std::env::set_var("LOCALAPPDATA", &appdata);
+
         let install = temp_root("user-installed");
         std::fs::create_dir_all(&install).expect("install dir");
         std::fs::write(install.join("GameAssembly.dll"), b"fake").expect("layout");
@@ -459,6 +470,11 @@ mod tests {
 
         let _ = std::fs::remove_file(&marker_path);
         let _ = std::fs::remove_dir_all(&install);
+        let _ = std::fs::remove_dir_all(&appdata);
+        match prev_appdata {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
 
         assert_eq!(row.state, ModuleCompatState::Installed);
         assert_eq!(row.installed_version.as_deref(), Some("6.0.0-pre.2"));

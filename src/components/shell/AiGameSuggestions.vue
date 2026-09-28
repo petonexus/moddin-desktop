@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '../ui/AppIcon.vue'
 import { useAiAssistantTrigger } from '../../composables/useAiAssistant'
 import { useAiModuleActions } from '../../composables/useAiModuleActions'
 
@@ -41,7 +42,9 @@ function dismiss() {
 
 <template>
   <aside v-if="isVisible" class="ai-game-banner">
-    <div class="ai-game-banner-icon" aria-hidden="true">✨</div>
+    <div class="ai-game-banner-icon" aria-hidden="true">
+      <AppIcon name="ai" :size="18" />
+    </div>
     <div class="ai-game-banner-body">
       <strong>{{ t('aiAssistantGameBannerHeading') }}</strong>
       <p>{{ t('aiAssistantGameBannerBody', { game: gameLabel }) }}</p>
@@ -59,7 +62,7 @@ function dismiss() {
         :aria-label="t('aiAssistantGameBannerDismiss')"
         @click="dismiss"
       >
-        ×
+        <AppIcon name="close" :size="14" />
       </button>
     </div>
   </aside>
@@ -73,7 +76,7 @@ function dismiss() {
   gap: 0.85rem;
   background: var(--moddin-surface-2, rgba(255, 255, 255, 0.025));
   border: 1px solid var(--moddin-line-soft, rgba(255, 255, 255, 0.08));
-  border-left: 3px solid var(--moddin-accent, #7aa2f7);
+  border-left: 3px solid var(--moddin-accent, #8b72ff);
   border-radius: 6px;
   padding: 0.55rem 0.85rem;
   margin-bottom: 0.85rem;
@@ -82,7 +85,7 @@ function dismiss() {
 
 .ai-game-banner-icon {
   font-size: 1.05rem;
-  color: var(--moddin-accent, #7aa2f7);
+  color: var(--moddin-accent, #8b72ff);
 }
 
 .ai-game-banner-body strong {
@@ -107,8 +110,8 @@ function dismiss() {
 
 .ai-game-banner-primary {
   background: transparent;
-  border: 1px solid var(--moddin-accent, #7aa2f7);
-  color: var(--moddin-accent, #7aa2f7);
+  border: 1px solid var(--moddin-accent, #8b72ff);
+  color: var(--moddin-accent, #8b72ff);
   border-radius: 4px;
   padding: 0.3rem 0.7rem;
   font-size: 0.78rem;
@@ -117,7 +120,7 @@ function dismiss() {
 }
 
 .ai-game-banner-primary:hover {
-  background: rgba(122, 162, 247, 0.12);
+  background: var(--moddin-accent-soft, rgba(139, 114, 255, 0.12));
 }
 
 .ai-game-banner-secondary {

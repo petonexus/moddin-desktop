@@ -1,4 +1,6 @@
-﻿import { computed } from 'vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useAiAssistantTrigger } from './useAiAssistant'
 import { useAiModuleActions } from './useAiModuleActions'
 
 // Topbar IA split-button actions extracted from App.vue so it stays
@@ -12,7 +14,9 @@ export function useAiTopbarActions(deps: {
   selectedGameName: () => string | null
   currentError: () => string | null
 }) {
+  const { t } = useI18n()
   const aiModuleActions = useAiModuleActions()
+  const trigger = useAiAssistantTrigger()
   const hasError = computed(() => Boolean(deps.currentError()))
 
   async function auditLike() {
@@ -25,8 +29,14 @@ export function useAiTopbarActions(deps: {
   async function ask() { await auditLike() }
 
   async function recommend() {
-    if (!deps.selectedAppId()) return
-    await auditLike()
+    const gameId = deps.selectedAppId()
+    if (!gameId) return
+    const gameName = deps.selectedGameName() ?? t('aiAssistantGameBannerAnyGame')
+    await trigger.openAiAssistantRecommendations({
+      gameId,
+      gameName,
+      intent: t('aiAssistantGameBannerIntent', { game: gameName }),
+    })
   }
 
   async function audit() { await auditLike() }

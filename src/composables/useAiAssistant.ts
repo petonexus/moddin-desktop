@@ -10,17 +10,22 @@ import type {
   Recommendation,
 } from '../types/ai-assistant'
 import {
+  AGENT_SUFFIX,
   buildAuthorPrompt,
+  listAgentClis,
   previewCapabilityPlan,
+  runAiAgentPrompt,
   saveCapabilityYaml,
   validateCapabilityYaml,
   validateRecommendationsYaml,
   listCapabilitiesForAssistant,
 } from '../features/ai-assistant/service'
-import {
-  installCollection,
-  listCollections,
-} from '../features/collection/service'
+import type {
+  AgentCliInfo,
+  AgentKind,
+  AgentRunResult,
+} from '../features/ai-assistant/service'
+import { listCollections } from '../features/collection/service'
 import { installCommunityCapability as installCapability } from '../features/community/service'
 import { readLocalValue, writeLocalValue } from '../services/storage'
 import type { CatalogCapability, CatalogCollection } from '../types/ai-assistant'
@@ -65,6 +70,16 @@ const recommendations = ref<Recommendation[]>([])
 const selectedRecommendations = ref<Set<string>>(new Set())
 const recommendationInstallStatus = ref<Record<string, 'pending' | 'running' | 'done' | 'failed'>>({})
 
+// Agent-mode state: when an AI CLI is installed we hand the prompt to it
+// headlessly instead of asking the user to copy/paste to a web AI. The
+// backend runs one agent at a time; `agentBusy` mirrors that lock.
+const agentClis = ref<AgentCliInfo[]>([])
+const agentClisLoaded = ref(false)
+const agentBusy = ref(false)
+const agentRun = ref<AgentRunResult | null>(null)
+const agentElapsed = ref(0)
+let agentTimer: number | undefined
+
 // Persist the user's verbosity choice so the next dialog open honors it.
 watch(verbosity, (next) => {
   writeLocalValue(VERBOSITY_STORAGE_KEY, next)
@@ -84,6 +99,7 @@ function reset() {
   recommendations.value = []
   selectedRecommendations.value = new Set()
   recommendationInstallStatus.value = {}
+  agentRun.value = null
 }
 
 async function openFor(next: AuthorPromptContext) {
@@ -160,6 +176,87 @@ async function copyPromptToClipboard(): Promise<boolean> {
   }
 }
 
+// Error callout budget for a failed agent run; the full output stays in
+// `agentRun` for the dialog to display.
+const AGENT_ERROR_MAX_CHARS = 600
+
+function truncateAgentOutput(text: string): string {
+  return text.length > AGENT_ERROR_MAX_CHARS
+    ? `${text.slice(0, AGENT_ERROR_MAX_CHARS)}…`
+    : text
+}
+
+function startAgentTimer() {
+  stopAgentTimer()
+  agentElapsed.value = 0
+  agentTimer = window.setInterval(() => {
+    agentElapsed.value += 1
+  }, 1000)
+}
+
+function stopAgentTimer() {
+  if (agentTimer === undefined) return
+  window.clearInterval(agentTimer)
+  agentTimer = undefined
+}
+
+/**
+ * Detect installed AI CLIs once per session. Silent failure leaves an
+ * empty list — the dialog simply doesn't render the agent panel and the
+ * copy/paste flow keeps working.
+ */
+async function ensureAgentClis() {
+  if (agentClisLoaded.value) return
+  agentClisLoaded.value = true
+  try {
+    agentClis.value = await listAgentClis()
+  } catch {
+    agentClis.value = []
+  }
+}
+
+/**
+ * Hand the current prompt (plus the MCP/fence instructions suffix) to an
+ * installed AI CLI and route the result:
+ *
+ * - `ok` with YAML: feed it through the same validation path as a pasted
+ *   answer, which advances the step to 'preview' (author/improve) or
+ *   'review' (recommend). Save is never touched here.
+ * - `noYaml`: expected for diagnose mode — a plain-language answer the
+ *   user reads on the prompt step.
+ * - `failed`: same as noYaml, plus the truncated output in the error
+ *   callout.
+ */
+async function runWithAgent(agent: AgentKind) {
+  if (agentBusy.value || busy.value) return
+  const prompt = `${promptText.value}${AGENT_SUFFIX}`
+  agentBusy.value = true
+  agentRun.value = null
+  error.value = null
+  startAgentTimer()
+  try {
+    const result = await runAiAgentPrompt(agent, prompt)
+    if (result.status === 'ok' && result.yaml) {
+      yamlInput.value = result.yaml
+      await validateYaml()
+      return
+    }
+    agentRun.value = result
+    if (result.status === 'failed') {
+      error.value = truncateAgentOutput(result.output)
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    stopAgentTimer()
+    agentBusy.value = false
+  }
+}
+
+function dismissAgentRun() {
+  agentRun.value = null
+}
+
 function extractYamlFence(input: string): string {
   const trimmed = input.trim()
   const fenceMatch = trimmed.match(/```(?:yaml|yml)?\s*\n([\s\S]*?)```/)
@@ -177,9 +274,13 @@ async function validateYaml(): Promise<boolean> {
       if (result.ok) {
         recommendations.value = result.recommendations
         // Pre-select everything by default — the user can deselect
-        // before installing.
+        // before installing. Collections are excluded: the collection
+        // installer is not part of this build, so offering them would
+        // always end in a failure row.
         selectedRecommendations.value = new Set(
-          result.recommendations.map((r) => `${r.type}:${r.id}`),
+          result.recommendations
+            .filter((r) => r.type === 'capability')
+            .map((r) => `${r.type}:${r.id}`),
         )
         step.value = 'review'
       } else {
@@ -224,14 +325,19 @@ interface RecommendOpenContext {
 
 function synthesizeCapabilityDescription(summary: CapabilitySummary): string {
   const cat = summary.category || 'qol'
-  const origin = summary.origin === 'builtIn' ? 'integrada' : summary.origin === 'community' ? 'comunidade' : 'local'
-  return `Capacidade da categoria ${cat}, origem ${origin}.`
+  const origin =
+    summary.origin === 'builtIn'
+      ? 'built into Moddin'
+      : summary.origin === 'community'
+        ? 'from the community catalog'
+        : 'saved locally by the user'
+  return `Capability in category "${cat}", ${origin}.`
 }
 
 function synthesizeCollectionDescription(
   summary: { id: string; displayName: string; description: string; targetGame: string | null; capabilityCount: number; requiredCount: number },
 ): string {
-  return summary.description || `Pacote com ${summary.capabilityCount} capacidades (${summary.requiredCount} obrigatórias).`
+  return summary.description || `Bundle with ${summary.capabilityCount} capabilities (${summary.requiredCount} required).`
 }
 
 /**
@@ -299,16 +405,18 @@ async function openAiAssistantRecommendations(ctx: RecommendOpenContext) {
   }
 }
 
-interface InstallRecommendationContext {
-  gameId: string
-  gameName: string
-  installDir: string
-  executableDir: string
-}
-
-async function installSelectedRecommendations(ctx: InstallRecommendationContext) {
-  const selected = recommendations.value.filter((r) =>
-    selectedRecommendations.value.has(`${r.type}:${r.id}`),
+/**
+ * Install every selected recommendation through the standard community
+ * install path (the same request shape the Community panel uses).
+ * Collections are never part of the selection — the collection
+ * installer is not available in this build.
+ *
+ * Reads the game context from the dialog state; the dialog is global
+ * and the recommend flow always carries gameId/gameName in context.
+ */
+async function installSelectedRecommendations() {
+  const selected = recommendations.value.filter(
+    (r) => r.type === 'capability' && selectedRecommendations.value.has(`${r.type}:${r.id}`),
   )
   if (selected.length === 0) return
   busy.value = true
@@ -326,32 +434,15 @@ async function installSelectedRecommendations(ctx: InstallRecommendationContext)
     const key = `${rec.type}:${rec.id}`
     recommendationInstallStatus.value = { ...recommendationInstallStatus.value, [key]: 'running' }
     try {
-      if (rec.type === 'collection') {
-        await installCollection({
-          collectionId: rec.id,
-          gameId: ctx.gameId,
-          gameName: ctx.gameName,
-          installDir: ctx.installDir,
-          executableDir: ctx.executableDir,
-        })
-      } else {
-        // For capabilities we go through the standard install path.
-        // The capability_install command requires installDir/executableDir
-        // and a config; for the recommend flow we let the user fill
-        // those later (today we skip and surface an info message).
-        // Implementation detail: this currently does a best-effort
-        // install; if the capability needs config, the install fails
-        // gracefully and the user can finish it from the main UI.
-        await installCapability({
-          capabilityId: rec.id,
-          gameId: ctx.gameId,
-          gameName: ctx.gameName,
-          installDir: ctx.installDir,
-          executableDir: ctx.executableDir,
-          config: { values: {} },
-          acceptUnsigned: true,
-        })
-      }
+      await installCapability({
+        capabilityId: rec.id,
+        gameId: context.value.gameId ?? 'unknown',
+        gameName: context.value.gameName ?? 'AI recommendation',
+        installDir: '',
+        executableDir: '',
+        config: { values: {} },
+        acceptUnsigned: true,
+      })
       recommendationInstallStatus.value = {
         ...recommendationInstallStatus.value,
         [key]: 'done',
@@ -373,15 +464,20 @@ async function installSelectedRecommendations(ctx: InstallRecommendationContext)
   step.value = 'saved'
 }
 
-async function save(): Promise<boolean> {
+async function save(overwrite = false): Promise<boolean> {
   busy.value = true
   error.value = null
   try {
     const candidate = extractYamlFence(yamlInput.value)
-    const result = await saveCapabilityYaml(candidate, false)
+    const result = await saveCapabilityYaml(candidate, overwrite)
     saveResult.value = result
     if (result.ok) {
       step.value = 'saved'
+      // Let every mounted surface (e.g. the game-detail capability
+      // cards) re-read the catalog so the new mod appears immediately.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('moddin:capability-saved'))
+      }
       return true
     }
     error.value = result.errors.join('\n')
@@ -432,6 +528,11 @@ export function useAiAssistant() {
     recommendations,
     selectedRecommendations,
     recommendationInstallStatus,
+    agentClis,
+    agentClisLoaded,
+    agentBusy,
+    agentRun,
+    agentElapsed,
     // actions
     openFor,
     openAiAssistantRecommendations,
@@ -444,6 +545,9 @@ export function useAiAssistant() {
     close,
     toggleRecommendation,
     installSelectedRecommendations,
+    ensureAgentClis,
+    runWithAgent,
+    dismissAgentRun,
   }
 }
 

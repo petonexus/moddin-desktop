@@ -1,4 +1,4 @@
-﻿import { invokeDebug as invoke } from '../../debug'
+import { invokeDebug as invoke } from '../../debug'
 import type {
   AuthorPreviewResult,
   AuthorPromptContext,
@@ -10,14 +10,16 @@ import type { CapabilitySummary } from '../../types/capability'
 
 /**
  * Thin Tauri bindings for the "ask AI to author a Moddin capability"
- * workflow. The schema / validation logic lives in the Rust backend
- * (`crate::capability_authoring`); the frontend never re-implements it.
+ * workflow. Validation, preview and save are executed by the Rust
+ * backend (`crate::capability_authoring`) against the same
+ * `CapabilitySpec` schema the runner uses, so an AI-drafted YAML is
+ * checked exactly like a shipped one.
  *
- * Frontend resilience: `build_author_prompt` is not yet implemented in
- * the Rust side on this branch (the capability_authoring crate is
- * scoped for a future PR). When the Rust command is missing we fall
- * back to a JavaScript prompt builder so the dialog still works. The
- * user never sees a raw "Command … not found" error.
+ * Frontend resilience: `build_author_prompt` is intentionally not
+ * implemented in Rust (the prompt template iterates faster in
+ * TypeScript). When the Rust command is missing we fall back to a
+ * JavaScript prompt builder so the dialog still works. The user never
+ * sees a raw "Command … not found" error.
  */
 
 function isCommandMissing(error: unknown): boolean {
@@ -54,13 +56,17 @@ function buildPromptFallback(context: AuthorPromptContext): string {
         verbosity,
       ].join('\n')
 
-    case 'diagnose':
+    case 'diagnose': {
+      // The trigger carries the raw error in `errorMessage`; `intent`
+      // stays empty for diagnose opens. Fall back to whatever text we
+      // have so the pasted prompt never shows an empty code block.
+      const errorText = context.errorMessage?.trim() || intent
       return [
         '# Task',
         `A user just hit this error in Moddin Desktop while working with "${game}":`,
         '',
         '```',
-        intent,
+        errorText,
         '```',
         '',
         '# What I want from you',
@@ -71,6 +77,7 @@ function buildPromptFallback(context: AuthorPromptContext): string {
         '# Tone',
         verbosity,
       ].join('\n')
+    }
 
     case 'improve':
       return [
@@ -156,10 +163,11 @@ export function saveCapabilityYaml(
 /**
  * Open a HTTPS URL in the user's default browser. Used by the AI
  * dialog to deep-link to ChatGPT / Claude / Gemini from the basic
- * onboarding card.
+ * onboarding card. Goes through `open_web_url` (any HTTPS host) — the
+ * release-oriented `open_external_url` only allows github.com links.
  */
 export function openAiAssistantLink(url: string): Promise<void> {
-  return invoke<void>('open_external_url', { url })
+  return invoke<void>('open_web_url', { url })
 }
 
 /**
@@ -168,4 +176,63 @@ export function openAiAssistantLink(url: string): Promise<void> {
  */
 export function listCapabilitiesForAssistant(): Promise<CapabilitySummary[]> {
   return invoke<CapabilitySummary[]>('capability_list')
+}
+
+/* --------------------------------------------------------------------------
+ * Agent mode — drive an AI CLI already installed on the PC (Codex,
+ * Claude Code, Cursor Agent) headlessly, instead of asking the user to
+ * copy the prompt to a web AI and paste YAML back.
+ * ------------------------------------------------------------------------ */
+
+/** Which AI CLI Moddin should drive. Mirrors the Rust `AgentKind` enum. */
+export type AgentKind = 'codex' | 'claudeCode' | 'cursorAgent'
+
+/** Discovery snapshot for one AI CLI. Mirrors Rust `AgentCliInfo`. */
+export interface AgentCliInfo {
+  agent: AgentKind
+  available: boolean
+  path: string | null
+  detail: string | null
+}
+
+export type AgentRunStatus = 'ok' | 'noYaml' | 'failed'
+
+/** Outcome of one headless agent run. Mirrors Rust `AgentRunResult`. */
+export interface AgentRunResult {
+  agent: AgentKind
+  status: AgentRunStatus
+  output: string
+  yaml: string | null
+  durationMs: number
+}
+
+/**
+ * Instructions appended to the generated prompt when it is handed to an
+ * installed AI CLI. The agent has the Moddin MCP server available, so it
+ * can ground itself in the real catalog and check its own YAML before
+ * replying — and it must NOT save anything (the app saves after the user
+ * reviews). Diagnose tasks legitimately answer in plain text instead of
+ * YAML, which the backend reports as `noYaml`.
+ */
+export const AGENT_SUFFIX = `
+
+---
+You have the Moddin MCP server available (tools: list_supported_games, get_game_info, get_capability_template, list_capabilities, validate_capability_yaml, preview_capability_plan). Use them to ground your answer in the real catalog and to check your work. Do NOT call save_capability_yaml — the Moddin app saves after the user reviews. Finish your reply with the final result as a single fenced \`\`\`yaml block (\`\`\`yaml ...\`\`\`). If the task is a diagnosis (no YAML expected), just answer in plain language.`
+
+/** Detect which AI CLIs are installed on this machine. */
+export function listAgentClis(): Promise<AgentCliInfo[]> {
+  return invoke<AgentCliInfo[]>('list_agent_clis')
+}
+
+/**
+ * Run one prompt through the given CLI (headless, up to 240 s). The
+ * backend serializes runs — a second call while one is active errors.
+ */
+export function runAiAgentPrompt(
+  agent: AgentKind,
+  prompt: string,
+): Promise<AgentRunResult> {
+  return invoke<AgentRunResult>('run_ai_agent_prompt', {
+    request: { agent, prompt },
+  })
 }
