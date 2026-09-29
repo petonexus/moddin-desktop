@@ -84,9 +84,9 @@ Currently supported kinds (10):
 
 Check kinds live in `src-tauri/src/builtin_checks.rs` as `match` arms in `evaluate_check()`. The same steps as above, but in `evaluate_check()` instead.
 
-Currently supported check kinds (5):
+Currently supported check kinds (6):
 
-- `process-running`, `file-exists`, `file-absent`, `archive-reachable`, `archive-sha256`
+- `process-running`, `file-exists`, `file-absent`, `archive-reachable`, `archive-sha256`, `exe-version`
 
 ---
 

@@ -30,9 +30,9 @@ struct GithubRelease {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ParsedVersion {
-    core: Vec<u64>,
-    prerelease: Option<String>,
+pub(crate) struct ParsedVersion {
+    pub(crate) core: Vec<u64>,
+    pub(crate) prerelease: Option<String>,
 }
 
 fn unsupported(detail: &str, current_version: Option<String>) -> ModuleUpdateResult {
@@ -45,7 +45,11 @@ fn unsupported(detail: &str, current_version: Option<String>) -> ModuleUpdateRes
     }
 }
 
-fn parse_version(value: &str) -> Option<ParsedVersion> {
+/// Tolerant version parser shared with the `exe-version` check in
+/// [`crate::builtin_checks`]: accepts prefixed tags (`v0.9.5`,
+/// `OptiScaler_v0.9.5`), 1–4+ numeric components, and natural-order
+/// prerelease segments (`beta.10` > `beta.2`).
+pub(crate) fn parse_version(value: &str) -> Option<ParsedVersion> {
     let value = value.trim();
     let first_digit = value.find(|character: char| character.is_ascii_digit())?;
     let value = value[first_digit..].split('+').next().unwrap_or_default();
@@ -145,7 +149,10 @@ fn compare_prerelease_natural(left: &str, right: &str) -> Ordering {
     left_bytes.len().cmp(&right_bytes.len())
 }
 
-fn compare_versions(left: &ParsedVersion, right: &ParsedVersion) -> Ordering {
+/// Three-way compare over [`ParsedVersion`] cores (numeric, missing
+/// components read as `0`) then prerelease (absent > present, natural
+/// order inside). Shared with the `exe-version` check.
+pub(crate) fn compare_versions(left: &ParsedVersion, right: &ParsedVersion) -> Ordering {
     for index in 0..left.core.len().max(right.core.len()) {
         let left_part = left.core.get(index).copied().unwrap_or(0);
         let right_part = right.core.get(index).copied().unwrap_or(0);
@@ -160,6 +167,22 @@ fn compare_versions(left: &ParsedVersion, right: &ParsedVersion) -> Ordering {
         (Some(_), None) => Ordering::Less,
         (Some(left), Some(right)) => compare_prerelease_natural(left, right),
     }
+}
+
+/// Compares only the numeric core components, ignoring prerelease
+/// annotations. The `exe-version` check uses this for `blockedVersions`
+/// and `exactVersions`, where entries identify a game build by its
+/// numeric quad and annotations like Windows' "(WinBuild.160101.0800)"
+/// FileVersion suffix must not make two builds differ.
+pub(crate) fn compare_version_cores(left: &ParsedVersion, right: &ParsedVersion) -> Ordering {
+    for index in 0..left.core.len().max(right.core.len()) {
+        let left_part = left.core.get(index).copied().unwrap_or(0);
+        let right_part = right.core.get(index).copied().unwrap_or(0);
+        if left_part != right_part {
+            return left_part.cmp(&right_part);
+        }
+    }
+    Ordering::Equal
 }
 
 fn version_is_newer(current: &str, latest: &str) -> bool {
@@ -282,5 +305,16 @@ mod tests {
     fn rejects_non_ascii_prerelease_suffixes() {
         assert!(parse_version("1.0.0-béta.1").is_none());
         assert!(!version_is_newer("1.0.0", "1.0.0-béta.2"));
+    }
+
+    #[test]
+    fn core_comparison_ignores_prerelease_annotations() {
+        let annotated = parse_version("1.16.3.0 (WinBuild.160101.0800)").expect("annotated quad");
+        let plain = parse_version("1.16.3").expect("plain triple");
+        assert_eq!(compare_version_cores(&annotated, &plain), Ordering::Equal);
+        // Full comparison still sees the annotation as a prerelease.
+        assert_eq!(compare_versions(&plain, &annotated), Ordering::Greater);
+        let other = parse_version("1.16.4").expect("other");
+        assert_eq!(compare_version_cores(&annotated, &other), Ordering::Less);
     }
 }

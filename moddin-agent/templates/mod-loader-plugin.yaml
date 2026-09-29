@@ -1,0 +1,78 @@
+# Pattern: mod-loader-plugin
+#
+# Use when the mod is a plugin/addon for a mod loader (BepInEx plugin,
+# UE4SS mod, ReShade addon, OptiScaler addon, ...) that must only be
+# installed after the loader itself is active for the game.
+#
+# The agent should:
+#   - set `dependencies` to the loader capability id(s) the plugin needs
+#     (the runner auto-installs a missing loader first, recursively, up
+#     to 8 levels; cycles and unknown ids abort with the dependency
+#     chain in the error)
+#   - confirm the loader's config schema so the UI can collect shared
+#     config fields (auto-installed dependencies receive the same
+#     ResolvedConfig as the requested capability)
+#   - declare a compatibility block when the plugin only works against
+#     specific game builds (see compatibility: below)
+#
+# Required config fields:
+#   - downloadUrl, sha256, version, pluginFile (the plugin file inside
+#     the archive)
+
+id: my-mod-plugin     # ⚠ AGENT: replace this with the final kebab-case id before save
+displayName: <Human Readable Name>
+category: graphics
+status: available
+# ⚠ AGENT: replace with the real loader capability id from the registry
+# (see capability_list), e.g. "optiscaler" for an OptiScaler addon.
+dependencies:
+  - my-mod-loader
+# Optional: pin the game builds this plugin supports. The runner reads
+# the game exe FileVersion before installing (capability_install with
+# force=true overrides) and reports the outcome as a structured check.
+compatibility:
+  gameExe: Game/Binaries/Win64/Game-Win64-Shipping.exe
+  minExeVersion: 1.16.0
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+  - name: sha256
+    type: sha256
+    required: true
+  - name: version
+    type: string
+    required: true
+  - name: pluginFile
+    type: string
+    required: true
+    description: Filename of the plugin file inside the downloaded archive.
+checks:
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: extract-zip
+    description: Extract the archive into the executable directory.
+    params:
+      archivePathField: downloadUrl
+verify:
+  - id: plugin-present
+    label: Plugin file installed
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    params:
+      pathField: pluginFile
+uninstall:
+  - kind: file-delete
+    description: Remove the installed plugin file.
+    params:
+      pathField: pluginFile
+safetyNotes:
+  - Plugins load through the declared dependency; uninstalling the loader also disables this plugin.

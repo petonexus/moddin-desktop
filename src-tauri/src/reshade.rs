@@ -22,7 +22,10 @@
 //! - Automatic add-on selection beyond the bundled Cheeky path.
 //! - INI generation per-game presets.
 
-use crate::transaction::{self, TransactionRecord};
+use crate::{
+    inspection::{classify_proxy_occupant, ensure_resolution_matches, ProxyResolution},
+    transaction::{self, TransactionRecord},
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,7 +38,6 @@ use std::{
 use zip::ZipArchive;
 
 const MARKER_FILE: &str = ".moddin-reshade.json";
-const OPTISCALER_MARKER_FILE: &str = ".moddin-optiscaler.json";
 const HOST_DLL_NAME: &str = "ReShade64.dll";
 const ADDON_DLL_NAME: &str = "ReShadeAddons64.dll";
 const DEFAULT_INI_NAME: &str = "ReShade.ini";
@@ -64,6 +66,16 @@ pub struct ReshadeRequest {
     pub proxy: String,
     #[serde(default)]
     pub safety_notes: Vec<String>,
+    /// Allows replacing a proxy DLL held by an unknown third-party loader
+    /// (transactional backup still applies). Defaults to `false` so
+    /// third-party DLLs are never overwritten implicitly.
+    #[serde(default)]
+    pub allow_replace_unknown: bool,
+    /// Optional resolution pinned by the caller from a previous preview.
+    /// Install recomputes the resolution and refuses mismatches, so a stale
+    /// preview can never be replayed against a changed game directory.
+    #[serde(default)]
+    pub resolution: Option<ProxyResolution>,
     /// Optional GitHub releases API URL used by `update_check`.
     /// Currently informational; the live resolver is still planned for v1.
     #[serde(default)]
@@ -71,15 +83,19 @@ pub struct ReshadeRequest {
 }
 
 /// Reports a collision between ReShade's chosen proxy DLL and another
-/// loader/injector already in the game's executable directory. Moddin
-/// refuses to overwrite the existing DLL even when its shape is unknown.
+/// loader/injector already in the game's executable directory, together
+/// with the resolution the install will apply: a Moddin-managed occupant is
+/// backed up and replaced (`replace_with_backup`), while an unknown
+/// third-party DLL blocks the install unless the caller explicitly opts in.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReshadeConflict {
     pub proxy: String,
     pub path: String,
+    pub size_bytes: u64,
     pub held_by: String,
     pub managed_by_moddin: bool,
+    pub resolution: ProxyResolution,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +108,7 @@ pub struct ReshadePreview {
     pub installed_version: Option<String>,
     pub proxy_chosen: String,
     pub proxy_available: bool,
+    pub resolution: ProxyResolution,
     pub archive_reachable: bool,
     pub archive_sha256: Option<String>,
     pub conflicts: Vec<ReshadeConflict>,
@@ -241,50 +258,84 @@ fn marker_is_consistent(marker: &ReshadeMarker, exec_dir: &Path) -> bool {
         .all(|relative| exec_dir.join(relative).is_file())
 }
 
+struct ProxyEvaluation {
+    conflicts: Vec<ReshadeConflict>,
+    resolution: ProxyResolution,
+}
+
 /// Inspect the executable directory for collisions with the chosen proxy
-/// DLL. The OptiScaler marker (when present) tells us Moddin itself owns
-/// that proxy; the existence of any other DLL by the chosen name means a
-/// non-Moddin loader is already in place and must not be overwritten.
+/// DLL and decide how the install will resolve them:
 ///
-/// Returns the list of conflicts plus a boolean that is `false` when the
-/// proxy file is missing (the proxy is available) and `true` when the
-/// file is present but unowned.
-fn detect_proxy_conflicts(exec_dir: &Path, proxy: &str) -> (Vec<ReshadeConflict>, bool) {
+/// - free slot → `use_next_free`;
+/// - occupied by a Moddin-managed DLL (ReShade's own tool-store marker, the
+///   OptiScaler marker beside the game, or a live Moddin transaction backup)
+///   → `replace_with_backup`: the install transaction backs the existing
+///   file up before writing, so Undo restores the previous DLL;
+/// - occupied by an unknown third-party DLL → `blocked`, unless the caller
+///   explicitly sets `allow_replace_unknown` (then `replace_with_backup`).
+///
+/// Chain-loading was considered and rejected: neither ReShade nor OptiScaler
+/// can reliably load an arbitrary renamed proxy (see [`ProxyResolution`]).
+fn evaluate_proxy(
+    exec_dir: &Path,
+    game_id: &str,
+    proxy: &str,
+    allow_replace_unknown: bool,
+) -> ProxyEvaluation {
     let proxy_path = exec_dir.join(proxy);
     if !proxy_path.is_file() {
-        return (Vec::new(), true);
+        return ProxyEvaluation {
+            conflicts: Vec::new(),
+            resolution: ProxyResolution::UseNextFree,
+        };
     }
 
-    let optiscaler_marker = exec_dir.join(OPTISCALER_MARKER_FILE);
-    if optiscaler_marker.is_file() {
-        if let Ok(contents) = fs::read_to_string(&optiscaler_marker) {
-            if let Ok(marker) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if marker.get("proxyDll").and_then(|value| value.as_str())
-                    == Some(proxy)
-                {
-                    return (
-                        vec![ReshadeConflict {
-                            proxy: proxy.to_owned(),
-                            path: proxy_path.to_string_lossy().into_owned(),
-                            held_by: "OptiScaler (managed by Moddin)".to_owned(),
-                            managed_by_moddin: true,
-                        }],
-                        false,
-                    );
-                }
-            }
+    let occupant = classify_proxy_occupant(exec_dir, proxy);
+    // ReShade's marker lives in the Moddin tool store rather than beside
+    // the game executable, so ownership is layered on top of the shared
+    // classification.
+    let owned_by_reshade = read_marker(game_id)
+        .filter(|marker| marker.proxy.eq_ignore_ascii_case(proxy))
+        .is_some_and(|marker| marker_is_consistent(&marker, exec_dir));
+    let file_size = || proxy_path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    let (managed_by_moddin, held_by, size_bytes) = if owned_by_reshade {
+        (
+            true,
+            "ReShade (managed by Moddin)".to_owned(),
+            file_size(),
+        )
+    } else {
+        match occupant {
+            Some(occupant) => (
+                occupant.managed_by_moddin,
+                occupant.held_by,
+                occupant.size_bytes,
+            ),
+            None => (
+                false,
+                "another loader (not managed by Moddin)".to_owned(),
+                file_size(),
+            ),
         }
-    }
+    };
 
-    (
-        vec![ReshadeConflict {
+    let resolution = if managed_by_moddin || allow_replace_unknown {
+        ProxyResolution::ReplaceWithBackup
+    } else {
+        ProxyResolution::Blocked
+    };
+
+    ProxyEvaluation {
+        conflicts: vec![ReshadeConflict {
             proxy: proxy.to_owned(),
             path: proxy_path.to_string_lossy().into_owned(),
-            held_by: "another loader (not managed by Moddin)".to_owned(),
-            managed_by_moddin: false,
+            size_bytes,
+            held_by,
+            managed_by_moddin,
+            resolution,
         }],
-        false,
-    )
+        resolution,
+    }
 }
 
 /// Compare the locally installed ReShade version against the latest
@@ -400,7 +451,6 @@ pub async fn preview_reshade(request: ReshadeRequest) -> Result<ReshadePreview, 
     validate_request(&request)?;
 
     let exec_dir = executable_directory(&request)?;
-    let proxy_path = exec_dir.join(&request.proxy);
     let marker = read_marker(&request.game_id);
     let installed = marker
         .as_ref()
@@ -410,9 +460,15 @@ pub async fn preview_reshade(request: ReshadeRequest) -> Result<ReshadePreview, 
         .filter(|marker| marker_is_consistent(marker, &exec_dir))
         .map(|marker| marker.version.clone());
 
-    let (conflicts, proxy_available) = detect_proxy_conflicts(&exec_dir, &request.proxy);
-    let has_conflict = !conflicts.is_empty();
-    let proxy_available = proxy_available && !has_conflict;
+    let evaluation = evaluate_proxy(
+        &exec_dir,
+        &request.game_id,
+        &request.proxy,
+        request.allow_replace_unknown,
+    );
+    let resolution = evaluation.resolution;
+    let has_conflict = !evaluation.conflicts.is_empty();
+    let proxy_available = resolution != ProxyResolution::Blocked;
 
     let game_running = executable_process_name(&request)
         .map(|name| is_process_running(&name))
@@ -426,7 +482,17 @@ pub async fn preview_reshade(request: ReshadeRequest) -> Result<ReshadePreview, 
     if request.sha256.is_some() {
         changes.push("Verify archive SHA-256 before extracting.".to_owned());
     }
-    if has_conflict {
+    if resolution == ProxyResolution::ReplaceWithBackup {
+        let held_by = evaluation
+            .conflicts
+            .first()
+            .map(|conflict| conflict.held_by.as_str())
+            .unwrap_or("the existing proxy");
+        changes.push(format!(
+            "Back up the existing '{}' (held by {held_by}) and install the ReShade host over it.",
+            request.proxy
+        ));
+    } else if has_conflict {
         changes.push(format!(
             "Refuse to overwrite '{}' because it is held by another loader.",
             request.proxy
@@ -434,13 +500,30 @@ pub async fn preview_reshade(request: ReshadeRequest) -> Result<ReshadePreview, 
     }
 
     let mut warnings = request.safety_notes.clone();
-    if has_conflict {
-        for conflict in &conflicts {
-            warnings.push(format!(
-                "Proxy '{}' is already occupied by {}; pick a different ReShade proxy.",
-                conflict.proxy, conflict.held_by
-            ));
+    match resolution {
+        ProxyResolution::Blocked => {
+            for conflict in &evaluation.conflicts {
+                warnings.push(format!(
+                    "Proxy '{}' is already occupied by {}; pick a different ReShade proxy.",
+                    conflict.proxy, conflict.held_by
+                ));
+            }
         }
+        ProxyResolution::ReplaceWithBackup => {
+            if let Some(conflict) = evaluation.conflicts.first() {
+                warnings.push(format!(
+                    "Proxy '{}' is occupied by {}; Moddin will back it up and install ReShade over it (Undo restores the previous DLL).",
+                    conflict.proxy, conflict.held_by
+                ));
+                if !conflict.managed_by_moddin {
+                    warnings.push(
+                        "allowReplaceUnknown is enabled: replacing a third-party proxy DLL that Moddin does not manage; the other tool may stop working."
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+        ProxyResolution::UseNextFree => {}
     }
 
     let (update_available, latest_version) = match (
@@ -459,9 +542,10 @@ pub async fn preview_reshade(request: ReshadeRequest) -> Result<ReshadePreview, 
         installed_version,
         proxy_chosen: request.proxy.clone(),
         proxy_available,
+        resolution,
         archive_reachable: request.archive_url.is_some() || request.local_archive.is_some(),
         archive_sha256: None,
-        conflicts,
+        conflicts: evaluation.conflicts,
         update_available,
         latest_version,
         changes,
@@ -481,21 +565,25 @@ pub async fn install_reshade(request: ReshadeRequest) -> Result<ReshadeResult, S
         ));
     }
 
-    let (conflicts, proxy_available) = detect_proxy_conflicts(&exec_dir, &request.proxy);
-    if !conflicts.is_empty() {
-        let detail = conflicts
+    let evaluation = evaluate_proxy(
+        &exec_dir,
+        &request.game_id,
+        &request.proxy,
+        request.allow_replace_unknown,
+    );
+    // `evaluation` was computed from the current game directory, so its
+    // resolution is authoritative; a caller-pinned resolution is only
+    // accepted when it still matches the environment.
+    ensure_resolution_matches(request.resolution, evaluation.resolution, "ReShade")?;
+    if evaluation.resolution == ProxyResolution::Blocked {
+        let detail = evaluation
+            .conflicts
             .iter()
             .map(|conflict| format!("'{}' held by {}", conflict.proxy, conflict.held_by))
             .collect::<Vec<_>>()
             .join("; ");
         return Err(format!(
             "Cannot install ReShade: {detail}. Pick a different proxy in the catalog recipe."
-        ));
-    }
-    if !proxy_available {
-        return Err(format!(
-            "Cannot install ReShade: '{}' already exists in the game directory.",
-            request.proxy
         ));
     }
 
@@ -516,92 +604,64 @@ pub async fn install_reshade(request: ReshadeRequest) -> Result<ReshadeResult, S
     let ini_target = exec_dir.join(DEFAULT_INI_NAME);
     let addon_target = exec_dir.join(ADDON_DLL_NAME);
 
+    // First pass: resolve targets and validate the archive *before* anything
+    // touches disk, so the transaction below captures the pre-install state
+    // of every file that will be written (including a proxy DLL being
+    // replaced).
     let mut targets: Vec<PathBuf> = Vec::new();
-    let mut installed_files: Vec<String> = Vec::new();
-    let mut has_ini = false;
-
+    let mut has_host_dll = false;
     for index in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(index)
             .map_err(|error| format!("ReShade archive entry {index} is unreadable: {error}"))?;
         if entry.is_dir() {
             continue;
         }
         let name = entry.name().to_owned();
-        let Some(_relative) = sanitize_member(&name) else {
+        if sanitize_member(&name).is_none() {
             return Err(format!("ReShade archive contains an unsafe path '{name}'."));
-        };
+        }
         let lower_basename = Path::new(&name)
             .file_name()
             .and_then(|name| name.to_str())
             .map(|name| name.to_ascii_lowercase())
             .unwrap_or_default();
 
-        let target = if lower_basename == HOST_DLL_NAME.to_ascii_lowercase() {
+        if lower_basename == HOST_DLL_NAME.to_ascii_lowercase() {
             targets.push(host_target.clone());
-            host_target.clone()
+            has_host_dll = true;
         } else if lower_basename == ADDON_DLL_NAME.to_ascii_lowercase() {
             targets.push(addon_target.clone());
-            addon_target.clone()
         } else if lower_basename == DEFAULT_INI_NAME.to_ascii_lowercase() {
             targets.push(ini_target.clone());
-            ini_target.clone()
-        } else {
-            // Skip non-ReShade files (readmes, etc.).
-            continue;
-        };
-
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Could not create directory for ReShade install: {error}"))?;
-        }
-
-        let mut buffer = Vec::new();
-        entry
-            .read_to_end(&mut buffer)
-            .map_err(|error| format!("Could not read ReShade archive entry '{name}': {error}"))?;
-
-        let mut file = File::create(&target)
-            .map_err(|error| format!("Could not write ReShade file '{}': {error}", target.display()))?;
-        file.write_all(&buffer)
-            .map_err(|error| format!("Could not write ReShade file '{}': {error}", target.display()))?;
-        file.sync_all()
-            .map_err(|error| format!("Could not flush ReShade file: {error}"))?;
-
-        let written_name = target
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or(name);
-        installed_files.push(written_name);
-        if target == ini_target {
-            has_ini = true;
         }
     }
 
-    if !installed_files
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case(&request.proxy))
-    {
+    if !has_host_dll {
         return Err(format!(
             "ReShade archive did not contain a host DLL ('{HOST_DLL_NAME}')."
         ));
     }
-
-    if !has_ini {
-        let default_ini = b"[GENERAL]\r\nEffectSearchPaths=./ReShade\r\n";
-        let mut file = File::create(&ini_target)
-            .map_err(|error| format!("Could not write ReShade default INI: {error}"))?;
-        file.write_all(default_ini)
-            .map_err(|error| format!("Could not write ReShade default INI: {error}"))?;
+    if !targets.iter().any(|target| target == &ini_target) {
         targets.push(ini_target.clone());
-        installed_files.push(DEFAULT_INI_NAME.to_owned());
     }
 
     let mut metadata = BTreeMap::new();
     metadata.insert("archive_sha256".to_owned(), archive_sha.clone());
     metadata.insert("proxy".to_owned(), request.proxy.clone());
+    metadata.insert(
+        "proxyResolution".to_owned(),
+        match evaluation.resolution {
+            ProxyResolution::UseNextFree => "use_next_free",
+            ProxyResolution::ReplaceWithBackup => "replace_with_backup",
+            ProxyResolution::Blocked => "blocked",
+        }
+        .to_owned(),
+    );
     metadata.insert("processName".to_owned(), process_name);
 
+    // Begin the transaction before writing so existing files (in particular
+    // a proxy DLL being replaced) are backed up in their pre-install state.
     let record = transaction::begin_file_set_transaction(
         &exec_dir,
         &targets,
@@ -610,6 +670,88 @@ pub async fn install_reshade(request: ReshadeRequest) -> Result<ReshadeResult, S
         &request.game_id,
         metadata,
     )?;
+
+    let write_result = (|| -> Result<Vec<String>, String> {
+        let mut installed_files: Vec<String> = Vec::new();
+        let mut has_ini = false;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| format!("ReShade archive entry {index} is unreadable: {error}"))?;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_owned();
+            let lower_basename = Path::new(&name)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_ascii_lowercase())
+                .unwrap_or_default();
+
+            let target = if lower_basename == HOST_DLL_NAME.to_ascii_lowercase() {
+                host_target.clone()
+            } else if lower_basename == ADDON_DLL_NAME.to_ascii_lowercase() {
+                addon_target.clone()
+            } else if lower_basename == DEFAULT_INI_NAME.to_ascii_lowercase() {
+                ini_target.clone()
+            } else {
+                // Skip non-ReShade files (readmes, etc.).
+                continue;
+            };
+
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("Could not create directory for ReShade install: {error}"))?;
+            }
+
+            let mut buffer = Vec::new();
+            entry
+                .read_to_end(&mut buffer)
+                .map_err(|error| format!("Could not read ReShade archive entry '{name}': {error}"))?;
+
+            let mut file = File::create(&target)
+                .map_err(|error| format!("Could not write ReShade file '{}': {error}", target.display()))?;
+            file.write_all(&buffer)
+                .map_err(|error| format!("Could not write ReShade file '{}': {error}", target.display()))?;
+            file.sync_all()
+                .map_err(|error| format!("Could not flush ReShade file: {error}"))?;
+
+            let written_name = target
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or(name);
+            if target == ini_target {
+                has_ini = true;
+            }
+            installed_files.push(written_name);
+        }
+
+        if !has_ini {
+            let default_ini = b"[GENERAL]\r\nEffectSearchPaths=./ReShade\r\n";
+            let mut file = File::create(&ini_target)
+                .map_err(|error| format!("Could not write ReShade default INI: {error}"))?;
+            file.write_all(default_ini)
+                .map_err(|error| format!("Could not write ReShade default INI: {error}"))?;
+            installed_files.push(DEFAULT_INI_NAME.to_owned());
+        }
+
+        Ok(installed_files)
+    })();
+
+    let installed_files = match write_result {
+        Ok(installed_files) => installed_files,
+        Err(error) => {
+            return match transaction::restore_record(record) {
+                Ok(_) => Err(format!(
+                    "{error} All changed files were restored automatically."
+                )),
+                Err(restore_error) => Err(format!(
+                    "{error} Automatic rollback also failed: {restore_error}"
+                )),
+            };
+        }
+    };
+
     let record = transaction::mark_applied(record)?;
 
     let marker = ReshadeMarker {
@@ -709,7 +851,166 @@ mod tests {
             sha256: None,
             proxy: "dxgi.dll".to_owned(),
             safety_notes: Vec::new(),
+            allow_replace_unknown: false,
+            resolution: None,
             update_url: None,
         }
+    }
+
+    fn temp_exec_dir(tag: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("moddin-reshade-{tag}-{suffix}"));
+        fs::create_dir_all(&dir).expect("temporary game directory");
+        dir
+    }
+
+    #[test]
+    fn free_proxy_evaluates_use_next_free() {
+        let exec_dir = temp_exec_dir("free");
+
+        let evaluation = evaluate_proxy(&exec_dir, "test-game", "dxgi.dll", false);
+        assert_eq!(evaluation.resolution, ProxyResolution::UseNextFree);
+        assert!(evaluation.conflicts.is_empty());
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn unknown_occupant_blocks_unless_allowed() {
+        let exec_dir = temp_exec_dir("blocked");
+        fs::write(exec_dir.join("dxgi.dll"), b"third-party").expect("occupant");
+
+        let evaluation = evaluate_proxy(&exec_dir, "test-game", "dxgi.dll", false);
+        assert_eq!(evaluation.resolution, ProxyResolution::Blocked);
+        assert_eq!(evaluation.conflicts.len(), 1);
+        assert!(!evaluation.conflicts[0].managed_by_moddin);
+        assert!(evaluation.conflicts[0].held_by.contains("not managed"));
+        assert_eq!(evaluation.conflicts[0].size_bytes, 11);
+
+        let allowed = evaluate_proxy(&exec_dir, "test-game", "dxgi.dll", true);
+        assert_eq!(allowed.resolution, ProxyResolution::ReplaceWithBackup);
+        assert_eq!(
+            allowed.conflicts[0].resolution,
+            ProxyResolution::ReplaceWithBackup
+        );
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn optiscaler_managed_proxy_evaluates_replace() {
+        let exec_dir = temp_exec_dir("optiscaler-managed");
+        fs::write(exec_dir.join("dxgi.dll"), b"optiscaler").expect("occupant");
+        fs::write(
+            exec_dir.join(".moddin-optiscaler.json"),
+            r#"{"version":"0.9.4","proxyDll":"dxgi.dll","sourceSha256":"abc","installedFiles":["dxgi.dll"]}"#,
+        )
+        .expect("marker");
+
+        let evaluation = evaluate_proxy(&exec_dir, "test-game", "dxgi.dll", false);
+        assert_eq!(evaluation.resolution, ProxyResolution::ReplaceWithBackup);
+        assert!(evaluation.conflicts[0].managed_by_moddin);
+        assert!(evaluation.conflicts[0].held_by.contains("OptiScaler"));
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn own_reshade_marker_evaluates_replace() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let game_id = format!("moddinproxytest{suffix}");
+        let exec_dir = temp_exec_dir("own-marker");
+        fs::write(exec_dir.join("dxgi.dll"), b"reshade").expect("occupant");
+
+        let marker = ReshadeMarker {
+            version: "6.0.0".to_owned(),
+            proxy: "dxgi.dll".to_owned(),
+            archive_sha256: None,
+            installed_files: vec!["dxgi.dll".to_owned()],
+        };
+        let marker_file = marker_path(&game_id).expect("marker path");
+        fs::create_dir_all(tool_root()).expect("tool store");
+        fs::write(
+            &marker_file,
+            serde_json::to_vec_pretty(&marker).expect("marker json"),
+        )
+        .expect("marker write");
+
+        let evaluation = evaluate_proxy(&exec_dir, &game_id, "dxgi.dll", false);
+        assert_eq!(evaluation.resolution, ProxyResolution::ReplaceWithBackup);
+        assert!(evaluation.conflicts[0].managed_by_moddin);
+        assert_eq!(evaluation.conflicts[0].held_by, "ReShade (managed by Moddin)");
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
+        let _ = fs::remove_file(&marker_file);
+    }
+
+    #[test]
+    fn replace_then_rollback_restores_proxy() {
+        let exec_dir = temp_exec_dir("rollback");
+        let proxy = exec_dir.join("dxgi.dll");
+        fs::write(&proxy, b"original-proxy").expect("occupant");
+
+        let record = transaction::begin_file_set_transaction(
+            &exec_dir,
+            &[proxy.clone()],
+            "reshade",
+            "Replace proxy test",
+            "proxy-test-game",
+            BTreeMap::new(),
+        )
+        .expect("transaction");
+
+        fs::write(&proxy, b"reshade-proxy").expect("replace occupant");
+        let record = transaction::restore_record(record).expect("rollback");
+        assert_eq!(record.status, "rolled_back");
+        assert_eq!(fs::read(&proxy).expect("restored proxy"), b"original-proxy");
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
+    }
+
+    #[tokio::test]
+    async fn preview_contract_for_free_and_blocked_proxies() {
+        let exec_dir = temp_exec_dir("preview");
+        let executable = format!(
+            "moddin-proxy-reshade-{}.exe",
+            exec_dir.file_name().unwrap().to_string_lossy()
+        );
+        fs::write(exec_dir.join(&executable), b"exe").expect("executable");
+
+        let mut request = base_request();
+        request.game_id = format!(
+            "moddinproxytest{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        );
+        request.install_dir = exec_dir.to_string_lossy().into_owned();
+        request.executable = executable.clone();
+        request.archive_url = Some(
+            "https://github.com/crosire/reshade/releases/download/v6.0.0/ReShade.zip".to_owned(),
+        );
+
+        let preview = preview_reshade(request.clone()).await.expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::UseNextFree);
+        assert!(preview.proxy_available);
+        assert!(preview.can_apply);
+        assert!(preview.conflicts.is_empty());
+
+        fs::write(exec_dir.join("dxgi.dll"), b"third-party").expect("occupant");
+        let preview = preview_reshade(request).await.expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::Blocked);
+        assert!(!preview.proxy_available);
+        assert!(!preview.can_apply);
+        assert_eq!(preview.conflicts.len(), 1);
+
+        fs::remove_dir_all(exec_dir).expect("temporary game cleanup");
     }
 }

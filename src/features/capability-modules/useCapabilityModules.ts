@@ -1,6 +1,13 @@
 import { computed, reactive, ref } from 'vue'
-import type { CapabilitySummary } from '../../types/capability'
-import { evaluateCapability, getCapabilitySpec, installCapability, listCapabilities, uninstallCapability } from './service'
+import type { CapabilitySpec, CapabilitySummary } from '../../types/capability'
+import {
+  evaluateCapability,
+  getCapabilityCompatibility,
+  getCapabilitySpec,
+  installCapability,
+  listCapabilities,
+  uninstallCapability,
+} from './service'
 import type { CapabilityCardState, CapabilityConfigValue, UseCapabilityModulesOptions } from './types'
 
 function messageOf(error: unknown) {
@@ -12,6 +19,19 @@ function defaultFor(fieldType: string, fallback: string | number | boolean | und
   if (fieldType === 'boolean') return false
   if (fieldType === 'number') return 0
   return ''
+}
+
+/**
+ * Mirrors Rust `CompatibilitySpec::has_constraints`: a block that sets no
+ * bound constrains nothing, so the card must not even probe the exe. Keeps
+ * the common case (no `compatibility` key at all) free.
+ */
+export function hasCompatibilityConstraint(spec: CapabilitySpec | null | undefined): boolean {
+  const compatibility = spec?.compatibility
+  if (!compatibility) return false
+  return Boolean(
+    compatibility.minExeVersion || compatibility.maxExeVersion || compatibility.blockedExeVersions?.length,
+  )
 }
 
 /**
@@ -49,6 +69,9 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
         specLoading: false,
         verification: null,
         configValues: {},
+        compatibility: null,
+        compatibilityBusy: false,
+        installedDependencies: [],
       }
       cards[capabilityId] = state
     }
@@ -72,12 +95,51 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     try {
       state.spec = await getCapabilitySpec(capability.id)
       applySpecDefaults(state)
+      // Specs that pin a game build get probed right away so the card can
+      // warn (and offer a forced install) before the user clicks Apply.
+      if (hasCompatibilityConstraint(state.spec)) await refreshCompatibility(capability)
     } catch (error) {
       state.error = messageOf(error)
       state.errorKind = 'action'
     } finally {
       state.specLoading = false
     }
+  }
+
+  /**
+   * Re-probe the spec's compatibility block. Cheap on its own (it reads
+   * one exe's FileVersion) and re-runs whenever the selected game changes,
+   * so switching games never leaves a verdict from the previous one.
+   */
+  async function refreshCompatibility(capability: CapabilitySummary) {
+    const state = stateFor(capability.id)
+    const executableDir = options.executableDir() ?? ''
+    if (!hasCompatibilityConstraint(state.spec) || !executableDir) {
+      state.compatibility = null
+      return
+    }
+    state.compatibilityBusy = true
+    try {
+      state.compatibility = await getCapabilityCompatibility({
+        capabilityId: capability.id,
+        executableDir,
+      })
+    } catch (error) {
+      // A failed probe must not hide the install button: the backend
+      // re-evaluates the gate on install anyway, so a stale "unknown"
+      // here is cosmetic at worst.
+      state.compatibility = null
+      state.error = messageOf(error)
+      state.errorKind = 'action'
+    } finally {
+      state.compatibilityBusy = false
+    }
+  }
+
+  /** True when the card must offer a forced install instead of a plain one. */
+  function compatibilityBlocks(capabilityId: string) {
+    const compatibility = stateFor(capabilityId).compatibility
+    return Boolean(compatibility && !compatibility.passed)
   }
 
   let loadPromise: Promise<void> | null = null
@@ -133,20 +195,31 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
       .map((field) => field.name)
   }
 
-  async function install(capability: CapabilitySummary) {
+  /**
+   * Install a capability. `force` overrides the spec's compatibility gate
+   * for this capability only — the backend never cascades it to a
+   * dependency. The returned outcome is kept on the card so the view can
+   * show what was auto-installed and, after a forced install, exactly
+   * which build constraint the user overrode.
+   */
+  async function install(capability: CapabilitySummary, installOptions: { force?: boolean } = {}) {
     const state = stateFor(capability.id)
     state.busy = true
     state.error = null
     state.errorKind = null
+    state.installedDependencies = []
     try {
-      await installCapability({
+      const result = await installCapability({
         capabilityId: capability.id,
         gameId: options.gameId() ?? '',
         gameName: options.gameName() ?? '',
         installDir: options.installDir() ?? '',
         executableDir: options.executableDir() ?? '',
         config: { values: { ...state.configValues } },
+        force: installOptions.force,
       })
+      state.installedDependencies = result.installedDependencies ?? []
+      if (result.compatibility) state.compatibility = result.compatibility
       state.verification = null
       await options.onChanged()
     } catch (error) {
@@ -169,6 +242,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
         installDir: options.installDir() ?? '',
       })
       state.verification = null
+      state.installedDependencies = []
       await options.onChanged()
     } catch (error) {
       state.error = messageOf(error)
@@ -209,6 +283,8 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     ensureSpec,
     isInstalled,
     missingRequiredFields,
+    compatibilityBlocks,
+    refreshCompatibility,
     install,
     uninstall,
     verify,

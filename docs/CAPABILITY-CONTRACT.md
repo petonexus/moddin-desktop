@@ -45,6 +45,11 @@ status: available                  # available | planned; required
 supportedEngines:                  # optional
   - unreal5
   - redengine
+dependencies:                      # optional; ids of capabilities that
+  - optiscaler                    # must be installed before this one
+compatibility:                     # optional; game-build window, see
+  gameExe: Game/Binaries/Win64/Game-Win64-Shipping.exe  # "Compatibility"
+  minExeVersion: 1.16.0
 configSchema:                      # optional; drives the UI form
   - name: downloadUrl
     type: url
@@ -85,6 +90,30 @@ Built-in check kinds (extend `builtin_checks.rs` to register more):
 | `file-absent`     | same, inverted                                           |
 | `archive-reachable` | HTTPS HEAD against `urlField` or `url`                 |
 | `archive-sha256`  | downloads + compares SHA-256 to `expectedField` / `expected` |
+| `exe-version`     | reads the game exe `FileVersion` via PowerShell and compares it to the accepted window |
+
+The `exe-version` kind accepts a `pathField` (config field) or `path`
+(literal, relative to the game directory) plus any of `minVersion` /
+`maxVersion` (inclusive bounds), `blockedVersions` (exact versions
+that must never match), and `exactVersions` (whitelist — when
+non-empty the detected version must equal one entry). Versions compare
+with natural numeric ordering and tolerate prefixed tags, so
+`1.16`, `1.16.0.0`, and `v1.16` are equivalent bounds; an exe whose
+`FileVersion` cannot be determined fails the check.
+
+```yaml
+checks:
+  - id: game-build-supported
+    label: Game build is supported
+    kind: exe-version
+    severity: blocker
+    category: modulespecific
+    params:
+      path: Game/Binaries/Win64/Game-Win64-Shipping.exe
+      minVersion: 1.16.0
+      maxVersion: 1.17.9
+      blockedVersions: ["1.16.3.0"]
+```
 
 `severity` drives the UI badge colour and the `canApply` gate:
 
@@ -137,6 +166,71 @@ Built-in step kinds (extend `builtin_steps.rs` to register more):
 back to rolling back the latest transaction recorded for the
 capability id — which is the common case for a one-step install.
 
+## Dependencies
+
+```yaml
+id: cheeky-foveated-dlss
+dependencies:
+  - optiscaler          # loader must be active before the addon
+```
+
+Before running `install`, the runner walks `dependencies` recursively
+and installs every capability that is not yet active for the game. A
+capability counts as **installed** when the transaction store holds an
+applied record for the `(gameId, capabilityId)` pair — the same
+predicate the uninstall path uses — so the game catalog's installed
+marker and the dependency check can never disagree.
+
+Rules:
+
+* Transitive dependencies install first (depth-first order); the
+  request's `InstallResult.installedDependencies` lists what was
+  auto-installed, in install order.
+* Chains longer than 8 capabilities abort with the full chain in the
+  error, as do cycles (`a -> b -> a`) and ids that are not loaded in
+  the registry (`missing chain: x -> y`).
+* Auto-installed dependencies receive the same `ResolvedConfig` as the
+  requested capability, so dependent recipes in one bundle can share
+  config field names.
+* `force: true` never cascades: it bypasses the compatibility gate
+  (below) for the requested capability only, never for a dependency.
+
+## Compatibility (game builds)
+
+```yaml
+compatibility:
+  gameExe: Game/Binaries/Win64/Game-Win64-Shipping.exe
+  minExeVersion: 1.16.0
+  maxExeVersion: 1.17.9
+  blockedExeVersions: ["1.16.3.0"]
+```
+
+When `compatibility` names an exe and at least one bound, the runner
+evaluates it as a synthesized `exe-version` check (id
+`exe-version-compat`, severity `blocker`) in two places:
+
+* `capability_install` / `community_capability_install` refuse to
+  install while the check fails, unless the request sets
+  `force: true`. The evaluated outcome is still returned in
+  `InstallResult.compatibility` so the UI can show exactly what the
+  user overrode.
+* `capability_evaluate` reports the outcome as the first row of the
+  `VerificationReport.checks`, so the UI can disable Apply and explain
+  why before the user even tries.
+
+A spec without a `compatibility` block — or with a block that sets no
+bound — is treated as compatible with every game build and skips the
+probe entirely. A **blank `executableDir`** also skips it: the caller
+has no game to check against (the AI recommend flow and the community
+panel install without a selected game), and failing closed there would
+make every community spec with a compatibility block uninstallable. An
+executable directory that exists but whose `FileVersion` cannot be read
+is a different case and still fails closed — that one is a real "I could
+not verify this build". Module-level dependency order for the game catalog
+(frontend) is resolved by `getMissingDependenciesForModule` in
+[`src/services/catalog.ts`](../src/services/catalog.ts), so the UI can
+prompt for prerequisite modules before calling install.
+
 ## Template rendering
 
 The `write-text-file` step (and any future text-emitting step) renders
@@ -163,9 +257,10 @@ ResolvedConfig.values = { backend: "fidelityfx", diagnostics: "0" }
 | Command                                              | Purpose                                          |
 |------------------------------------------------------|--------------------------------------------------|
 | `capability_list()`                                  | Enumerate every loaded capability (id + summary). |
-| `capability_install({ capabilityId, gameId, gameName, installDir, executableDir, config })` | Run `spec.install` and record a transaction.      |
+| `capability_install({ capabilityId, gameId, gameName, installDir, executableDir, config, force? })` | Run `spec.install` (auto-installing `dependencies` first) and record a transaction. `force: true` bypasses the `compatibility` gate for this capability only. |
 | `capability_uninstall({ capabilityId, gameId, installDir })` | Run `spec.uninstall` (or roll back the latest transaction). |
 | `capability_evaluate({ capabilityId, executableDir, config })` | Run every check in `spec.checks` and `spec.verify` and return a `VerificationReport`. |
+| `capability_compatibility({ capabilityId, executableDir })` | Evaluate ONLY the `compatibility` block and return its `CheckOutcome`, or `null` when the spec does not constrain the game build. Cheap enough to call while rendering a card, unlike `capability_evaluate` (which downloads archives for `archive-sha256`). |
 | `validate_capability_yaml({ yaml })`                 | Parse + schema/semantic-check an AI-drafted YAML (id shape, category/status enums, known step/check kinds). Returns an `AuthorSpecSummary`. |
 | `preview_capability_plan({ yaml })`                  | Render the human-readable dry-run plan the AI dialog shows before saving. |
 | `save_capability_yaml({ yaml, overwrite })`          | Validate and atomically write `%LOCALAPPDATA%\Moddin\capabilities\<id>.yaml` (with `.bak` backup). Refuses to shadow built-in ids; `overwrite` replaces a previous local file. |
@@ -178,8 +273,9 @@ the same `CapabilitySpec` serde schema as the runner, so an AI-authored recipe
 is checked exactly like a shipped one.
 
 The TypeScript layer mirrors these as `install_capability`,
-`uninstall_capability`, `evaluate_capability`, and `list_capabilities`
-inside `invoke(...)` calls.
+`uninstall_capability`, `evaluate_capability`, and
+`get_capability_compatibility` inside `invoke(...)` calls, in
+[`src/features/capability-modules/service.ts`](../src/features/capability-modules/service.ts).
 
 ## UI rendering contract
 

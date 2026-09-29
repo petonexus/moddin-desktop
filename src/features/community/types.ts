@@ -14,6 +14,8 @@ export interface CommunityInstallRequest {
   executableDir: string
   config: Record<string, unknown>
   acceptUnsigned: boolean
+  /** Install even when the spec's compatibility block rejects the game build. */
+  force?: boolean
 }
 
 export interface CommunityInstallResult {

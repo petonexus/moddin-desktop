@@ -211,6 +211,8 @@ const ptBR = {
   moduleOpenXrDescription: 'Ajustes do sistema de VR usado por este jogo.',
   moduleDesktopShortcut: 'Atalho na área de trabalho',
   moduleNoAction: 'Este mod ainda não pode ser instalado pelo Moddin.',
+  moduleDependenciesEyebrow: 'Pré-requisitos',
+  moduleDependenciesDescription: 'Este mod é um complemento e precisa destes antes:',
 
   // Checklist items
   checkExecutable: 'Arquivo do jogo encontrado',
@@ -291,6 +293,12 @@ const ptBR = {
   // OptiScaler
   optiConflictsTitle: 'Outros mods no mesmo lugar',
   optiConflictsHint: 'Encontramos arquivos de outros mods que usam o mesmo ponto de entrada. Eles podem entrar em conflito.',
+  optiConflictManaged: 'instalado pelo Moddin',
+  optiConflictForeign: 'de {holder}',
+  unknownHolder: 'outro mod',
+  optiReplaceUnknown: 'Substituir o arquivo que já está lá',
+  optiReplaceUnknownHint: 'O Moddin faz backup antes e você pode desfazer a mudança pelo registro de atividade.',
+  optiReplaceWithBackup: 'O arquivo existente é salvo antes de ser substituído, então você pode desfazer.',
   optiSafetyOnline: 'Não use o OptiScaler em partidas online com anti-cheat. Feche o jogo antes de instalar ou desfazer.',
   optiSafetyEldenRing: 'No Elden Ring, o OptiScaler só funciona junto com um mod que adicione DLSS/FSR ao jogo (como o ERSS-FG). O jogo original não tem isso.',
   optiSafetyStalker2: 'Use DLSS ou XeSS como entrada — entradas FSR 3.1 apresentam image quality ruim. Em sessões UEVR (STALKER 2 VR), use OptiScaler só se você tem GPU AMD ou precisa do fallback de upscaler; em NVIDIA o DLSS nativo já funciona.',
@@ -386,6 +394,10 @@ const ptBR = {
   capabilityInstallFailed: 'Falha ao instalar: {error}',
   capabilityActionFailed: 'Não foi possível aplicar a mudança: {error}',
   capabilityLoadFailed: 'Não foi possível carregar os mods salvos: {error}',
+  capabilityCompatBlocked: 'Esta versão do jogo não é suportada por este mod.',
+  capabilityCompatForce: 'Instalar mesmo assim',
+  capabilityCompatForced: 'Instalado em uma versão não suportada. O mod pode falhar ou travar o jogo.',
+  capabilityDependenciesInstalled: 'Pré-requisitos instalados primeiro: {modules}',
 
   // Advanced
   advancedTitle: 'Informações técnicas',

@@ -63,6 +63,9 @@ modules:
     description: Instalar o plugin Cheeky no perfil UEVR, configurar a camada OpenXR correspondente e validar o pipeline com DLSS. O fluxo seguro ainda está em planejamento no Moddin.
     category: graphics
     status: planned
+    # O scanner do Cheeky só marca READY com a config do UEVR presente.
+    dependencies:
+      - uevr
   - id: optiscaler
     name: OptiScaler
     description: Instalar a release oficial do OptiScaler com verificação de checksum, seleção de proxy consciente de conflito e rollback. Compatível com STALKER 2 segundo a lista oficial do projeto.

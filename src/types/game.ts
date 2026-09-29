@@ -9,6 +9,13 @@ export interface ToolModuleDefinition {
   category: ModuleCategory
   status: ModuleStatus
   config?: Record<string, string | string[]>
+  /**
+   * Ids of other modules this one requires. The backend installs
+   * missing dependencies before the module itself; the UI uses
+   * `getMissingDependencies` (src/services/catalog.ts) to prompt for
+   * them up front.
+   */
+  dependencies?: string[]
 }
 
 export interface GameCatalogEntry {

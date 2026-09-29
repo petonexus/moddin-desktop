@@ -80,6 +80,20 @@ pub struct CapabilitySpec {
     pub status: String,
     #[serde(default)]
     pub supported_engines: Vec<String>,
+    /// Ids of other capabilities that must be installed before this
+    /// one. The runner installs every missing dependency (recursively,
+    /// with cycle and depth guards) before executing `install`, using
+    /// the same transaction store the uninstall path consults to decide
+    /// whether a capability is active for the game.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// Optional game-build compatibility window. When present, the
+    /// runner evaluates the game executable's `FileVersion` before
+    /// installing (unless the request passes `force: true`) and also
+    /// reports it as a structured check from `capability_evaluate`.
+    /// Absent means "compatible with every build".
+    #[serde(default)]
+    pub compatibility: Option<CompatibilitySpec>,
     #[serde(default)]
     pub checks: Vec<CheckSpec>,
     #[serde(default)]
@@ -97,6 +111,41 @@ pub struct CapabilitySpec {
     /// so older YAMLs keep their original provenance.
     #[serde(default, skip_deserializing)]
     pub origin: SpecOrigin,
+}
+
+/// Game-build compatibility window declared by a capability. The
+/// runner reads the game executable's `FileVersion` (via PowerShell,
+/// the same channel the rest of the codebase uses for version probes)
+/// and compares it against the declared range using the tolerant
+/// natural-order comparator from [`crate::updates`].
+///
+/// All fields are optional; a block with no constraint at all is
+/// treated as "compatible with everything" and is not evaluated.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibilitySpec {
+    /// Path of the game executable whose `FileVersion` is checked,
+    /// relative to the game's executable directory (same resolution
+    /// `file-exists` uses).
+    pub game_exe: Option<String>,
+    /// Lowest accepted `FileVersion`, inclusive.
+    pub min_exe_version: Option<String>,
+    /// Highest accepted `FileVersion`, inclusive.
+    pub max_exe_version: Option<String>,
+    /// Exact `FileVersion`s that must never run with this capability.
+    #[serde(default)]
+    pub blocked_exe_versions: Vec<String>,
+}
+
+impl CompatibilitySpec {
+    /// A block only constrains the install when it names an exe and at
+    /// least one bound; an empty block must not gate anything.
+    pub fn has_constraints(&self) -> bool {
+        self.game_exe.is_some()
+            && (self.min_exe_version.is_some()
+                || self.max_exe_version.is_some()
+                || !self.blocked_exe_versions.is_empty())
+    }
 }
 
 /// Declarative description of a single check the runner can evaluate.
@@ -214,5 +263,63 @@ mod tests {
         assert_eq!(severity::INFO, "info");
         assert_eq!(severity::WARNING, "warning");
         assert_eq!(severity::BLOCKER, "blocker");
+    }
+
+    #[test]
+    fn spec_without_new_fields_defaults_to_no_constraints() {
+        let spec: CapabilitySpec = serde_yaml::from_str(
+            r#"
+id: bare-capability
+displayName: Bare
+category: vr
+status: available
+"#,
+        )
+        .expect("minimal spec parses");
+        assert!(spec.dependencies.is_empty());
+        assert!(spec.compatibility.is_none());
+    }
+
+    #[test]
+    fn spec_parses_dependencies_and_compatibility() {
+        let spec: CapabilitySpec = serde_yaml::from_str(
+            r#"
+id: dependent-mod
+displayName: Dependent mod
+category: graphics
+status: available
+dependencies:
+  - optiscaler
+  - ofxr-bridge
+compatibility:
+  gameExe: Game/Binaries/Win64/Game-Win64-Shipping.exe
+  minExeVersion: 1.16.0
+  maxExeVersion: 1.17.9.9
+  blockedExeVersions:
+    - 1.16.3.0
+"#,
+        )
+        .expect("spec with dependencies + compatibility parses");
+        assert_eq!(spec.dependencies, vec!["optiscaler", "ofxr-bridge"]);
+        let compatibility = spec.compatibility.expect("compatibility block parsed");
+        assert_eq!(
+            compatibility.game_exe.as_deref(),
+            Some("Game/Binaries/Win64/Game-Win64-Shipping.exe")
+        );
+        assert_eq!(compatibility.min_exe_version.as_deref(), Some("1.16.0"));
+        assert_eq!(compatibility.max_exe_version.as_deref(), Some("1.17.9.9"));
+        assert_eq!(compatibility.blocked_exe_versions, vec!["1.16.3.0"]);
+        assert!(compatibility.has_constraints());
+    }
+
+    #[test]
+    fn empty_compatibility_block_has_no_constraints() {
+        let compatibility = CompatibilitySpec::default();
+        assert!(!compatibility.has_constraints());
+        let without_exe = CompatibilitySpec {
+            min_exe_version: Some("1.0.0".to_owned()),
+            ..CompatibilitySpec::default()
+        };
+        assert!(!without_exe.has_constraints());
     }
 }

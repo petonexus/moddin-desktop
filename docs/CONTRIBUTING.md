@@ -85,6 +85,7 @@ Checks run before and after install to surface what the runner needs:
 | `file-exists` / `file-absent` | Does the file exist? |
 | `archive-reachable` | Does the URL respond? |
 | `archive-sha256` | Does the downloaded archive hash match? |
+| `exe-version` | Is the game exe's FileVersion inside the supported window? |
 
 Checks can be `info`, `warning`, or `blocker`. A `blocker` that fails disables the Apply button.
 

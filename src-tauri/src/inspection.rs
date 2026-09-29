@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -18,6 +18,8 @@ const PROXY_DLL_NAMES: &[&str] = &[
     "xinput1_3.dll",
 ];
 
+const OPTISCALER_MARKER_FILE: &str = ".moddin-optiscaler.json";
+
 const MAX_EXECUTABLE_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +28,165 @@ pub struct ProxyDllInfo {
     pub name: String,
     pub path: String,
     pub size_bytes: u64,
+}
+
+/// Who currently occupies a proxy-DLL slot next to a game executable.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyOccupant {
+    pub name: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub managed_by_moddin: bool,
+    pub held_by: String,
+}
+
+/// How a proxy-DLL conflict will be resolved when a module is applied.
+///
+/// Chain-loading research (verified 2026-09 against the OptiScaler wiki and
+/// ReShade docs): a generic "chain" strategy was considered and rejected.
+/// OptiScaler only special-cases `ReShade64.dll` (`LoadReshade=true`, plus
+/// SpecialK), and ReShade forwards to the *system* copy of its own proxy
+/// name — neither loader can be pointed at an arbitrary renamed proxy such
+/// as `dxgi.dll.moddin-proxy`. Because there is no reliable contract for
+/// "load the previous occupant under a custom name", resolution deliberately
+/// stays limited to `use_next_free` + `replace_with_backup`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyResolution {
+    /// No collision on the chosen proxy; the first free candidate is used.
+    UseNextFree,
+    /// The chosen proxy is occupied by a Moddin-managed DLL (or the caller
+    /// explicitly accepted replacing an unknown one). The existing file is
+    /// backed up by the install transaction and replaced, so Undo restores
+    /// the previous DLL.
+    ReplaceWithBackup,
+    /// The chosen proxy is held by a third-party DLL and replacing it was
+    /// not allowed; installation stays blocked.
+    Blocked,
+}
+
+/// Rejects installs whose caller pinned a resolution that no longer matches
+/// the environment (e.g. a stale preview replayed after the game directory
+/// changed). `None` means "accept whatever the recomputed preview decides".
+pub fn ensure_resolution_matches(
+    expected: Option<ProxyResolution>,
+    computed: ProxyResolution,
+    module: &str,
+) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if expected != computed {
+            return Err(format!(
+                "{module} resolution '{expected:?}' no longer matches the game environment \
+                 (recomputed '{computed:?}'). Re-run the preview and retry."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Classify whatever occupies the proxy-DLL slot `name` inside
+/// `executable_directory`. Returns `None` when the slot is free.
+///
+/// A file counts as managed by Moddin when a Moddin marker beside the
+/// executable names it as the module proxy, or when an `applied` Moddin
+/// transaction still holds a backup of that exact path (so replacing it is
+/// recoverable via Undo). `reshade.rs` layers its own marker check on top
+/// because the ReShade marker lives in the Moddin tool store, not beside
+/// the game executable.
+pub fn classify_proxy_occupant(executable_directory: &Path, name: &str) -> Option<ProxyOccupant> {
+    let path = executable_directory.join(name);
+    if !path.is_file() {
+        return None;
+    }
+
+    let size_bytes = path
+        .metadata()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let (managed_by_moddin, held_by) = proxy_occupant_owner(executable_directory, name, &path);
+
+    Some(ProxyOccupant {
+        name: name.to_owned(),
+        path: path.to_string_lossy().into_owned(),
+        size_bytes,
+        managed_by_moddin,
+        held_by,
+    })
+}
+
+fn proxy_occupant_owner(executable_directory: &Path, name: &str, path: &Path) -> (bool, String) {
+    if optiscaler_marker_owns_proxy(executable_directory, name) {
+        return (
+            true,
+            "OptiScaler (managed by Moddin)".to_owned(),
+        );
+    }
+
+    if transaction_store_holds_backup(path) {
+        return (
+            true,
+            "Moddin transaction backup (previously replaced by Moddin)".to_owned(),
+        );
+    }
+
+    (
+        false,
+        "another loader (not managed by Moddin)".to_owned(),
+    )
+}
+
+fn optiscaler_marker_owns_proxy(executable_directory: &Path, name: &str) -> bool {
+    let contents = match fs::read_to_string(executable_directory.join(OPTISCALER_MARKER_FILE)) {
+        Ok(contents) => contents,
+        Err(_) => return false,
+    };
+    let marker: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(marker) => marker,
+        Err(_) => return false,
+    };
+
+    let names_current_proxy = marker
+        .get("proxyDll")
+        .and_then(|value| value.as_str())
+        .is_some_and(|proxy| proxy.eq_ignore_ascii_case(name));
+    let lists_as_installed = marker
+        .get("installedFiles")
+        .and_then(|value| value.as_array())
+        .is_some_and(|files| {
+            files.iter().any(|file| {
+                file.as_str()
+                    .is_some_and(|file| file.eq_ignore_ascii_case(name))
+            })
+        });
+
+    names_current_proxy || lists_as_installed
+}
+
+fn transaction_store_holds_backup(path: &Path) -> bool {
+    let records = match crate::transaction::list_transactions_sync() {
+        Ok(records) => records,
+        Err(_) => return false,
+    };
+    transaction_records_holds_backup(&records, path)
+}
+
+fn transaction_records_holds_backup(
+    records: &[crate::transaction::TransactionRecord],
+    path: &Path,
+) -> bool {
+    let needle = path.to_string_lossy().to_ascii_lowercase();
+    records.iter().any(|record| {
+        record.status == "applied"
+            && record.files.iter().any(|file| {
+                file.existed_before
+                    && file.target_path.to_ascii_lowercase() == needle
+                    && file
+                        .backup_path
+                        .as_ref()
+                        .is_some_and(|backup| Path::new(backup).is_file())
+            })
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -515,5 +676,158 @@ mod tests {
             engine_detection_from_signals("Cyberpunk2077.exe", b"", false, false, false, true);
         assert_eq!(result.engine.as_deref(), Some("REDengine"));
         assert_eq!(result.confidence, "high");
+    }
+
+    fn temp_fixture_dir(tag: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("moddin-proxy-{tag}-{suffix}"));
+        fs::create_dir_all(&dir).expect("fixture directory");
+        dir
+    }
+
+    #[test]
+    fn proxy_resolution_serializes_snake_case_contract() {
+        assert_eq!(
+            serde_json::to_string(&ProxyResolution::UseNextFree).unwrap(),
+            "\"use_next_free\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProxyResolution::ReplaceWithBackup).unwrap(),
+            "\"replace_with_backup\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ProxyResolution::Blocked).unwrap(),
+            "\"blocked\""
+        );
+        let parsed: ProxyResolution = serde_json::from_str("\"replace_with_backup\"").unwrap();
+        assert_eq!(parsed, ProxyResolution::ReplaceWithBackup);
+    }
+
+    #[test]
+    fn ensure_resolution_matches_only_rejects_stale_pins() {
+        assert!(ensure_resolution_matches(None, ProxyResolution::Blocked, "Test").is_ok());
+        assert!(ensure_resolution_matches(
+            Some(ProxyResolution::ReplaceWithBackup),
+            ProxyResolution::ReplaceWithBackup,
+            "Test"
+        )
+        .is_ok());
+        assert!(ensure_resolution_matches(
+            Some(ProxyResolution::UseNextFree),
+            ProxyResolution::Blocked,
+            "Test"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn classify_returns_none_for_free_slot() {
+        let dir = temp_fixture_dir("free");
+        assert!(classify_proxy_occupant(&dir, "dxgi.dll").is_none());
+        fs::remove_dir_all(dir).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn classify_marks_unknown_occupant() {
+        let dir = temp_fixture_dir("unknown");
+        fs::write(dir.join("dxgi.dll"), b"12345").expect("occupant");
+
+        let occupant = classify_proxy_occupant(&dir, "dxgi.dll").expect("occupant");
+        assert_eq!(occupant.size_bytes, 5);
+        assert!(!occupant.managed_by_moddin);
+        assert!(occupant.held_by.contains("not managed"));
+
+        fs::remove_dir_all(dir).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn classify_marks_optiscaler_marker_owned_proxy() {
+        let dir = temp_fixture_dir("managed");
+        fs::write(dir.join("dxgi.dll"), b"optiscaler").expect("occupant");
+        fs::write(
+            dir.join(OPTISCALER_MARKER_FILE),
+            r#"{"version":"0.9.4","proxyDll":"dxgi.dll","sourceSha256":"abc","installedFiles":["dxgi.dll"]}"#,
+        )
+        .expect("marker");
+
+        let occupant = classify_proxy_occupant(&dir, "dxgi.dll").expect("occupant");
+        assert!(occupant.managed_by_moddin);
+        assert!(occupant.held_by.contains("OptiScaler"));
+
+        fs::remove_dir_all(dir).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn classify_ignores_marker_for_other_proxy() {
+        let dir = temp_fixture_dir("other-proxy");
+        fs::write(dir.join("dxgi.dll"), b"third-party").expect("occupant");
+        fs::write(dir.join("winmm.dll"), b"optiscaler").expect("occupant");
+        fs::write(
+            dir.join(OPTISCALER_MARKER_FILE),
+            r#"{"version":"0.9.4","proxyDll":"winmm.dll","sourceSha256":"abc","installedFiles":["winmm.dll"]}"#,
+        )
+        .expect("marker");
+
+        let dxgi = classify_proxy_occupant(&dir, "dxgi.dll").expect("occupant");
+        assert!(!dxgi.managed_by_moddin);
+        let winmm = classify_proxy_occupant(&dir, "winmm.dll").expect("occupant");
+        assert!(winmm.managed_by_moddin);
+
+        fs::remove_dir_all(dir).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn transaction_records_holds_backup_requires_applied_live_backup() {
+        let dir = temp_fixture_dir("tx-backup");
+        let backup = dir.join("backup-dxgi.dll");
+        fs::write(&backup, b"original").expect("backup file");
+
+        let record = |status: &str, target: &str, existed_before: bool, backup_path: Option<String>| {
+            crate::transaction::TransactionRecord {
+                id: "1757720000000-0123456789abcdef0123456789abcdef".to_owned(),
+                created_at: 1,
+                kind: "optiscaler".to_owned(),
+                label: "test".to_owned(),
+                game_id: "game".to_owned(),
+                target_path: "target".to_owned(),
+                backup_path: "backup".to_owned(),
+                status: status.to_owned(),
+                files: vec![crate::transaction::TransactionFile {
+                    target_path: target.to_owned(),
+                    backup_path,
+                    existed_before,
+                }],
+                created_directories: Vec::new(),
+                metadata: Default::default(),
+            }
+        };
+        let backup_string = Some(backup.to_string_lossy().into_owned());
+        let needle = Path::new(r"C:\Games\Example\dxgi.dll");
+
+        let hit = record("applied", r"C:\Games\Example\DXGI.dll", true, backup_string.clone());
+        assert!(transaction_records_holds_backup(&[hit], needle));
+
+        let rolled_back = record("rolled_back", r"C:\Games\Example\dxgi.dll", true, backup_string.clone());
+        assert!(!transaction_records_holds_backup(&[rolled_back], needle));
+
+        let missing_backup = dir.join("missing.dll");
+        let missing = record(
+            "applied",
+            r"C:\Games\Example\dxgi.dll",
+            true,
+            Some(missing_backup.to_string_lossy().into_owned()),
+        );
+        assert!(!transaction_records_holds_backup(&[missing], needle));
+
+        let other_path = record("applied", r"C:\Games\Example\winmm.dll", true, backup_string);
+        assert!(!transaction_records_holds_backup(&[other_path], needle));
+
+        let not_existed_before = record("applied", r"C:\Games\Example\dxgi.dll", false, None);
+        assert!(!transaction_records_holds_backup(&[not_existed_before], needle));
+
+        fs::remove_dir_all(dir).expect("fixture cleanup");
     }
 }

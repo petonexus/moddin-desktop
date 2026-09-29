@@ -117,6 +117,7 @@ pub fn run() {
             capability_runner::capability_install,
             capability_runner::capability_uninstall,
             capability_runner::capability_evaluate,
+            capability_runner::capability_compatibility,
             capability_runner::capability_list,
             capability_runner::capability_get,
             capability_runner::capability_reload,

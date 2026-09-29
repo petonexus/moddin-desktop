@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
-import { findCatalogGameByInstalledGame, gameCatalog } from './services/catalog'
+import { findCatalogGameByInstalledGame, gameCatalog, getMissingDependenciesForModule } from './services/catalog'
 import { localeOptions } from './i18n'
 import type { InstalledGame, ModuleCategory, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
@@ -85,11 +85,23 @@ let appUnmounted = false
 const inspectionRequests = new Map<string, Promise<GameEnvironmentInspection>>()
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
+/**
+ * Explicit opt-in to replace a third-party proxy DLL. Off by default:
+ * Moddin only overwrites an occupant it installed itself, or one the
+ * player is knowingly replacing. Toggling it re-runs the preview so the
+ * dialog shows the resolution the install will actually use.
+ */
+const optiAllowReplaceUnknown = ref(false)
 const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(null)
 const cheekyDialog = ref<{ request: CheekyFoveatedDlssRequest; preview: CheekyFoveatedDlssPreview } | null>(null)
 const uevrDialog = ref<{ request: UevrRequest; preview: UevrPreview } | null>(null)
 const cheekyGuideDialog = ref<ToolModuleDefinition | null>(null)
 const compatibilityDialog = ref<{ module: ToolModuleDefinition; gameName: string; version: string } | null>(null)
+/**
+ * Set when the user hits Install on a module that declares
+ * prerequisites in the catalog. The list is already in install order.
+ */
+const dependencyDialog = ref<{ module: ToolModuleDefinition; missing: ToolModuleDefinition[] } | null>(null)
 const compatibilityDraftStatus = ref<CompatibilityStatus>('unverified')
 const compatibilityDraftNote = ref('')
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
@@ -818,6 +830,35 @@ function buildCheekyRequest(module: ToolModuleDefinition): CheekyFoveatedDlssReq
   }
 }
 
+/**
+ * Catalog modules the selected game already has installed. A module
+ * counts as installed when its last verification says so, or when an
+ * applied transaction is still on record for it.
+ */
+function installedCatalogModuleIds(): Set<string> {
+  const game = selectedGame.value?.catalog
+  if (!game) return new Set()
+  return new Set(
+    game.modules
+      .filter((module) => moduleVerification(module)?.status === 'installed' || activeModuleTransaction(module))
+      .map((module) => module.id),
+  )
+}
+
+/**
+ * Prerequisites a module declares in the catalog (`dependencies`), in
+ * the order they must be installed and skipping the ones already
+ * present. Returns the full module definitions so the UI can name them
+ * and run their own preview flow.
+ */
+function missingDependenciesFor(module: ToolModuleDefinition): ToolModuleDefinition[] {
+  const game = selectedGame.value?.catalog
+  if (!game) return []
+  return getMissingDependenciesForModule(game, module.id, installedCatalogModuleIds())
+    .map((id) => game.modules.find((item) => item.id === id))
+    .filter((item): item is ToolModuleDefinition => Boolean(item))
+}
+
 async function configureModule(module: ToolModuleDefinition) {
   actionError.value = null
   success.value = null
@@ -827,12 +868,27 @@ async function configureModule(module: ToolModuleDefinition) {
     return
   }
 
+  // A module built on top of another (Cheeky on UEVR, Cheeky on
+  // UEVR + OptiScaler) is pointless without it, so offer the
+  // prerequisites instead of applying something that cannot work.
+  const missing = missingDependenciesFor(module)
+  if (missing.length) {
+    dependencyDialog.value = { module, missing }
+    return
+  }
+
   busyModuleId.value = module.id
   try {
     await openModulePreview(module)
   } finally {
     busyModuleId.value = null
   }
+}
+
+/** Start the normal preview flow for a prerequisite from the dialog. */
+async function installDependency(dependency: ToolModuleDefinition) {
+  dependencyDialog.value = null
+  await configureModule(dependency)
 }
 
 async function openModulePreview(module: ToolModuleDefinition) {
@@ -865,6 +921,7 @@ async function openModulePreview(module: ToolModuleDefinition) {
     if (module.id === 'optiscaler') {
       const request = buildOptiScalerRequest(module)
       if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
+      optiAllowReplaceUnknown.value = false
       const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
       optiScalerDialog.value = { request, preview }
       return
@@ -959,6 +1016,28 @@ async function applyObsConfiguration() {
   }
 }
 
+/**
+ * Re-run the OptiScaler preview after the player ticks "replace anyway",
+ * and pin the resulting resolution on the request. The install refuses
+ * a request whose pinned resolution no longer matches the environment,
+ * so a preview that went stale between opening and applying fails loudly
+ * instead of overwriting whatever took the slot in the meantime.
+ */
+async function setOptiReplaceUnknown(allow: boolean) {
+  if (!optiScalerDialog.value) return
+  optiAllowReplaceUnknown.value = allow
+  moduleBusy.value = true
+  try {
+    const request: OptiScalerRequest = { ...optiScalerDialog.value.request, allowReplaceUnknown: allow }
+    const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+    optiScalerDialog.value = { request: { ...request, resolution: preview.resolution }, preview }
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
 async function applyOptiScaler() {
   if (!optiScalerDialog.value) return
 
@@ -971,7 +1050,11 @@ async function applyOptiScaler() {
   success.value = null
   moduleBusy.value = true
   try {
-    const request = optiScalerDialog.value.request
+    const request: OptiScalerRequest = {
+      ...optiScalerDialog.value.request,
+      allowReplaceUnknown: optiAllowReplaceUnknown.value,
+      resolution: optiScalerDialog.value.preview.resolution,
+    }
     const transaction = await invoke<TransactionRecord>('install_optiscaler', { request })
     optiScalerDialog.value = null
     success.value = t('installSuccess', { name: `OptiScaler ${request.version}` })
@@ -2078,8 +2161,26 @@ onUnmounted(() => {
           <ul class="note-list">
             <li v-for="conflict in optiScalerDialog.preview.conflicts" :key="conflict.path">
               {{ conflict.name }} · {{ formatFileSize(conflict.sizeBytes) }}
+              <span class="dll-chip">
+                {{ conflict.managedByModdin ? t('optiConflictManaged') : t('optiConflictForeign', { holder: conflict.heldBy || t('unknownHolder') }) }}
+              </span>
             </li>
           </ul>
+          <label v-if="optiScalerDialog.preview.resolution === 'blocked'" class="field opti-replace">
+            <span>
+              <input
+                type="checkbox"
+                :checked="optiAllowReplaceUnknown"
+                :disabled="moduleBusy"
+                @change="setOptiReplaceUnknown(($event.target as HTMLInputElement).checked)"
+              />
+              {{ t('optiReplaceUnknown') }}
+            </span>
+            <small>{{ t('optiReplaceUnknownHint') }}</small>
+          </label>
+          <p v-else-if="optiScalerDialog.preview.resolution === 'replace_with_backup'" class="detail-text">
+            {{ t('optiReplaceWithBackup') }}
+          </p>
         </section>
       </ChangePreview>
       <template #footer>
@@ -2293,6 +2394,35 @@ onUnmounted(() => {
       </template>
     </BaseDialog>
 
+    <BaseDialog
+      v-if="dependencyDialog"
+      :eyebrow="t('moduleDependenciesEyebrow')"
+      :title="moduleName(dependencyDialog.module)"
+      :description="t('moduleDependenciesDescription')"
+      @close="dependencyDialog = null"
+    >
+      <ul class="dependency-list">
+        <li v-for="dependency in dependencyDialog.missing" :key="dependency.id">
+          <span>
+            <strong>{{ moduleName(dependency) }}</strong>
+            <small>{{ moduleDescription(dependency) }}</small>
+          </span>
+          <button
+            class="btn btn-sm"
+            :class="{ 'is-loading': busyModuleId === dependency.id }"
+            type="button"
+            :disabled="moduleBusy"
+            @click="installDependency(dependency)"
+          >
+            {{ t('actionInstall') }}
+          </button>
+        </li>
+      </ul>
+      <template #footer>
+        <button class="btn" type="button" @click="dependencyDialog = null">{{ t('close') }}</button>
+      </template>
+    </BaseDialog>
+
     <DesktopShortcutDialog
       v-if="desktopShortcut.dialog.value"
       :module-name="moduleName(desktopShortcut.dialog.value.module)"
@@ -2359,6 +2489,15 @@ onUnmounted(() => {
 .info-list dd { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); margin: 0; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
 
 .dll-chip { border-radius: var(--moddin-radius-sm); padding: 2px 8px; color: var(--moddin-warning); background: var(--moddin-warning-bg); font-family: var(--moddin-mono); font-size: var(--moddin-text-xs); }
+
+.dependency-list { display: grid; gap: var(--moddin-space-2); margin: 0; padding: 0; list-style: none; }
+.dependency-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--moddin-space-3); padding: var(--moddin-space-2) var(--moddin-space-3); border: 1px solid var(--moddin-line); border-radius: var(--moddin-radius-md); }
+.dependency-list span { display: grid; gap: 2px; }
+.dependency-list small { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
+
+.opti-replace { margin-top: var(--moddin-space-2); }
+.opti-replace span { display: flex; align-items: center; gap: var(--moddin-space-2); }
+.opti-replace input { width: 15px; height: 15px; accent-color: var(--moddin-accent); }
 
 @media (max-width: 960px) {
   .library-layout { display: flex; flex: none; flex-direction: column; }

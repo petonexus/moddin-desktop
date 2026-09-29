@@ -23,8 +23,8 @@
 use crate::{
     builtin_checks,
     builtin_steps::{self, StepContext, StepResult},
-    capability::{CapabilitySpec, CheckSpec, ResolvedConfig, SpecOrigin, StepSpec},
-    module::{CheckCategory, CheckOutcome, CheckSeverity, ModuleStatus, VerificationReport},
+    capability::{CapabilitySpec, CheckSpec, ResolvedConfig, SpecOrigin},
+    module::{CheckOutcome, CheckSeverity, ModuleStatus, VerificationReport},
     transaction::{self, TransactionRecord},
 };
 use serde::Serialize;
@@ -237,7 +237,28 @@ pub struct InstallResult {
     pub transaction: Option<TransactionRecord>,
     pub steps: Vec<StepResult>,
     pub affected_paths: Vec<String>,
+    /// Ids of capabilities auto-installed as dependencies of this
+    /// install, in install order (a dependency always precedes the
+    /// capability that required it).
+    #[serde(default)]
+    pub installed_dependencies: Vec<String>,
+    /// Evaluated `exe-version` outcome when the spec declares a
+    /// `compatibility` block, `None` when the spec supports every
+    /// game build. Even on a forced install the evaluated outcome is
+    /// reported here so the UI can surface it.
+    #[serde(default)]
+    pub compatibility: Option<CheckOutcome>,
 }
+
+/// Maximum number of capability ids a dependency chain may contain
+/// before the runner refuses to recurse further (guards both runaway
+/// recipes and cycles the id-guard misses).
+pub const MAX_DEPENDENCY_DEPTH: usize = 8;
+
+/// Stable id of the synthesized compatibility check the runner adds
+/// to verification reports (and to `InstallResult.compatibility`) for
+/// specs that declare a `compatibility` block.
+pub const COMPATIBILITY_CHECK_ID: &str = "exe-version-compat";
 
 /// Internal install worker. Called by `run_install` (registry lookup)
 /// and `run_install_with_spec` (community YAML the caller already
@@ -287,10 +308,253 @@ fn execute_install(
         transaction,
         steps: step_results,
         affected_paths: affected,
+        installed_dependencies: Vec::new(),
+        compatibility: None,
     })
 }
 
-/// Run the `install` section of a capability that lives in the registry.
+/// A capability counts as installed for a game when the transaction
+/// store holds an applied record for the pair — the exact predicate
+/// the uninstall path uses before rolling back.
+fn is_capability_installed(game_id: &str, capability_id: &str) -> bool {
+    transaction::list_transactions_sync()
+        .map(|records| {
+            records.iter().any(|record| {
+                record.status == "applied"
+                    && record.game_id == game_id
+                    && record.kind == capability_id
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Recursively install every missing dependency declared by `spec`.
+/// Missing = no applied transaction for (gameId, dependencyId).
+/// Transitive dependencies install first; `chain` holds the ids from
+/// the originally requested capability down to (and including)
+/// `spec`, which powers both the cycle guard and the error messages.
+fn install_dependencies_recursive(
+    registry: &CapabilityRegistry,
+    spec: &CapabilitySpec,
+    game_id: &str,
+    game_name: &str,
+    config: &ResolvedConfig,
+    install_directory: &Path,
+    executable_directory: &Path,
+    chain: &mut Vec<String>,
+    installed_dependencies: &mut Vec<String>,
+) -> Result<(), String> {
+    for dependency_id in &spec.dependencies {
+        if is_capability_installed(game_id, dependency_id) {
+            continue;
+        }
+
+        let mut chain_text = chain.clone();
+        chain_text.push(dependency_id.clone());
+        let chain_label = chain_text.join(" -> ");
+        if chain.len() + 1 > MAX_DEPENDENCY_DEPTH {
+            return Err(format!(
+                "Dependency chain too deep (max {MAX_DEPENDENCY_DEPTH} levels): {chain_label}. \
+                 Flatten the recipe or split the chain before installing."
+            ));
+        }
+        if chain.iter().any(|seen| seen == dependency_id) {
+            return Err(format!(
+                "Dependency cycle detected: {chain_label}. \
+                 Remove the cycle from the capability recipes before installing."
+            ));
+        }
+        let dependency_spec = registry.get(dependency_id).ok_or_else(|| {
+            format!(
+                "Missing dependency '{dependency_id}' required by '{}' (chain: {chain_label}). \
+                 It is not a loaded capability; install it manually first.",
+                spec.id
+            )
+        })?;
+
+        chain.push(dependency_id.clone());
+        let outcome = (|| -> Result<(), String> {
+            install_dependencies_recursive(
+                registry,
+                dependency_spec,
+                game_id,
+                game_name,
+                config,
+                install_directory,
+                executable_directory,
+                chain,
+                installed_dependencies,
+            )?;
+            // The gate also applies to auto-installed dependencies,
+            // but `force` never cascades: overriding an incompatible
+            // game build is a per-capability, user-level decision.
+            if let Some(compatibility) = evaluate_compatibility(
+                dependency_spec,
+                executable_directory,
+                &mut builtin_checks::ExeVersionCache::new(),
+            ) {
+                if !compatibility.passed {
+                    return Err(format!(
+                        "Dependency '{}' (required by '{}') is incompatible with this game \
+                         build: {}. Install it on its own — with force=true — only if you \
+                         accept the risk.",
+                        dependency_spec.id,
+                        spec.id,
+                        compatibility
+                            .detail
+                            .unwrap_or_else(|| "game executable outside the supported version range".to_owned())
+                    ));
+                }
+            }
+            execute_install(
+                dependency_spec,
+                game_id,
+                game_name,
+                config,
+                install_directory,
+                executable_directory,
+            )?;
+            installed_dependencies.push(dependency_id.clone());
+            Ok(())
+        })();
+        chain.pop();
+        outcome?;
+    }
+    Ok(())
+}
+
+/// Build and evaluate the synthesized `exe-version` check for a
+/// spec's `compatibility` block. Returns `None` when the spec does
+/// not constrain the game build (no block, or a block without any
+/// bound), which must behave exactly like "compatible with
+/// everything".
+///
+/// A blank `executable_directory` also returns `None`: the caller has
+/// no game to check against (the AI recommend flow and the community
+/// panel install without a selected game, so they pass an empty
+/// string), and failing closed there would block every community spec
+/// that declares a compatibility block. An *existing* executable whose
+/// version cannot be read is a different case and still fails — that
+/// one is a real "I could not verify this build".
+fn evaluate_compatibility(
+    spec: &CapabilitySpec,
+    executable_directory: &Path,
+    exe_versions: &mut builtin_checks::ExeVersionCache,
+) -> Option<CheckOutcome> {
+    let compatibility = spec.compatibility.as_ref()?;
+    if !compatibility.has_constraints() {
+        return None;
+    }
+    if executable_directory.as_os_str().is_empty() {
+        return None;
+    }
+    let mut params: std::collections::BTreeMap<String, serde_json::Value> =
+        std::collections::BTreeMap::new();
+    params.insert(
+        "path".to_owned(),
+        serde_json::Value::String(compatibility.game_exe.clone().unwrap_or_default()),
+    );
+    if let Some(min) = &compatibility.min_exe_version {
+        params.insert("minVersion".to_owned(), serde_json::Value::String(min.clone()));
+    }
+    if let Some(max) = &compatibility.max_exe_version {
+        params.insert("maxVersion".to_owned(), serde_json::Value::String(max.clone()));
+    }
+    if !compatibility.blocked_exe_versions.is_empty() {
+        params.insert(
+            "blockedVersions".to_owned(),
+            serde_json::Value::Array(
+                compatibility
+                    .blocked_exe_versions
+                    .iter()
+                    .map(|version| serde_json::Value::String(version.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    let check = CheckSpec {
+        id: COMPATIBILITY_CHECK_ID.to_owned(),
+        label: format!("{} supports this game build", spec.display_name),
+        kind: "exe-version".to_owned(),
+        params,
+        severity: crate::capability::severity::BLOCKER.to_owned(),
+        category: "modulespecific".to_owned(),
+        description: Some(
+            "Synthesized from the capability compatibility block; fails when the game \
+             executable's FileVersion is outside the supported range."
+                .to_owned(),
+        ),
+    };
+    Some(builtin_checks::evaluate_exe_version(
+        &check,
+        &ResolvedConfig::default(),
+        executable_directory,
+        exe_versions,
+    ))
+}
+
+/// Shared install path for registry-resolved and caller-supplied
+/// specs: compatibility gate → dependency auto-install → `install`
+/// steps. `force` bypasses the compatibility gate for this spec only.
+fn install_spec(
+    registry: &CapabilityRegistry,
+    spec: &CapabilitySpec,
+    game_id: &str,
+    game_name: &str,
+    config: &ResolvedConfig,
+    install_directory: &Path,
+    executable_directory: &Path,
+    force: bool,
+) -> Result<InstallResult, String> {
+    let compatibility = evaluate_compatibility(
+        spec,
+        executable_directory,
+        &mut builtin_checks::ExeVersionCache::new(),
+    );
+    if let Some(outcome) = &compatibility {
+        if !outcome.passed && !force {
+            return Err(format!(
+                "'{}' is not compatible with this game build: {}. Re-run with force=true \
+                 to install anyway.",
+                spec.display_name,
+                outcome.detail.clone().unwrap_or_else(|| {
+                    "game executable outside the supported version range".to_owned()
+                })
+            ));
+        }
+    }
+
+    let mut installed_dependencies = Vec::new();
+    let mut chain = vec![spec.id.clone()];
+    install_dependencies_recursive(
+        registry,
+        spec,
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+        &mut chain,
+        &mut installed_dependencies,
+    )?;
+
+    let mut result = execute_install(
+        spec,
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+    )?;
+    result.installed_dependencies = installed_dependencies;
+    result.compatibility = compatibility;
+    Ok(result)
+}
+
+/// Run the `install` section of a capability that lives in the
+/// registry. Missing `dependencies` are auto-installed first (up to
+/// [`MAX_DEPENDENCY_DEPTH`] levels); `force` bypasses the spec's
+/// compatibility gate for this capability only.
 pub fn run_install(
     registry: &CapabilityRegistry,
     capability_id: &str,
@@ -299,39 +563,47 @@ pub fn run_install(
     config: &ResolvedConfig,
     install_directory: &Path,
     executable_directory: &Path,
+    force: bool,
 ) -> Result<InstallResult, String> {
     let spec = registry
         .get(capability_id)
         .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
-    execute_install(
+    install_spec(
+        registry,
         spec,
         game_id,
         game_name,
         config,
         install_directory,
         executable_directory,
+        force,
     )
 }
 
 /// Run the `install` section of a capability whose `CapabilitySpec`
 /// was supplied directly (no registry lookup). Used by
 /// `community_capability_install` after the caller has downloaded
-/// and signature-verified the YAML.
+/// and signature-verified the YAML. Dependencies resolve against the
+/// regular registry (built-ins + local overrides).
 pub fn run_install_with_spec(
+    registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
     game_id: &str,
     game_name: &str,
     config: &ResolvedConfig,
     install_directory: &Path,
     executable_directory: &Path,
+    force: bool,
 ) -> Result<InstallResult, String> {
-    execute_install(
+    install_spec(
+        registry,
         spec,
         game_id,
         game_name,
         config,
         install_directory,
         executable_directory,
+        force,
     )
 }
 
@@ -383,12 +655,20 @@ pub async fn evaluate_check(
         .chain(spec.verify.iter())
         .find(|check| check.id == check_id)
         .ok_or_else(|| format!("Check '{check_id}' not found in capability '{capability_id}'."))?;
-    builtin_checks::evaluate_check(check, config, executable_directory).await
+    builtin_checks::evaluate_check(
+        check,
+        config,
+        executable_directory,
+        &mut builtin_checks::ExeVersionCache::new(),
+    )
+    .await
 }
 
 /// Run every check in `spec.checks` and `spec.verify` and return a
 /// structured verification report. Drives the desktop UI
-/// checklist.
+/// checklist. When the spec declares a `compatibility` block, the
+/// synthesized `exe-version` outcome is reported first under the
+/// stable id [`COMPATIBILITY_CHECK_ID`].
 pub async fn evaluate_all_checks(
     registry: &CapabilityRegistry,
     capability_id: &str,
@@ -399,11 +679,21 @@ pub async fn evaluate_all_checks(
         .get(capability_id)
         .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
 
+    let mut exe_versions = builtin_checks::ExeVersionCache::new();
     let mut outcomes: Vec<CheckOutcome> = Vec::new();
-    let mut all_passed = true;
-    let mut any_blocker_failed = false;
+    if let Some(compatibility) =
+        evaluate_compatibility(spec, executable_directory, &mut exe_versions)
+    {
+        outcomes.push(compatibility);
+    }
+    let mut all_passed = outcomes.iter().all(|outcome| outcome.passed);
+    let mut any_blocker_failed = outcomes
+        .iter()
+        .any(|outcome| !outcome.passed && outcome.severity == CheckSeverity::Blocker);
     for check in spec.checks.iter().chain(spec.verify.iter()) {
-        let outcome = builtin_checks::evaluate_check(check, config, executable_directory).await?;
+        let outcome =
+            builtin_checks::evaluate_check(check, config, executable_directory, &mut exe_versions)
+                .await?;
         if !outcome.passed {
             all_passed = false;
         }
@@ -472,6 +762,12 @@ pub struct CapabilityInstallRequest {
     pub install_dir: String,
     pub executable_dir: String,
     pub config: ResolvedConfig,
+    /// Install even when the spec's `compatibility` block reports the
+    /// game build as unsupported. The evaluated outcome is still
+    /// returned in `InstallResult.compatibility` so the UI can show
+    /// what the user overrode. Defaults to `false`.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -505,6 +801,7 @@ pub async fn capability_install(
         &request.config,
         &install_directory,
         &executable_directory,
+        request.force,
     )
 }
 
@@ -536,6 +833,40 @@ pub async fn capability_evaluate(
         &executable_directory,
     )
     .await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityCompatibilityRequest {
+    pub capability_id: String,
+    pub executable_dir: String,
+}
+
+/// Evaluate ONLY the spec's `compatibility` block.
+///
+/// `capability_evaluate` is the full preflight, but it also runs every
+/// declared check — including `archive-sha256`, which downloads the
+/// archive. That is far too slow to run while rendering module cards,
+/// so the UI calls this instead: once per spec that declares a
+/// compatibility block, to explain the block and offer a forced
+/// install before the user ever clicks Apply.
+///
+/// `Ok(None)` means the spec does not constrain the game build (no
+/// block, or a block without a bound) and is compatible with
+/// everything — the UI shows no warning at all in that case.
+#[tauri::command]
+pub fn capability_compatibility(
+    request: CapabilityCompatibilityRequest,
+) -> Result<Option<CheckOutcome>, String> {
+    let registry = CapabilityRegistry::load();
+    let spec = registry
+        .get(&request.capability_id)
+        .ok_or_else(|| format!("Unknown capability id '{}'.", request.capability_id))?;
+    Ok(evaluate_compatibility(
+        spec,
+        &PathBuf::from(&request.executable_dir),
+        &mut builtin_checks::ExeVersionCache::new(),
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -697,6 +1028,11 @@ pub struct CommunityInstallRequest {
     /// in the UI and the runner accepts unsigned capabilities.
     #[serde(default)]
     pub accept_unsigned: bool,
+    /// Same override as `CapabilityInstallRequest.force`: installs
+    /// even when the spec's `compatibility` block rejects the game
+    /// build. Defaults to `false`.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[tauri::command]
@@ -754,13 +1090,16 @@ pub async fn community_capability_install(
 
     let install_directory = PathBuf::from(&request.install_dir);
     let executable_directory = PathBuf::from(&request.executable_dir);
+    let registry = CapabilityRegistry::load();
     run_install_with_spec(
+        &registry,
         &spec,
         &request.game_id,
         &request.game_name,
         &request.config,
         &install_directory,
         &executable_directory,
+        request.force,
     )
 }
 
@@ -932,5 +1271,610 @@ install:
         assert!(registry.get("ofxr-bridge").is_some());
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    // === Dependency graph + compatibility gate ======================
+
+    fn temp_root(suffix: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "moddin-cap-runner-{}-{}-{}",
+            suffix,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    /// Point LOCALAPPDATA at a private dir so the transaction store is
+    /// hermetic, and hold the shared env lock for the whole test body
+    /// (same protocol as compat_report's env tests).
+    struct IsolatedAppdata {
+        dir: PathBuf,
+        previous: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl IsolatedAppdata {
+        fn new(suffix: &str) -> Self {
+            let lock = crate::test_support::env_lock();
+            let dir = temp_root(suffix);
+            std::fs::create_dir_all(&dir).expect("isolated appdata dir");
+            let previous = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", &dir);
+            Self {
+                dir,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for IsolatedAppdata {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("LOCALAPPDATA", value),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn marker_step(field: &str) -> String {
+        format!(
+            "install:\n  - kind: write-text-file\n    description: write marker\n    params:\n      pathField: {field}\n      template: marker\n"
+        )
+    }
+
+    #[test]
+    fn installs_missing_dependencies_before_the_dependent() {
+        let _appdata = IsolatedAppdata::new("dep-order");
+        let caps = temp_root("dep-order-caps");
+        write_local_capability(
+            &caps,
+            "dep-base",
+            &format!(
+                "id: dep-base\ndisplayName: Dep base\ncategory: system\nstatus: available\n{}",
+                marker_step("markerBase")
+            ),
+        );
+        write_local_capability(
+            &caps,
+            "dep-middle",
+            &format!(
+                "id: dep-middle\ndisplayName: Dep middle\ncategory: system\nstatus: available\ndependencies:\n  - dep-base\n{}",
+                marker_step("markerMiddle")
+            ),
+        );
+        write_local_capability(
+            &caps,
+            "dep-top",
+            &format!(
+                "id: dep-top\ndisplayName: Dep top\ncategory: system\nstatus: available\ndependencies:\n  - dep-middle\n{}",
+                marker_step("markerTop")
+            ),
+        );
+
+        let work = temp_root("dep-order-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "markerBase".to_owned(),
+            serde_json::Value::String(executable.join("base.txt").to_string_lossy().into_owned()),
+        );
+        config.values.insert(
+            "markerMiddle".to_owned(),
+            serde_json::Value::String(
+                executable.join("middle.txt").to_string_lossy().into_owned(),
+            ),
+        );
+        config.values.insert(
+            "markerTop".to_owned(),
+            serde_json::Value::String(executable.join("top.txt").to_string_lossy().into_owned()),
+        );
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let game_id = "dep-order-game";
+        let result = run_install(
+            &registry,
+            "dep-top",
+            game_id,
+            "Dep Order Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect("install with auto-installed dependencies");
+
+        // Transitive dependency installs first, then its dependent.
+        assert_eq!(result.installed_dependencies, vec!["dep-base", "dep-middle"]);
+        assert!(result.compatibility.is_none());
+        for name in ["base.txt", "middle.txt", "top.txt"] {
+            assert!(
+                executable.join(name).is_file(),
+                "{name} was written by the install chain"
+            );
+        }
+        // Every capability in the chain recorded an applied transaction.
+        for capability_id in ["dep-base", "dep-middle", "dep-top"] {
+            assert!(
+                is_capability_installed(game_id, capability_id),
+                "{capability_id} is active for the game"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn already_installed_dependency_is_skipped() {
+        let _appdata = IsolatedAppdata::new("dep-skip");
+        let caps = temp_root("dep-skip-caps");
+        write_local_capability(
+            &caps,
+            "dep-present",
+            &format!(
+                "id: dep-present\ndisplayName: Dep present\ncategory: system\nstatus: available\n{}",
+                marker_step("markerPresent")
+            ),
+        );
+        write_local_capability(
+            &caps,
+            "dep-requester",
+            &format!(
+                "id: dep-requester\ndisplayName: Dep requester\ncategory: system\nstatus: available\ndependencies:\n  - dep-present\n{}",
+                marker_step("markerRequester")
+            ),
+        );
+
+        let work = temp_root("dep-skip-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "markerPresent".to_owned(),
+            serde_json::Value::String(
+                executable.join("present.txt").to_string_lossy().into_owned(),
+            ),
+        );
+        config.values.insert(
+            "markerRequester".to_owned(),
+            serde_json::Value::String(
+                executable.join("requester.txt").to_string_lossy().into_owned(),
+            ),
+        );
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let game_id = "dep-skip-game";
+        run_install(
+            &registry,
+            "dep-present",
+            game_id,
+            "Dep Skip Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect("install the dependency on its own");
+
+        let result = run_install(
+            &registry,
+            "dep-requester",
+            game_id,
+            "Dep Skip Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect("install the requester");
+        assert!(
+            result.installed_dependencies.is_empty(),
+            "an already-active dependency must not be reinstalled"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn dependency_cycle_is_detected_with_the_chain() {
+        let _appdata = IsolatedAppdata::new("dep-cycle");
+        let caps = temp_root("dep-cycle-caps");
+        write_local_capability(
+            &caps,
+            "cycle-alpha",
+            "id: cycle-alpha\ndisplayName: Cycle alpha\ncategory: system\nstatus: available\ndependencies:\n  - cycle-beta\n",
+        );
+        write_local_capability(
+            &caps,
+            "cycle-beta",
+            "id: cycle-beta\ndisplayName: Cycle beta\ncategory: system\nstatus: available\ndependencies:\n  - cycle-alpha\n",
+        );
+        write_local_capability(
+            &caps,
+            "cycle-self",
+            "id: cycle-self\ndisplayName: Cycle self\ncategory: system\nstatus: available\ndependencies:\n  - cycle-self\n",
+        );
+
+        let work = temp_root("dep-cycle-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let config = ResolvedConfig::default();
+
+        let error = run_install(
+            &registry,
+            "cycle-alpha",
+            "cycle-game",
+            "Cycle Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("cycle aborts the install");
+        assert!(error.contains("cycle"), "error names the problem: {error}");
+        assert!(
+            error.contains("cycle-alpha -> cycle-beta -> cycle-alpha"),
+            "error lists the full chain: {error}"
+        );
+
+        let error = run_install(
+            &registry,
+            "cycle-self",
+            "cycle-game",
+            "Cycle Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("self-dependency aborts the install");
+        assert!(
+            error.contains("cycle-self -> cycle-self"),
+            "self-dependency lists the chain: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn dependency_chain_depth_is_capped() {
+        let _appdata = IsolatedAppdata::new("dep-depth");
+        let caps = temp_root("dep-depth-caps");
+        for index in 0..9 {
+            write_local_capability(
+                &caps,
+                &format!("chain-{index}"),
+                &format!(
+                    "id: chain-{index}\ndisplayName: Chain {index}\ncategory: system\nstatus: available\ndependencies:\n  - chain-{}\n",
+                    index + 1
+                ),
+            );
+        }
+
+        let work = temp_root("dep-depth-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+
+        let error = run_install(
+            &registry,
+            "chain-0",
+            "depth-game",
+            "Depth Game",
+            &ResolvedConfig::default(),
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("runaway chain aborts the install");
+        assert!(
+            error.contains("too deep"),
+            "error names the depth cap: {error}"
+        );
+        assert!(
+            error.contains(&format!("chain-{}", MAX_DEPENDENCY_DEPTH)),
+            "error lists the chain up to the cap: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn unknown_dependency_reports_the_missing_chain() {
+        let _appdata = IsolatedAppdata::new("dep-missing");
+        let caps = temp_root("dep-missing-caps");
+        write_local_capability(
+            &caps,
+            "dep-orphan",
+            "id: dep-orphan\ndisplayName: Dep orphan\ncategory: system\nstatus: available\ndependencies:\n  - ghost-loader\n",
+        );
+
+        let work = temp_root("dep-missing-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+
+        let error = run_install(
+            &registry,
+            "dep-orphan",
+            "missing-game",
+            "Missing Game",
+            &ResolvedConfig::default(),
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("unknown dependency aborts the install");
+        assert!(
+            error.contains("ghost-loader"),
+            "error names the missing dependency: {error}"
+        );
+        assert!(
+            error.contains("dep-orphan -> ghost-loader"),
+            "error lists the dependency chain: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    /// Writes a local capability whose compatibility block requires
+    /// game.exe >= 99.0.0 — every real probe of the dummy exe below is
+    /// guaranteed to fail the gate (no version resource / undetectable).
+    fn write_gated_capability(caps: &Path, marker_field: &str) {
+        write_local_capability(
+            caps,
+            "gated-mod",
+            &format!(
+                "id: gated-mod\ndisplayName: Gated mod\ncategory: system\nstatus: available\ncompatibility:\n  gameExe: game.exe\n  minExeVersion: 99.0.0.0\n{}",
+                marker_step(marker_field)
+            ),
+        );
+    }
+
+    #[test]
+    fn incompatible_game_build_blocks_install_without_force() {
+        let _appdata = IsolatedAppdata::new("gate-block");
+        let caps = temp_root("gate-block-caps");
+        write_gated_capability(&caps, "markerGated");
+
+        let work = temp_root("gate-block-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        // Dummy exe: real PowerShell probe finds no FileVersion, so the
+        // gate fails without needing a versioned PE binary.
+        fs::write(executable.join("game.exe"), b"not a real binary").expect("dummy exe");
+
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "markerGated".to_owned(),
+            serde_json::Value::String(
+                executable.join("gated.txt").to_string_lossy().into_owned(),
+            ),
+        );
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let error = run_install(
+            &registry,
+            "gated-mod",
+            "gate-game",
+            "Gate Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("incompatible build blocks a plain install");
+        assert!(
+            error.contains("not compatible with this game build"),
+            "error explains the incompatibility: {error}"
+        );
+        assert!(
+            error.contains("force=true"),
+            "error tells the caller how to override: {error}"
+        );
+        assert!(!executable.join("gated.txt").exists());
+        assert!(
+            !is_capability_installed("gate-game", "gated-mod"),
+            "a blocked install must not record a transaction"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn force_installs_despite_incompatible_build_and_reports_outcome() {
+        let _appdata = IsolatedAppdata::new("gate-force");
+        let caps = temp_root("gate-force-caps");
+        write_gated_capability(&caps, "markerGated");
+
+        let work = temp_root("gate-force-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        fs::write(executable.join("game.exe"), b"not a real binary").expect("dummy exe");
+
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "markerGated".to_owned(),
+            serde_json::Value::String(
+                executable.join("gated.txt").to_string_lossy().into_owned(),
+            ),
+        );
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let result = run_install(
+            &registry,
+            "gated-mod",
+            "gate-game",
+            "Gate Game",
+            &config,
+            &work,
+            &executable,
+            true,
+        )
+        .expect("force bypasses the compatibility gate");
+        assert!(executable.join("gated.txt").is_file());
+        let compatibility = result
+            .compatibility
+            .expect("the evaluated compatibility outcome is reported");
+        assert_eq!(compatibility.id.as_deref(), Some(COMPATIBILITY_CHECK_ID));
+        assert!(
+            !compatibility.passed,
+            "the outcome still records that the build is unsupported"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[tokio::test]
+    async fn evaluate_reports_compatibility_as_a_structured_check() {
+        let _appdata = IsolatedAppdata::new("gate-eval");
+        let caps = temp_root("gate-eval-caps");
+        write_gated_capability(&caps, "markerGated");
+
+        let work = temp_root("gate-eval-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        fs::write(executable.join("game.exe"), b"not a real binary").expect("dummy exe");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let report = evaluate_all_checks(
+            &registry,
+            "gated-mod",
+            &ResolvedConfig::default(),
+            &executable,
+        )
+        .await
+        .expect("evaluation succeeds even for an incompatible build");
+
+        let first = report.checks.first().expect("compatibility row exists");
+        assert_eq!(first.id.as_deref(), Some(COMPATIBILITY_CHECK_ID));
+        assert_eq!(first.severity, CheckSeverity::Blocker);
+        assert!(
+            !first.passed,
+            "the dummy exe reports no FileVersion, so the row fails"
+        );
+        assert!(
+            first.detail.as_deref().unwrap_or_default().contains("game.exe"),
+            "detail names the probed exe: {:?}",
+            first.detail
+        );
+
+        let _ = fs::remove_dir_all(&work);
+        let _ = fs::remove_dir_all(&caps);
+    }
+
+    #[test]
+    fn compatibility_command_reports_the_gate_without_the_checklist() {
+        let appdata = IsolatedAppdata::new("compat-cmd");
+        // The command loads the registry the way the app does, so the
+        // recipes have to sit under the isolated LOCALAPPDATA.
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_gated_capability(&caps, "markerGated");
+        write_local_capability(
+            &caps,
+            "ungated-mod",
+            &format!(
+                "id: ungated-mod\ndisplayName: Ungated mod\ncategory: system\nstatus: available\n{}",
+                marker_step("markerUngated")
+            ),
+        );
+
+        let work = temp_root("compat-cmd-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        fs::write(executable.join("game.exe"), b"not a real binary").expect("dummy exe");
+        let executable_dir = executable.to_string_lossy().into_owned();
+
+        let gated = capability_compatibility(CapabilityCompatibilityRequest {
+            capability_id: "gated-mod".to_owned(),
+            executable_dir: executable_dir.clone(),
+        })
+        .expect("a known id resolves")
+        .expect("a block with a bound yields an outcome");
+        assert_eq!(gated.id.as_deref(), Some(COMPATIBILITY_CHECK_ID));
+        assert_eq!(gated.severity, CheckSeverity::Blocker);
+        assert!(
+            !gated.passed,
+            "the dummy exe exposes no FileVersion, so the gate fails"
+        );
+
+        let ungated = capability_compatibility(CapabilityCompatibilityRequest {
+            capability_id: "ungated-mod".to_owned(),
+            executable_dir: executable_dir.clone(),
+        })
+        .expect("a known id resolves");
+        assert!(
+            ungated.is_none(),
+            "no compatibility block means compatible with every build, \
+             and the UI must show no warning"
+        );
+
+        let error = capability_compatibility(CapabilityCompatibilityRequest {
+            capability_id: "does-not-exist".to_owned(),
+            executable_dir: executable_dir,
+        })
+        .expect_err("an unknown id is an error, not a silent None");
+        assert!(
+            error.contains("Unknown capability id"),
+            "the error names the id: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn compatibility_is_skipped_when_the_caller_has_no_game_directory() {
+        let appdata = IsolatedAppdata::new("compat-nodir");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_gated_capability(&caps, "markerGated");
+
+        let work = temp_root("compat-nodir-work");
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+
+        // The AI recommend flow and the community panel install without a
+        // selected game, so they send an empty executable dir. There is no
+        // build to verify there, and failing closed would make every
+        // community spec with a compatibility block uninstallable.
+        let outcome = evaluate_compatibility(
+            registry.get("gated-mod").expect("gated spec loads"),
+            Path::new(""),
+            &mut builtin_checks::ExeVersionCache::new(),
+        );
+        assert!(
+            outcome.is_none(),
+            "no game directory means no build constraint, not a failed one"
+        );
+
+        // A directory that exists but holds no readable exe is a real
+        // "could not verify" and must still fail closed.
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        fs::write(executable.join("game.exe"), b"not a real binary").expect("dummy exe");
+        let outcome = evaluate_compatibility(
+            registry.get("gated-mod").expect("gated spec loads"),
+            &executable,
+            &mut builtin_checks::ExeVersionCache::new(),
+        )
+        .expect("a real directory still evaluates");
+        assert!(
+            !outcome.passed,
+            "an unreadable FileVersion is a failed verification, not an absent one"
+        );
+
+        let _ = fs::remove_dir_all(&work);
     }
 }

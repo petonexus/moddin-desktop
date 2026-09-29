@@ -132,6 +132,12 @@ const CHECK_KINDS = Object.freeze({
     fields: ["url", "urlField", "expected", "expectedField"],
     severity: "blocker",
   },
+  "exe-version": {
+    summary:
+      "Reads the game exe FileVersion (PowerShell) and compares it to the accepted window: minVersion/maxVersion (inclusive), blockedVersions (rejected), exactVersions (whitelist when non-empty).",
+    fields: ["path", "pathField", "minVersion", "maxVersion", "blockedVersions", "exactVersions"],
+    severity: "blocker",
+  },
 });
 
 // ---------------------------------------------------------------------------

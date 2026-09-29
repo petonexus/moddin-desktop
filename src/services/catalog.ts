@@ -1,6 +1,6 @@
 import { parse } from 'yaml'
 import { z } from 'zod'
-import type { GameCatalogEntry, InstalledGame } from '../types/game'
+import type { GameCatalogEntry, InstalledGame, ToolModuleDefinition } from '../types/game'
 import {
   assertUniqueModuleIds,
   findEnginePreset,
@@ -18,6 +18,7 @@ const moduleSchema = z.object({
   category: z.enum(['vr', 'graphics', 'qol', 'system']),
   status: z.enum(['available', 'planned']),
   config: z.record(z.string(), configValueSchema).optional(),
+  dependencies: z.array(z.string().min(1)).optional(),
 })
 
 const gameSchema = z.object({
@@ -136,4 +137,70 @@ export function findCatalogGameByInstalledGame(game: Pick<InstalledGame, 'store'
     default:
       return findCatalogGameBySteamAppId(game.appId)
   }
+}
+
+/**
+ * Depth-first collection of the modules that are not installed yet, in
+ * dependency order: a dependency always appears before the module that
+ * requires it. Already-installed modules are skipped together with their
+ * subtree, dependency ids this game does not declare are ignored, and
+ * cycles are broken at the repeated id so the result stays finite.
+ */
+function collectMissing(
+  declared: Map<string, ToolModuleDefinition>,
+  roots: ToolModuleDefinition[],
+  installed: Set<string>,
+): string[] {
+  const missing: string[] = []
+  const resolved = new Set<string>()
+
+  const visit = (module: ToolModuleDefinition, inStack: Set<string>) => {
+    if (resolved.has(module.id) || installed.has(module.id)) return
+    if (inStack.has(module.id)) return // cycle: break at the repeated id
+    inStack.add(module.id)
+    for (const dependencyId of module.dependencies ?? []) {
+      const dependency = declared.get(dependencyId)
+      if (dependency) visit(dependency, inStack)
+    }
+    inStack.delete(module.id)
+    resolved.add(module.id)
+    missing.push(module.id)
+  }
+
+  for (const module of roots) visit(module, new Set())
+  return missing
+}
+
+/**
+ * Ids of modules the game declares that are missing from
+ * `installedModuleIds` and must be installed first, in dependency
+ * order. Use it to prompt for prerequisite modules before installing a
+ * dependent one.
+ */
+export function getMissingDependencies(
+  game: Pick<GameCatalogEntry, 'modules'>,
+  installedModuleIds: Iterable<string>,
+): string[] {
+  return collectMissing(
+    new Map(game.modules.map((module) => [module.id, module])),
+    game.modules,
+    new Set(installedModuleIds),
+  )
+}
+
+/**
+ * Same traversal as {@link getMissingDependencies}, but rooted at a
+ * single module: returns only what that module needs, in the order it
+ * must be installed. The module itself is never part of the result, and
+ * an id the game does not declare yields an empty list.
+ */
+export function getMissingDependenciesForModule(
+  game: Pick<GameCatalogEntry, 'modules'>,
+  moduleId: string,
+  installedModuleIds: Iterable<string>,
+): string[] {
+  const declared = new Map(game.modules.map((module) => [module.id, module]))
+  const root = declared.get(moduleId)
+  if (!root) return []
+  return collectMissing(declared, [root], new Set(installedModuleIds))
 }

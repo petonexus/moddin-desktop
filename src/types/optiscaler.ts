@@ -8,12 +8,18 @@ export interface OptiScalerRequest {
   sha256: string
   proxyCandidates: string[]
   safetyNotes: string[]
+  allowReplaceUnknown?: boolean
+  resolution?: ProxyResolution
 }
+
+export type ProxyResolution = 'use_next_free' | 'replace_with_backup' | 'blocked'
 
 export interface ProxyConflict {
   name: string
   path: string
   sizeBytes: number
+  managedByModdin?: boolean
+  heldBy?: string
 }
 
 export interface OptiScalerPreview {
@@ -28,6 +34,7 @@ export interface OptiScalerPreview {
   currentProxy: string | null
   manualInstallDetected: boolean
   conflicts: ProxyConflict[]
+  resolution?: ProxyResolution
   changes: string[]
   warnings: string[]
 }

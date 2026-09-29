@@ -14,6 +14,24 @@ export type CheckKind =
   | 'file-absent'
   | 'archive-reachable'
   | 'archive-sha256'
+  | 'exe-version'
+
+/**
+ * Game-build compatibility window declared by a capability. Mirrors
+ * `crate::capability::CompatibilitySpec` (serde camelCase). Absent (or
+ * declared without any bound) means "compatible with every build"; the
+ * backend then skips the exe-version probe entirely.
+ */
+export interface CapabilityCompatibility {
+  /** Executable whose `FileVersion` is checked, relative to the game's executable directory. */
+  gameExe?: string
+  /** Lowest accepted `FileVersion`, inclusive. */
+  minExeVersion?: string
+  /** Highest accepted `FileVersion`, inclusive. */
+  maxExeVersion?: string
+  /** Exact `FileVersion`s that must never run with this capability. */
+  blockedExeVersions?: string[]
+}
 
 /**
  * Where a capability recipe came from. Drives the UI badge, the
@@ -55,6 +73,9 @@ export interface CapabilitySpec {
   category: CapabilityCategory
   status: CapabilityStatus
   supportedEngines?: string[]
+  /** Ids of capabilities that must be installed before this one. */
+  dependencies?: string[]
+  compatibility?: CapabilityCompatibility
   configSchema?: ConfigFieldSpec[]
   checks?: CheckSpec[]
   install?: StepSpec[]
@@ -96,6 +117,29 @@ export interface InstallResult {
     affectedPaths: string[]
   }>
   affectedPaths: string[]
+  /** Ids auto-installed as dependencies of this install, in install order. */
+  installedDependencies?: string[]
+  /**
+   * Evaluated exe-version outcome when the spec declares a
+   * `compatibility` block. Present (and possibly `passed: false`) even
+   * on a forced install, so the UI can surface what was overridden.
+   */
+  compatibility?: CapabilityCheckOutcome
+}
+
+/**
+ * One evaluated check as the backend reports it. Mirrors Rust
+ * `crate::module::CheckOutcome` (serde camelCase): `id` is optional
+ * (absent for synthesized rows on some paths), `label`/`passed` are
+ * always present, `detail` is `null` when the check carries no detail.
+ */
+export interface CapabilityCheckOutcome {
+  id?: string | null
+  label: string
+  passed: boolean
+  detail?: string | null
+  category?: string
+  severity?: string
 }
 
 /**

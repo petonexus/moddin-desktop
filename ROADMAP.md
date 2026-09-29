@@ -26,7 +26,7 @@
 - [x] module verification checklist and post-action validation
 - [x] reapply/reinstall and transaction-backed removal flows
 - [x] structured per-action logs
-- [ ] conflict resolution for common proxy DLL names
+- [x] conflict resolution for common proxy DLL names
 
 ## v0.3 — Graphics & VR modules
 

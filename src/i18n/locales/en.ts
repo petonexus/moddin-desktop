@@ -205,6 +205,8 @@ const en = {
   moduleOpenXrDescription: 'Settings for the VR system this game uses.',
   moduleDesktopShortcut: 'Desktop shortcut',
   moduleNoAction: 'Moddin cannot install this mod yet.',
+  moduleDependenciesEyebrow: 'Prerequisites',
+  moduleDependenciesDescription: 'This mod is an add-on and needs these first:',
 
   // Checklist items
   checkExecutable: 'Game file found',
@@ -285,6 +287,12 @@ const en = {
   // OptiScaler
   optiConflictsTitle: 'Other mods in the same spot',
   optiConflictsHint: 'We found files from other mods that use the same entry point. They may conflict.',
+  optiConflictManaged: 'installed by Moddin',
+  optiConflictForeign: 'from {holder}',
+  unknownHolder: 'another mod',
+  optiReplaceUnknown: 'Replace the file that is already there',
+  optiReplaceUnknownHint: 'Moddin backs it up first and you can undo the change from the activity log.',
+  optiReplaceWithBackup: 'The existing file is backed up before it is replaced, so you can undo this.',
   optiSafetyOnline: 'Do not use OptiScaler in online matches with anti-cheat. Close the game before installing or undoing.',
   optiSafetyEldenRing: 'On Elden Ring, OptiScaler only works together with a mod that adds DLSS/FSR to the game (such as ERSS-FG). The original game does not have it.',
   optiSafetyStalker2: 'Use DLSS or XeSS as the upscaler input — FSR 3.1 inputs have bad image quality. In UEVR sessions (STALKER 2 VR), use OptiScaler only if you have an AMD GPU or need the upscaler fallback; on NVIDIA the game’s native DLSS already works.',
@@ -380,6 +388,10 @@ const en = {
   capabilityInstallFailed: 'Install failed: {error}',
   capabilityActionFailed: 'Could not apply the change: {error}',
   capabilityLoadFailed: 'Could not load saved mods: {error}',
+  capabilityCompatBlocked: 'This game build is not supported by this mod.',
+  capabilityCompatForce: 'Install anyway',
+  capabilityCompatForced: 'Installed on an unsupported build. The mod may misbehave or crash the game.',
+  capabilityDependenciesInstalled: 'Prerequisites installed first: {modules}',
 
   // Advanced
   advancedTitle: 'Technical info',

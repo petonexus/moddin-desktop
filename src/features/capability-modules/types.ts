@@ -1,19 +1,10 @@
-import type { CapabilitySpec, CapabilitySummary, ResolvedConfig } from '../../types/capability'
+import type {
+  CapabilityCheckOutcome,
+  CapabilitySpec,
+  CapabilitySummary,
+  ResolvedConfig,
+} from '../../types/capability'
 import type { TransactionRecord } from '../../types/transaction'
-
-/**
- * One evaluated check from `capability_evaluate`. Mirrors the fields the
- * UI needs from Rust `crate::module::CheckOutcome` (serde camelCase):
- * `id` is optional, `label`/`passed` always present, `detail` optional.
- */
-export interface CapabilityCheckOutcome {
-  id?: string
-  label: string
-  passed: boolean
-  detail?: string
-  category?: string
-  severity?: string
-}
 
 /** Mirrors Rust `crate::module::VerificationReport` (serde camelCase). */
 export interface CapabilityVerificationReport {
@@ -34,6 +25,8 @@ export interface CapabilityInstallParams {
   installDir: string
   executableDir: string
   config: ResolvedConfig
+  /** Install even when the spec's compatibility block rejects the game build. */
+  force?: boolean
 }
 
 export interface CapabilityUninstallParams {
@@ -48,6 +41,11 @@ export interface CapabilityEvaluateParams {
   config: ResolvedConfig
 }
 
+export interface CapabilityCompatibilityParams {
+  capabilityId: string
+  executableDir: string
+}
+
 /** Per-card mutable state, keyed by capability id. */
 export interface CapabilityCardState {
   busy: boolean
@@ -59,6 +57,20 @@ export interface CapabilityCardState {
   specLoading: boolean
   verification: CapabilityVerificationReport | null
   configValues: Record<string, CapabilityConfigValue>
+  /**
+   * Result of the spec's `compatibility` probe (`capability_compatibility`).
+   * `null` when the spec does not constrain the game build, when no game
+   * is selected, or before the probe ran. A non-null `passed: false`
+   * blocks a plain install — the card offers a forced one instead.
+   */
+  compatibility: CapabilityCheckOutcome | null
+  compatibilityBusy: boolean
+  /**
+   * Capabilities the backend auto-installed as dependencies of the last
+   * install, in install order. Shown once so the user knows what came
+   * along; cleared by the next install.
+   */
+  installedDependencies: string[]
 }
 
 export interface UseCapabilityModulesOptions {
@@ -72,4 +84,10 @@ export interface UseCapabilityModulesOptions {
   onChanged: () => void | Promise<void>
 }
 
-export type { CapabilitySpec, CapabilitySummary, ResolvedConfig, TransactionRecord }
+export type {
+  CapabilityCheckOutcome,
+  CapabilitySpec,
+  CapabilitySummary,
+  ResolvedConfig,
+  TransactionRecord,
+}

@@ -205,6 +205,8 @@ const es = {
   moduleOpenXrDescription: 'Ajustes del sistema de VR que usa este juego.',
   moduleDesktopShortcut: 'Acceso directo en el escritorio',
   moduleNoAction: 'Moddin todavía no puede instalar este mod.',
+  moduleDependenciesEyebrow: 'Requisitos previos',
+  moduleDependenciesDescription: 'Este mod es un complemento y necesita estos primero:',
 
   // Checklist items
   checkExecutable: 'Archivo del juego encontrado',
@@ -285,6 +287,12 @@ const es = {
   // OptiScaler
   optiConflictsTitle: 'Otros mods en el mismo lugar',
   optiConflictsHint: 'Encontramos archivos de otros mods que usan el mismo punto de entrada. Podrían entrar en conflicto.',
+  optiConflictManaged: 'instalado por Moddin',
+  optiConflictForeign: 'de {holder}',
+  unknownHolder: 'otro mod',
+  optiReplaceUnknown: 'Reemplazar el archivo que ya está ahí',
+  optiReplaceUnknownHint: 'Moddin lo respalda antes y puedes deshacer el cambio desde el registro de actividad.',
+  optiReplaceWithBackup: 'El archivo existente se respalda antes de reemplazarse, así que puedes deshacerlo.',
   optiSafetyOnline: 'No uses OptiScaler en partidas online con anti-cheat. Cierra el juego antes de instalar o deshacer.',
   optiSafetyEldenRing: 'En Elden Ring, OptiScaler solo funciona junto con un mod que añada DLSS/FSR al juego (como ERSS-FG). El juego original no lo tiene.',
   optiSafetyStalker2: 'Usa DLSS o XeSS como entrada del reescalador — las entradas FSR 3.1 dan mala calidad de imagen. En sesiones UEVR (STALKER 2 VR), usa OptiScaler solo si tienes GPU AMD o necesitas fallback de upscaler; en NVIDIA el DLSS nativo del juego ya funciona.',
@@ -380,6 +388,10 @@ const es = {
   capabilityInstallFailed: 'Error al instalar: {error}',
   capabilityActionFailed: 'No se pudo aplicar el cambio: {error}',
   capabilityLoadFailed: 'No se pudieron cargar los mods guardados: {error}',
+  capabilityCompatBlocked: 'Esta versión del juego no es compatible con este mod.',
+  capabilityCompatForce: 'Instalar de todos modos',
+  capabilityCompatForced: 'Instalado en una versión no compatible. El mod puede fallar o romper el juego.',
+  capabilityDependenciesInstalled: 'Requisitos previos instalados primero: {modules}',
 
   // Advanced
   advancedTitle: 'Información técnica',

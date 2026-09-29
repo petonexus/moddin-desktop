@@ -26,6 +26,12 @@
       "items": { "type": "string" },
       "description": "Optional hint for which engines this capability is eligible for."
     },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+      "description": "Ids of capabilities that must be installed before this one. The runner auto-installs missing dependencies (recursively, max depth 8) before running install."
+    },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
     "safetyNotes": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
@@ -52,6 +58,25 @@
     }
   },
   "$defs": {
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Game-build compatibility window. Absent (or no bound set) means compatible with every build. When constrained, the runner reads the game exe FileVersion before installing (force=true overrides) and reports it as a structured check from capability_evaluate.",
+      "properties": {
+        "gameExe": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executable whose FileVersion is checked, relative to the game's executable directory."
+        },
+        "minExeVersion": { "type": "string", "description": "Lowest accepted FileVersion, inclusive." },
+        "maxExeVersion": { "type": "string", "description": "Highest accepted FileVersion, inclusive." },
+        "blockedExeVersions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Exact FileVersions that must never run with this capability."
+        }
+      }
+    },
     "configField": {
       "type": "object",
       "additionalProperties": false,
@@ -80,7 +105,7 @@
         "label": { "type": "string", "minLength": 1 },
         "kind": {
           "type": "string",
-          "enum": ["process-running", "file-exists", "file-absent", "archive-reachable", "archive-sha256"]
+          "enum": ["process-running", "file-exists", "file-absent", "archive-reachable", "archive-sha256", "exe-version"]
         },
         "severity": {
           "type": "string",

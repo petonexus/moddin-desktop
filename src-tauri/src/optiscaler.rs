@@ -1,4 +1,7 @@
-use crate::transaction::{self, TransactionRecord};
+use crate::{
+    inspection::{classify_proxy_occupant, ensure_resolution_matches, ProxyResolution},
+    transaction::{self, TransactionRecord},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -25,6 +28,16 @@ pub struct OptiScalerRequest {
     pub proxy_candidates: Vec<String>,
     #[serde(default)]
     pub safety_notes: Vec<String>,
+    /// Allows replacing a proxy DLL held by an unknown third-party loader
+    /// (transactional backup still applies). Defaults to `false` so
+    /// third-party DLLs are never overwritten implicitly.
+    #[serde(default)]
+    pub allow_replace_unknown: bool,
+    /// Optional resolution pinned by the caller from a previous preview.
+    /// Install recomputes the resolution and refuses mismatches, so a stale
+    /// preview can never be replayed against a changed game directory.
+    #[serde(default)]
+    pub resolution: Option<ProxyResolution>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +46,8 @@ pub struct ProxyConflict {
     pub name: String,
     pub path: String,
     pub size_bytes: u64,
+    pub managed_by_moddin: bool,
+    pub held_by: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +59,7 @@ pub struct OptiScalerPreview {
     pub executable_path: String,
     pub executable_directory: String,
     pub selected_proxy: Option<String>,
+    pub resolution: ProxyResolution,
     pub installed: bool,
     pub installed_version: Option<String>,
     pub current_proxy: Option<String>,
@@ -146,44 +162,110 @@ fn read_marker(executable_directory: &Path) -> Option<OptiScalerMarker> {
     serde_json::from_str(&contents).ok()
 }
 
+struct ProxyChoice {
+    selected: Option<String>,
+    conflicts: Vec<ProxyConflict>,
+    resolution: ProxyResolution,
+}
+
 fn choose_proxy(
     executable_directory: &Path,
     candidates: &[String],
     marker: Option<&OptiScalerMarker>,
-) -> (Option<String>, Vec<ProxyConflict>) {
-    let mut conflicts = Vec::new();
-
+    allow_replace_unknown: bool,
+) -> ProxyChoice {
     if let Some(marker) = marker {
         let current = executable_directory.join(&marker.proxy_dll);
         if current.is_file() {
-            for candidate in candidates {
-                let path = executable_directory.join(candidate);
-                if path.is_file() && !candidate.eq_ignore_ascii_case(&marker.proxy_dll) {
-                    conflicts.push(proxy_conflict(candidate, &path));
-                }
-            }
-            return (Some(marker.proxy_dll.clone()), conflicts);
+            // Updating our own managed install: the previous proxy copy is
+            // backed up by the install transaction and replaced in place,
+            // so Undo restores it.
+            return ProxyChoice {
+                selected: Some(marker.proxy_dll.clone()),
+                conflicts: collect_conflicts(
+                    executable_directory,
+                    candidates,
+                    Some(&marker.proxy_dll),
+                ),
+                resolution: ProxyResolution::ReplaceWithBackup,
+            };
         }
     }
 
-    let mut selected = None;
+    // First pass: a genuinely free candidate always wins and every occupied
+    // name stays untouched.
     for candidate in candidates {
-        let path = executable_directory.join(candidate);
-        if path.is_file() {
-            conflicts.push(proxy_conflict(candidate, &path));
-        } else if selected.is_none() {
-            selected = Some(candidate.clone());
+        if !executable_directory.join(candidate).is_file() {
+            return ProxyChoice {
+                selected: Some(candidate.clone()),
+                conflicts: collect_conflicts(executable_directory, candidates, None),
+                resolution: ProxyResolution::UseNextFree,
+            };
         }
     }
 
-    (selected, conflicts)
+    // Second pass: every candidate is occupied. Prefer replacing a
+    // Moddin-managed occupant (recoverable via Undo); a third-party DLL is
+    // only replaced when the caller explicitly opts in.
+    let conflicts = collect_conflicts(executable_directory, candidates, None);
+    if let Some(managed) = conflicts.iter().find(|conflict| conflict.managed_by_moddin) {
+        return ProxyChoice {
+            selected: Some(managed.name.clone()),
+            conflicts,
+            resolution: ProxyResolution::ReplaceWithBackup,
+        };
+    }
+    if allow_replace_unknown {
+        return ProxyChoice {
+            selected: candidates.first().cloned(),
+            conflicts,
+            resolution: ProxyResolution::ReplaceWithBackup,
+        };
+    }
+
+    ProxyChoice {
+        selected: None,
+        conflicts,
+        resolution: ProxyResolution::Blocked,
+    }
 }
 
-fn proxy_conflict(name: &str, path: &Path) -> ProxyConflict {
+fn collect_conflicts(
+    executable_directory: &Path,
+    candidates: &[String],
+    exclude: Option<&str>,
+) -> Vec<ProxyConflict> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            exclude
+                .map(|exclude| !candidate.eq_ignore_ascii_case(exclude))
+                .unwrap_or(true)
+        })
+        .filter_map(|candidate| {
+            if executable_directory.join(candidate).is_file() {
+                Some(proxy_conflict(executable_directory, candidate))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn proxy_conflict(executable_directory: &Path, name: &str) -> ProxyConflict {
+    let path = executable_directory.join(name);
+    let (managed_by_moddin, held_by) = classify_proxy_occupant(executable_directory, name)
+        .map(|occupant| (occupant.managed_by_moddin, occupant.held_by))
+        .unwrap_or((false, "another loader (not managed by Moddin)".to_owned()));
     ProxyConflict {
         name: name.to_owned(),
         path: path.to_string_lossy().into_owned(),
-        size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+        size_bytes: path
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
+        managed_by_moddin,
+        held_by,
     }
 }
 
@@ -194,10 +276,15 @@ fn preview_optiscaler_sync(request: OptiScalerRequest) -> Result<OptiScalerPrevi
     let game_running = is_process_running(&process_name);
     let ini_exists = executable_directory.join("OptiScaler.ini").is_file();
     let manual_install_detected = marker.is_none() && ini_exists;
-    let (selected_proxy, conflicts) = choose_proxy(
+    let ProxyChoice {
+        selected: selected_proxy,
+        conflicts,
+        resolution,
+    } = choose_proxy(
         &executable_directory,
         &request.proxy_candidates,
         marker.as_ref(),
+        request.allow_replace_unknown,
     );
 
     let installed = marker.as_ref().is_some_and(|value| {
@@ -223,6 +310,16 @@ fn preview_optiscaler_sync(request: OptiScalerRequest) -> Result<OptiScalerPrevi
                 "Install OptiScaler beside the game executable using {proxy}."
             ));
         }
+        if resolution == ProxyResolution::ReplaceWithBackup {
+            let held_by = conflicts
+                .iter()
+                .find(|conflict| conflict.name.eq_ignore_ascii_case(proxy))
+                .map(|conflict| conflict.held_by.as_str())
+                .unwrap_or("the existing proxy");
+            changes.push(format!(
+                "Back up the existing '{proxy}' (held by {held_by}) and install the new proxy over it."
+            ));
+        }
         changes
             .push("Back up every file that will be replaced before writing anything.".to_owned());
         changes.push("Record every created file so Undo can remove it safely.".to_owned());
@@ -240,28 +337,57 @@ fn preview_optiscaler_sync(request: OptiScalerRequest) -> Result<OptiScalerPrevi
                 .to_owned(),
         );
     }
-    if selected_proxy.is_none() {
-        warnings.push(format!(
-            "All supported proxy DLL names for this recipe are already occupied: {}.",
-            request.proxy_candidates.join(", ")
-        ));
-    } else if !conflicts.is_empty() {
-        warnings.push(format!(
-            "Some proxy names are already occupied. Moddin will use {} instead and leave the other DLLs untouched.",
-            selected_proxy.as_deref().unwrap_or_default()
-        ));
+    match resolution {
+        ProxyResolution::Blocked => {
+            warnings.push(format!(
+                "All supported proxy DLL names for this recipe are already occupied: {}.",
+                request.proxy_candidates.join(", ")
+            ));
+            warnings.push(
+                "Moddin will not replace third-party proxy DLLs by default; the recipe must explicitly opt in with allowReplaceUnknown."
+                    .to_owned(),
+            );
+        }
+        ProxyResolution::ReplaceWithBackup => {
+            if let Some(proxy) = selected_proxy.as_deref() {
+                if let Some(conflict) = conflicts
+                    .iter()
+                    .find(|conflict| conflict.name.eq_ignore_ascii_case(proxy))
+                {
+                    warnings.push(format!(
+                        "Proxy '{proxy}' is occupied by {}; Moddin will back it up and install over it (Undo restores the previous DLL).",
+                        conflict.held_by
+                    ));
+                    if !conflict.managed_by_moddin {
+                        warnings.push(
+                            "allowReplaceUnknown is enabled: replacing a third-party proxy DLL that Moddin does not manage; the other tool may stop working."
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+        }
+        ProxyResolution::UseNextFree if !conflicts.is_empty() => {
+            warnings.push(format!(
+                "Some proxy names are already occupied. Moddin will use {} instead and leave the other DLLs untouched.",
+                selected_proxy.as_deref().unwrap_or_default()
+            ));
+        }
+        _ => {}
     }
 
     Ok(OptiScalerPreview {
         can_apply: executable_path.is_file()
             && !game_running
             && !manual_install_detected
-            && selected_proxy.is_some(),
+            && selected_proxy.is_some()
+            && resolution != ProxyResolution::Blocked,
         game_running,
         executable_exists: executable_path.is_file(),
         executable_path: executable_path.to_string_lossy().into_owned(),
         executable_directory: executable_directory.to_string_lossy().into_owned(),
         selected_proxy,
+        resolution,
         installed,
         installed_version,
         current_proxy,
@@ -345,6 +471,10 @@ fn install_from_archive(
                 .to_owned(),
         );
     }
+    // The preview above was recomputed from this exact request, so its
+    // resolution is authoritative; a caller-pinned resolution is only
+    // accepted when it still matches the environment.
+    ensure_resolution_matches(request.resolution, preview.resolution, "OptiScaler")?;
 
     let selected_proxy = preview
         .selected_proxy
@@ -432,6 +562,15 @@ fn install_from_archive(
         metadata.insert("version".to_owned(), request.version.clone());
         metadata.insert("proxyDll".to_owned(), selected_proxy.clone());
         metadata.insert("sourceSha256".to_owned(), actual_hash.clone());
+        metadata.insert(
+            "proxyResolution".to_owned(),
+            match preview.resolution {
+                ProxyResolution::UseNextFree => "use_next_free",
+                ProxyResolution::ReplaceWithBackup => "replace_with_backup",
+                ProxyResolution::Blocked => "blocked",
+            }
+            .to_owned(),
+        );
 
         let transaction = transaction::begin_file_set_transaction(
             &executable_directory,
@@ -600,7 +739,27 @@ mod tests {
             sha256: "575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad".to_owned(),
             proxy_candidates: vec!["dxgi.dll".to_owned(), "wininet.dll".to_owned()],
             safety_notes: Vec::new(),
+            allow_replace_unknown: false,
+            resolution: None,
         }
+    }
+
+    fn temp_install(tag: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("moddin-optiscaler-{tag}-{suffix}"));
+        fs::create_dir_all(&root).expect("temporary game directory");
+        root
+    }
+
+    fn request_for(root: &Path) -> OptiScalerRequest {
+        let mut request = request();
+        request.install_dir = root.to_string_lossy().into_owned();
+        request.executable = "moddin-proxy-test.exe".to_owned();
+        request.proxy_candidates = vec!["dxgi.dll".to_owned(), "winmm.dll".to_owned()];
+        request
     }
 
     #[test]
@@ -620,5 +779,140 @@ mod tests {
         let mut request = request();
         request.proxy_candidates = vec![r"..\dxgi.dll".to_owned()];
         assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn request_deserializes_with_safe_resolution_defaults() {
+        let json = serde_json::json!({
+            "gameId": "g",
+            "gameName": "G",
+            "installDir": "C:/Games/G",
+            "executable": "game.exe",
+            "version": "0.9.4",
+            "downloadUrl": format!("{OFFICIAL_RELEASE_PREFIX}v0.9.4/file.7z"),
+            "sha256": "575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad",
+            "proxyCandidates": ["dxgi.dll"],
+        });
+        let parsed: OptiScalerRequest = serde_json::from_value(json).expect("request");
+        assert!(!parsed.allow_replace_unknown);
+        assert_eq!(parsed.resolution, None);
+
+        let with_resolution = serde_json::json!({
+            "gameId": "g",
+            "gameName": "G",
+            "installDir": "C:/Games/G",
+            "executable": "game.exe",
+            "version": "0.9.4",
+            "downloadUrl": format!("{OFFICIAL_RELEASE_PREFIX}v0.9.4/file.7z"),
+            "sha256": "575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad",
+            "proxyCandidates": ["dxgi.dll"],
+            "allowReplaceUnknown": true,
+            "resolution": "replace_with_backup",
+        });
+        let parsed: OptiScalerRequest = serde_json::from_value(with_resolution).expect("request");
+        assert!(parsed.allow_replace_unknown);
+        assert_eq!(parsed.resolution, Some(ProxyResolution::ReplaceWithBackup));
+    }
+
+    #[test]
+    fn free_candidate_resolves_use_next_free() {
+        let root = temp_install("free");
+        fs::write(root.join("moddin-proxy-test.exe"), b"exe").expect("executable");
+
+        let preview = preview_optiscaler_sync(request_for(&root)).expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::UseNextFree);
+        assert_eq!(preview.selected_proxy.as_deref(), Some("dxgi.dll"));
+        assert!(preview.can_apply);
+        assert!(preview.conflicts.is_empty());
+
+        fs::remove_dir_all(root).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn unknown_occupants_block_by_default() {
+        let root = temp_install("blocked");
+        fs::write(root.join("moddin-proxy-test.exe"), b"exe").expect("executable");
+        fs::write(root.join("dxgi.dll"), b"third-party").expect("occupant");
+        fs::write(root.join("winmm.dll"), b"third-party").expect("occupant");
+
+        let preview = preview_optiscaler_sync(request_for(&root)).expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::Blocked);
+        assert_eq!(preview.selected_proxy, None);
+        assert!(!preview.can_apply);
+        assert_eq!(preview.conflicts.len(), 2);
+        assert!(preview.conflicts.iter().all(|conflict| !conflict.managed_by_moddin));
+        assert!(preview
+            .conflicts
+            .iter()
+            .all(|conflict| conflict.held_by.contains("not managed")));
+
+        fs::remove_dir_all(root).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn unknown_occupants_replace_when_allowed() {
+        let root = temp_install("allowed");
+        fs::write(root.join("moddin-proxy-test.exe"), b"exe").expect("executable");
+        fs::write(root.join("dxgi.dll"), b"third-party").expect("occupant");
+        fs::write(root.join("winmm.dll"), b"third-party").expect("occupant");
+
+        let mut request = request_for(&root);
+        request.allow_replace_unknown = true;
+        let preview = preview_optiscaler_sync(request).expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::ReplaceWithBackup);
+        assert_eq!(preview.selected_proxy.as_deref(), Some("dxgi.dll"));
+        assert!(preview.can_apply);
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("allowReplaceUnknown")));
+
+        fs::remove_dir_all(root).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn managed_marker_update_uses_replace_with_backup() {
+        let root = temp_install("managed-update");
+        fs::write(root.join("moddin-proxy-test.exe"), b"exe").expect("executable");
+        fs::write(root.join("dxgi.dll"), b"third-party").expect("occupant");
+        fs::write(root.join("winmm.dll"), b"optiscaler").expect("own proxy");
+        fs::write(
+            root.join(MARKER_FILE),
+            r#"{"version":"0.9.4","proxyDll":"winmm.dll","sourceSha256":"abc","installedFiles":["winmm.dll","OptiScaler.dll"]}"#,
+        )
+        .expect("marker");
+
+        let preview = preview_optiscaler_sync(request_for(&root)).expect("preview");
+        assert_eq!(preview.resolution, ProxyResolution::ReplaceWithBackup);
+        assert_eq!(preview.selected_proxy.as_deref(), Some("winmm.dll"));
+        assert!(preview.can_apply);
+        assert_eq!(preview.conflicts.len(), 1);
+        assert_eq!(preview.conflicts[0].name, "dxgi.dll");
+
+        fs::remove_dir_all(root).expect("temporary game cleanup");
+    }
+
+    #[test]
+    fn replace_with_backup_then_rollback_restores_proxy() {
+        let root = temp_install("rollback");
+        let proxy = root.join("dxgi.dll");
+        fs::write(&proxy, b"original-proxy").expect("occupant");
+
+        let record = transaction::begin_file_set_transaction(
+            &root,
+            &[proxy.clone()],
+            "optiscaler",
+            "Replace proxy test",
+            "proxy-test-game",
+            BTreeMap::new(),
+        )
+        .expect("transaction");
+
+        fs::write(&proxy, b"moddin-proxy").expect("replace occupant");
+        let record = transaction::restore_record(record).expect("rollback");
+        assert_eq!(record.status, "rolled_back");
+        assert_eq!(fs::read(&proxy).expect("restored proxy"), b"original-proxy");
+
+        fs::remove_dir_all(root).expect("temporary game cleanup");
     }
 }

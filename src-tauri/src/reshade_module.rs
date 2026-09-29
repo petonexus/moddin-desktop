@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 
 use crate::{
+    inspection::ProxyResolution,
     module::{
         ApplyResult, CheckCategory, CheckOutcome, CheckSeverity, Module, ModuleCategory,
         ModuleContext, ModuleStatus, PreviewReport, UpdateInfo, UpdateStatus,
@@ -66,6 +67,10 @@ impl ReshadeModule {
             .get("updateUrl")
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        let allow_replace_unknown = config
+            .get("allowReplaceUnknown")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         Some(ReshadeRequest {
             game_id: context.game_id.clone(),
@@ -79,6 +84,8 @@ impl ReshadeModule {
             sha256,
             proxy,
             safety_notes,
+            allow_replace_unknown,
+            resolution: None,
             update_url,
         })
     }
@@ -227,18 +234,22 @@ impl Module for ReshadeModule {
             severity: CheckSeverity::Blocker,
             label: format!("Proxy '{}' available", preview.proxy_chosen),
             passed: preview.proxy_available,
-            detail: (!preview.proxy_available).then(|| {
-                if preview.conflicts.is_empty() {
-                    "Proxy DLL is already in place.".to_owned()
-                } else {
+            detail: if preview.proxy_available {
+                (preview.resolution == ProxyResolution::ReplaceWithBackup).then(|| {
+                    "Proxy DLL already exists and will be backed up and replaced.".to_owned()
+                })
+            } else if preview.conflicts.is_empty() {
+                Some("Proxy DLL is already in place.".to_owned())
+            } else {
+                Some(
                     preview
                         .conflicts
                         .iter()
                         .map(|c| format!("'{}' held by {}", c.proxy, c.held_by))
                         .collect::<Vec<_>>()
-                        .join("; ")
-                }
-            }),
+                        .join("; "),
+                )
+            },
             ..Default::default()
         });
         checks.push(CheckOutcome {

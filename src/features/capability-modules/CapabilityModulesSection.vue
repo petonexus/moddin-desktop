@@ -42,6 +42,7 @@ const {
   stateFor,
   isInstalled,
   missingRequiredFields,
+  compatibilityBlocks,
   install,
   uninstall,
   verify,
@@ -56,6 +57,16 @@ function schemaOf(capabilityId: string) {
 
 function safetyNotesOf(capabilityId: string) {
   return stateFor(capabilityId).spec?.safetyNotes ?? []
+}
+
+/** Failing `compatibility` probe, if any — the only case that blocks Apply. */
+function blockedCompatibility(state: CapabilityCardState) {
+  return state.compatibility && !state.compatibility.passed ? state.compatibility : null
+}
+
+/** Ids auto-installed by the backend as dependencies of the last install. */
+function installedDependencyNames(capabilityId: string): string {
+  return stateFor(capabilityId).installedDependencies.join(', ')
 }
 
 function configValue(state: CapabilityCardState, name: string): CapabilityConfigValue {
@@ -86,7 +97,7 @@ function cardErrorText(state: CapabilityCardState): string | null {
   return t('capabilityActionFailed', { error: state.error })
 }
 
-async function onInstall(capability: CapabilitySummary) {
+async function onInstall(capability: CapabilitySummary, force = false) {
   const state = stateFor(capability.id)
   if (state.busy || state.verifyBusy) return
   await modules.ensureSpec(capability)
@@ -96,7 +107,11 @@ async function onInstall(capability: CapabilitySummary) {
     state.errorKind = 'validation'
     return
   }
-  await install(capability)
+  // A plain install is refused by the backend for an unsupported game
+  // build, so the card routes the user through the explicit override
+  // instead of letting them click into an error.
+  if (!force && compatibilityBlocks(capability.id)) return
+  await install(capability, { force })
 }
 
 async function onRemove(capability: CapabilitySummary) {
@@ -149,6 +164,51 @@ onUnmounted(() => {
     <div v-if="visibleCapabilities.length" class="mod-grid">
       <div v-for="capability in visibleCapabilities" :key="capability.id" class="capability-cell">
         <div
+          v-if="blockedCompatibility(stateFor(capability.id)) && !isInstalled(capability.id)"
+          class="callout callout-warning"
+          role="alert"
+        >
+          <AppIcon class="callout-icon" name="alert" />
+          <div class="capability-compat">
+            <strong>{{ t('capabilityCompatBlocked') }}</strong>
+            <small v-if="blockedCompatibility(stateFor(capability.id))?.detail">
+              {{ blockedCompatibility(stateFor(capability.id))?.detail }}
+            </small>
+            <button
+              type="button"
+              class="btn btn-sm"
+              :class="{ 'is-loading': stateFor(capability.id).busy }"
+              :disabled="stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || dirsMissing"
+              @click="onInstall(capability, true)"
+            >
+              {{ t('capabilityCompatForce') }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-else-if="blockedCompatibility(stateFor(capability.id)) && isInstalled(capability.id)"
+          class="callout callout-warning"
+        >
+          <AppIcon class="callout-icon" name="alert" />
+          <div>
+            <strong>{{ t('capabilityCompatForced') }}</strong>
+          </div>
+        </div>
+
+        <div
+          v-if="installedDependencyNames(capability.id)"
+          class="callout callout-info"
+        >
+          <AppIcon class="callout-icon" name="check" />
+          <div>
+            <strong>
+              {{ t('capabilityDependenciesInstalled', { modules: installedDependencyNames(capability.id) }) }}
+            </strong>
+          </div>
+        </div>
+
+        <div
           v-if="cardErrorText(stateFor(capability.id))"
           class="callout callout-danger"
           role="alert"
@@ -167,7 +227,7 @@ onUnmounted(() => {
           :action-label="isInstalled(capability.id) ? t('actionReinstall') : t('actionInstall')"
           :action-primary="!isInstalled(capability.id)"
           :action-busy="stateFor(capability.id).busy"
-          :action-disabled="dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy"
+          :action-disabled="dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || (!isInstalled(capability.id) && compatibilityBlocks(capability.id))"
           :blocked-reason="blockedReasonText"
           :verify-busy="stateFor(capability.id).verifyBusy"
           :remove-label="isInstalled(capability.id) ? t('actionRemove') : null"
@@ -284,4 +344,7 @@ onUnmounted(() => {
 .capability-checks small { display: block; color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
 
 .capability-hint { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+
+.capability-compat { display: grid; justify-items: start; gap: var(--moddin-space-2); }
+.capability-compat small { color: var(--moddin-text-soft); font-size: var(--moddin-text-xs); }
 </style>

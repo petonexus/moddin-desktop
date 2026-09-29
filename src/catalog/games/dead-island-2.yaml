@@ -74,3 +74,8 @@ modules:
     description: Install the Cheeky UEVR profile plugin and its DLSS path after the game-specific transaction flow is implemented in Moddin.
     category: graphics
     status: planned
+    # O jogo base oferece FSR2, não DLSS: o scanner do Cheeky só marca
+    # EXPERIMENTAL_READY com UEVR + OptiScaler + nvngx_dlss.dll.
+    dependencies:
+      - uevr
+      - optiscaler
