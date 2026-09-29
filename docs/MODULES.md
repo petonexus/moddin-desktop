@@ -72,9 +72,10 @@ Step kinds live in `src-tauri/src/builtin_steps.rs` as `match` arms in `execute_
 4. Add 2-3 unit tests covering happy path + edge cases.
 5. Document in [CAPABILITY-CONTRACT.md → Built-in step kinds](CAPABILITY-CONTRACT.md#built-in-step-kinds).
 
-Currently supported kinds (10):
+Currently supported kinds (11):
 
-- `extract-zip`, `verify-hash`, `file-delete`, `write-text-file`, `write-binary-file`
+- `download-file`, `extract-zip`, `verify-hash`, `file-delete`
+- `write-text-file`, `write-binary-file`
 - `move-file`, `spawn-process`, `kill-process`
 - `registry-write`, `registry-delete`
 

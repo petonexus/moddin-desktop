@@ -129,6 +129,7 @@
         "kind": {
           "type": "string",
           "enum": [
+            "download-file",
             "extract-zip",
             "verify-hash",
             "file-delete",

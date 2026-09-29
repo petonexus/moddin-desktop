@@ -506,6 +506,18 @@ fn install_spec(
     executable_directory: &Path,
     force: bool,
 ) -> Result<InstallResult, String> {
+    // `status: planned` means the recipe is a declared intention, not a
+    // working installer. Without this guard a planned spec with no
+    // install steps would "succeed", record no transaction, and leave
+    // the user believing a mod was installed. `force` deliberately does
+    // not bypass it: the compatibility gate is about the game build,
+    // this is about the recipe not existing yet.
+    if spec.status == "planned" {
+        return Err(format!(
+            "'{}' is still a planned recipe and has no working installer yet.",
+            spec.display_name
+        ));
+    }
     let compatibility = evaluate_compatibility(
         spec,
         executable_directory,
@@ -1832,6 +1844,58 @@ install:
             error.contains("Unknown capability id"),
             "the error names the id: {error}"
         );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn a_planned_recipe_refuses_to_install() {
+        let appdata = IsolatedAppdata::new("planned-recipe");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "planned-mod",
+            "id: planned-mod\ndisplayName: Planned mod\ncategory: qol\nstatus: planned\nsafetyNotes:\n  - Still being written.\n",
+        );
+
+        let work = temp_root("planned-recipe-work");
+        let executable = work.join("exe");
+        fs::create_dir_all(&executable).expect("exe dir");
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+
+        // A planned spec has no install steps. Without the guard the run
+        // would succeed, touch nothing, and record no transaction — the
+        // user would see "installed" and have nothing to undo.
+        let error = run_install(
+            &registry,
+            "planned-mod",
+            "planned-game",
+            "Planned Game",
+            &ResolvedConfig::default(),
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("a planned recipe cannot be installed");
+        assert!(
+            error.contains("still a planned recipe"),
+            "the error says why: {error}"
+        );
+
+        // `force` is about the game build, not about a recipe that does
+        // not exist yet, so it must not open this door.
+        let forced = run_install(
+            &registry,
+            "planned-mod",
+            "planned-game",
+            "Planned Game",
+            &ResolvedConfig::default(),
+            &work,
+            &executable,
+            true,
+        )
+        .expect_err("force does not bypass the planned guard");
+        assert!(forced.contains("still a planned recipe"), "{forced}");
 
         let _ = fs::remove_dir_all(&work);
     }

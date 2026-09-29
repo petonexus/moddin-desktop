@@ -49,9 +49,14 @@ configSchema:
     type: sha256
     required: true
 install:
+  - kind: download-file
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: my-mod.zip
   - kind: extract-zip
     params:
-      archivePathField: downloadUrl
+      archivePath: my-mod.zip
 safetyNotes:
   - Always close the game before applying.
 ```
@@ -62,7 +67,8 @@ That's the entire capability — a few metadata fields, a list of typed steps, a
 
 | Kind | What it does |
 | --- | --- |
-| `extract-zip` | Downloads a ZIP archive and extracts it next to the game executable. Optional proxy rename. |
+| `download-file` | Fetches an HTTPS URL into Moddin's download cache, optionally verifying SHA-256. Name the target with a bare filename so the archive stays out of the game folder. |
+| `extract-zip` | Extracts a ZIP archive into the game executable directory. Optional proxy rename. |
 | `verify-hash` | Compares the SHA-256 of a downloaded file against an expected value. |
 | `file-delete` | Deletes a file you specified. |
 | `write-text-file` | Writes a text file (e.g. `.ini`) with `{placeholder}` substitution from `configSchema` values. |

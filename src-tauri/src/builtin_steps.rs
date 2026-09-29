@@ -29,6 +29,7 @@ use zip::ZipArchive;
 /// set so the failure surfaces at startup.
 pub fn known_kinds() -> &'static [&'static str] {
     &[
+        "download-file",
         "extract-zip",
         "verify-hash",
         "file-delete",
@@ -69,6 +70,7 @@ pub fn execute_step(
     context: &StepContext<'_>,
 ) -> Result<StepResult, String> {
     match step.kind.as_str() {
+        "download-file" => run_download_file(step, context),
         "extract-zip" => run_extract_zip(step, context),
         "verify-hash" => run_verify_hash(step, context),
         "file-delete" => run_file_delete(step, context),
@@ -91,6 +93,109 @@ fn param_string<'a>(step: &'a StepSpec, name: &str) -> Option<&'a str> {
     step.params.get(name).and_then(|value| value.as_str())
 }
 
+fn run_download_file(
+    step: &StepSpec,
+    context: &StepContext<'_>,
+) -> Result<StepResult, String> {
+    // The download half of a "fetch a release, then extract it" recipe.
+    // Until this kind existed, `extract-zip` could only read a path from
+    // config, so every recipe that pointed that field at a URL failed
+    // with a file-not-found at install time.
+    let url = param_string(step, "urlField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "url").map(str::to_owned))
+        .ok_or_else(|| "download-file: urlField or url is required.".to_owned())?;
+    let target = param_string(step, "targetField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "target").map(str::to_owned))
+        .ok_or_else(|| "download-file: targetField or target is required.".to_owned())?;
+
+    let parsed = reqwest::Url::parse(&url)
+        .map_err(|error| format!("download-file: invalid URL '{url}': {error}"))?;
+    if parsed.scheme() != "https" {
+        return Err("download-file: only HTTPS is allowed.".to_owned());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("download-file: credentials in the URL are not allowed.".to_owned());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "download-file: URL has no host.".to_owned())?
+        .to_ascii_lowercase();
+    // Same default allow-list the archive checks use; a recipe that
+    // needs another host has to say so explicitly.
+    let allowed: Vec<String> = match step.params.get("hostAllowlist") {
+        Some(JsonValue::Array(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(|value| value.to_ascii_lowercase())
+            .collect(),
+        _ => vec![
+            "github.com".to_owned(),
+            "objects.githubusercontent.com".to_owned(),
+        ],
+    };
+    if !allowed.iter().any(|candidate| host == *candidate) {
+        return Err(format!(
+            "download-file: host '{host}' is not in the allow-list ({}) .",
+            allowed.join(", ")
+        ));
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
+        .build()
+        .map_err(|error| format!("download-file: could not build client: {error}"))?;
+    let response = client
+        .get(parsed)
+        .send()
+        .map_err(|error| format!("download-file: request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("download-file: server returned an error: {error}"))?;
+
+    let bytes = response
+        .bytes()
+        .map_err(|error| format!("download-file: could not read response: {error}"))?;
+    if bytes.len() as u64 > crate::archive::MAX_ARCHIVE_BYTES {
+        return Err(format!(
+            "download-file: payload exceeds the {}-byte safety limit.",
+            crate::archive::MAX_ARCHIVE_BYTES
+        ));
+    }
+
+    // A partial or tampered payload must not survive to be extracted.
+    // Delete on mismatch so a retry starts clean instead of reusing a
+    // file the recipe believes is verified.
+    if let Some(expected) = param_string(step, "expectedField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "expected").map(str::to_owned))
+    {
+        let computed = format!("{:x}", Sha256::digest(&bytes));
+        if !computed.eq_ignore_ascii_case(&expected) {
+            return Err(format!(
+                "download-file: SHA-256 mismatch for '{url}' (expected {expected}, got {computed})."
+            ));
+        }
+    }
+
+    let destination = resolve_download_path(context.executable_directory, &target);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("download-file: could not create '{}': {error}", parent.display()))?;
+    }
+    fs::write(&destination, &bytes)
+        .map_err(|error| format!("download-file: could not write '{}': {error}", destination.display()))?;
+
+    // The downloaded file is a build artifact in the Moddin cache, not
+    // something the install touched in the game folder, so it is
+    // deliberately not part of the rollback set.
+    Ok(StepResult {
+        kind: step.kind.as_str().to_owned(),
+        description: step.description.clone(),
+        affected_paths: Vec::new(),
+    })
+}
+
 fn run_extract_zip(
     step: &StepSpec,
     context: &StepContext<'_>,
@@ -110,19 +215,18 @@ fn run_extract_zip(
         return Err(format!(
             "extract-zip: archiveBytesField '{field}' requires the runner to \
              receive bytes from a previous download step. Not yet implemented; \
-             use archivePathField pointing at a local file for now."
+             use archivePath/archivePathField instead."
         ));
-    } else if let Some(field) = param_string(step, "archivePathField") {
-        let path = context
-            .config
-            .get_string(field)
-            .ok_or_else(|| format!("extract-zip: config field '{field}' is missing."))?;
-        fs::read(&path).map_err(|error| {
+    } else if let Some(path) = param_string(step, "archivePathField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "archivePath").map(str::to_owned))
+    {
+        fs::read(resolve_download_path(context.executable_directory, &path)).map_err(|error| {
             format!("extract-zip: could not read archive '{path}': {error}")
         })?
     } else {
         return Err(
-            "extract-zip: step needs archiveBytesField or archivePathField.".to_owned(),
+            "extract-zip: step needs archiveBytesField, archivePathField or archivePath.".to_owned(),
         );
     };
 
@@ -588,6 +692,32 @@ fn resolve_path(base: &Path, candidate: &str) -> PathBuf {
     }
 }
 
+/// Where `download-file` puts payloads and where `extract-zip` looks
+/// for them when a recipe names a bare filename.
+///
+/// Recipes are portable YAML, so they cannot hard-code a user profile.
+/// Naming just `bepinex.zip` keeps the archive in Moddin's own cache —
+/// never inside the game folder, where it would be picked up by the
+/// uninstall/rollback bookkeeping and by mod scanners. A candidate with
+/// a directory component keeps the ordinary relative-to-executable-dir
+/// meaning.
+pub fn download_cache_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("Moddin").join("downloads"))
+        .unwrap_or_else(|| std::env::temp_dir().join("moddin-downloads"))
+}
+
+fn resolve_download_path(base: &Path, candidate: &str) -> PathBuf {
+    let path = Path::new(candidate);
+    let is_bare_filename = path.components().count() == 1 && path.file_name().is_some();
+    if is_bare_filename {
+        download_cache_dir().join(path)
+    } else {
+        resolve_path(base, candidate)
+    }
+}
+
 /// Convenience helper used by tests and by external callers that
 /// want to record the install transaction without re-implementing the
 /// orchestration loop.
@@ -655,5 +785,185 @@ mod tests {
         let config = ResolvedConfig::default();
         let rendered = render_template("x={missing}", &config);
         assert_eq!(rendered, "x={missing}");
+    }
+
+    /// Build a `download-file` step around literal params so each guard
+    /// can be exercised without touching the network. Every case below is
+    /// rejected before the client is ever built.
+    fn download_step(params: &[(&str, JsonValue)]) -> StepSpec {
+        StepSpec {
+            kind: "download-file".to_owned(),
+            params: params
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                .collect(),
+            description: None,
+        }
+    }
+
+    /// A `StepContext` whose only meaningful field is the config. Steps
+    /// under test never read the spec.
+    fn download_context<'a>(config: &'a ResolvedConfig, root: &'a Path) -> StepContext<'a> {
+        let spec: &'a CapabilitySpec = Box::leak(Box::new(CapabilitySpec {
+            id: "probe".to_owned(),
+            display_name: "Probe".to_owned(),
+            category: "qol".to_owned(),
+            status: "available".to_owned(),
+            supported_engines: Vec::new(),
+            dependencies: Vec::new(),
+            compatibility: None,
+            checks: Vec::new(),
+            install: Vec::new(),
+            uninstall: Vec::new(),
+            verify: Vec::new(),
+            safety_notes: Vec::new(),
+            config_schema: Vec::new(),
+            origin: crate::capability::SpecOrigin::BuiltIn,
+        }));
+        StepContext {
+            spec,
+            config,
+            install_directory: root,
+            executable_directory: root,
+        }
+    }
+
+    #[test]
+    fn download_requires_a_url_and_a_target() {
+        let root = std::env::temp_dir();
+        let config = ResolvedConfig::default();
+
+        let missing_url = execute_step(
+            &download_step(&[("target", json!("out.zip"))]),
+            &download_context(&config, &root),
+        )
+        .expect_err("no url is rejected");
+        assert!(missing_url.contains("urlField or url is required"), "{missing_url}");
+
+        let missing_target = execute_step(
+            &download_step(&[("url", json!("https://github.com/a/b.zip"))]),
+            &download_context(&config, &root),
+        )
+        .expect_err("no target is rejected");
+        assert!(
+            missing_target.contains("targetField or target is required"),
+            "{missing_target}"
+        );
+    }
+
+    #[test]
+    fn download_refuses_plain_http() {
+        let root = std::env::temp_dir();
+        let config = ResolvedConfig::default();
+        let error = execute_step(
+            &download_step(&[
+                ("url", json!("http://github.com/a/b.zip")),
+                ("target", json!("out.zip")),
+            ]),
+            &download_context(&config, &root),
+        )
+        .expect_err("plain HTTP is refused");
+        assert!(error.contains("only HTTPS"), "{error}");
+    }
+
+    #[test]
+    fn download_refuses_embedded_credentials() {
+        let root = std::env::temp_dir();
+        let config = ResolvedConfig::default();
+        let error = execute_step(
+            &download_step(&[
+                ("url", json!("https://user:secret@github.com/a/b.zip")),
+                ("target", json!("out.zip")),
+            ]),
+            &download_context(&config, &root),
+        )
+        .expect_err("credentials are refused");
+        assert!(error.contains("credentials"), "{error}");
+    }
+
+    #[test]
+    fn download_refuses_hosts_outside_the_allowlist() {
+        let root = std::env::temp_dir();
+        let config = ResolvedConfig::default();
+        let error = execute_step(
+            &download_step(&[
+                ("url", json!("https://evil.example.com/a/b.zip")),
+                ("target", json!("out.zip")),
+            ]),
+            &download_context(&config, &root),
+        )
+        .expect_err("an unlisted host is refused");
+        assert!(error.contains("not in the allow-list"), "{error}");
+        assert!(
+            error.contains("github.com"),
+            "the error lists what is allowed: {error}"
+        );
+    }
+
+    #[test]
+    fn download_reads_its_url_and_target_from_config_fields() {
+        let root = std::env::temp_dir();
+        let mut config = ResolvedConfig::default();
+        config.values.insert("downloadUrl".to_owned(), json!("http://example.com/x"));
+        config.values.insert("sha256".to_owned(), json!("deadbeef"));
+
+        // The URL comes from config, so the scheme check must still run:
+        // a recipe cannot smuggle plain HTTP in through a field.
+        let error = execute_step(
+            &download_step(&[("urlField", json!("downloadUrl")), ("target", json!("out.zip"))]),
+            &download_context(&config, &root),
+        )
+        .expect_err("config-sourced URLs are validated too");
+        assert!(error.contains("only HTTPS"), "{error}");
+
+        // A missing field is a clear error, not a silent default.
+        let error = execute_step(
+            &download_step(&[("urlField", json!("absentField")), ("target", json!("out.zip"))]),
+            &download_context(&config, &root),
+        )
+        .expect_err("a missing config field is an error");
+        assert!(error.contains("urlField or url is required"), "{error}");
+    }
+
+    #[test]
+    fn bare_archive_names_resolve_into_the_download_cache() {
+        let base = Path::new("C:\\games\\Some Game");
+        // A recipe is portable YAML, so it names the archive without a
+        // profile path. It must not land in the game folder.
+        let cached = resolve_download_path(base, "bepinex.zip");
+        assert_eq!(cached.parent(), Some(download_cache_dir().as_path()));
+        assert!(cached.ends_with("bepinex.zip"));
+
+        // Anything with a directory component keeps the ordinary
+        // relative-to-the-game meaning.
+        let nested = resolve_download_path(base, "archives/bepinex.zip");
+        assert_eq!(nested, base.join("archives").join("bepinex.zip"));
+
+        let absolute = resolve_download_path(base, "D:\\cache\\x.zip");
+        assert_eq!(absolute, PathBuf::from("D:\\cache\\x.zip"));
+    }
+
+    #[test]
+    fn extract_zip_accepts_a_literal_archive_path() {
+        let root = std::env::temp_dir();
+        let config = ResolvedConfig::default();
+        let archive = root.join("moddin-extract-literal-test.zip");
+        fs::write(&archive, b"not a zip").expect("write placeholder archive");
+
+        let spec = StepSpec {
+            kind: "extract-zip".to_owned(),
+            params: BTreeMap::from([("archivePath".to_owned(), json!(archive.to_string_lossy()))]),
+            description: None,
+        };
+        // The literal is found and read; it only fails later, at the zip
+        // parser, which is what proves the path was resolved at all.
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("placeholder bytes are not a zip");
+        assert!(
+            error.contains("could not open zip"),
+            "the literal path was used: {error}"
+        );
+
+        let _ = fs::remove_file(&archive);
     }
 }

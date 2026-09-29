@@ -2,7 +2,6 @@ mod activity;
 mod ai_agent_runner;
 mod ai_assistant_setup;
 mod archive;
-mod bepinex;
 mod builtin_checks;
 mod builtin_steps;
 mod capability;
@@ -27,12 +26,10 @@ mod openxr_module;
 mod optiscaler;
 mod optiscaler_module;
 mod process;
-mod reframework;
 mod reshade;
 mod reshade_module;
 mod steam;
 mod transaction;
-mod ue4ss;
 mod uevr;
 mod uevr_module;
 mod updates;
@@ -153,15 +150,10 @@ pub fn run() {
             reshade::preview_reshade,
             reshade::install_reshade,
             reshade::uninstall_reshade,
-            ue4ss::preview_ue4ss,
-            ue4ss::install_ue4ss,
-            ue4ss::uninstall_ue4ss,
-            bepinex::preview_bepinex,
-            bepinex::install_bepinex,
-            bepinex::uninstall_bepinex,
-            reframework::preview_reframework,
-            reframework::install_reframework,
-            reframework::uninstall_reframework,
+            // UE4SS, BepInEx and REFramework no longer expose dedicated
+            // commands: they are capability specs (src-tauri/capabilities/),
+            // so they install through `capability_install` with the same
+            // checks, preview and rollback as every other recipe.
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,

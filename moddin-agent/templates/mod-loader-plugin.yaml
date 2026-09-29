@@ -57,10 +57,16 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the plugin archive into Moddin's download cache, verifying its SHA-256.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: my-mod-plugin.zip
   - kind: extract-zip
     description: Extract the archive into the executable directory.
     params:
-      archivePathField: downloadUrl
+      archivePath: my-mod-plugin.zip
 verify:
   - id: plugin-present
     label: Plugin file installed

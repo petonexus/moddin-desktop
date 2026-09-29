@@ -41,9 +41,9 @@
 ## v0.4 — Mod frameworks
 
 - [ ] UE4SS
-- [ ] BepInEx
+- [x] BepInEx
 - [ ] REFramework
-- [ ] mod loaders / framework dependency graph
+- [x] mod loaders / framework dependency graph
 - [ ] compatibility metadata by game build
 
 ## Later

@@ -35,8 +35,14 @@ export function hasCompatibilityConstraint(spec: CapabilitySpec | null | undefin
 }
 
 /**
- * Turns saved capability recipes (AI-authored local YAML, community specs)
- * into installable module cards for the selected game.
+ * Turns saved capability recipes (AI-authored local YAML, community
+ * specs, and the shipped data-driven ones) into installable module cards
+ * for the selected game.
+ *
+ * The host decides what appears here by passing `excludeIds` — the
+ * catalog modules its library grid already owns because it has a
+ * dedicated installer for them. Everything else the registry knows,
+ * including `builtIn` specs like BepInEx, surfaces as a card.
  *
  * v1 deliberately does NOT engine-gate the list: `capability_list` returns
  * summaries only (no `supportedEngines`), and inventing a filter without
@@ -51,10 +57,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
   const cards = reactive<Record<string, CapabilityCardState>>({})
 
   const visibleCapabilities = computed<CapabilitySummary[]>(() =>
-    capabilities.value.filter(
-      (capability) =>
-        capability.origin !== 'builtIn' && !options.excludeIds().includes(capability.id),
-    ),
+    capabilities.value.filter((capability) => !options.excludeIds().includes(capability.id)),
   )
 
   function stateFor(capabilityId: string): CapabilityCardState {

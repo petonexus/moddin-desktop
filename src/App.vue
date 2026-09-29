@@ -283,8 +283,31 @@ const availableModuleCategories = computed(() => {
   return moduleCategories.filter((category) => modules.some((module) => module.category === category))
 })
 
+/**
+ * Catalog modules Moddin installs through the capability pipeline
+ * (`src-tauri/capabilities/`) instead of a dedicated Rust installer.
+ *
+ * They are rendered by the capability section, which already has the
+ * config form, the preflight checklist, the compatibility warning and
+ * the rollback — so listing them in the library grid too would show the
+ * same recipe twice and give the grid a button that can only fail.
+ * Keep this list in step with the specs that exist in that folder.
+ */
+const CAPABILITY_BACKED_MODULE_IDS = new Set(['bepinex', 'ue4ss', 'reframework'])
+
+function isCapabilityBackedModule(module: ToolModuleDefinition) {
+  return CAPABILITY_BACKED_MODULE_IDS.has(module.id)
+}
+
+/** Catalog modules the library grid still owns (it has an installer). */
+function libraryOwnedModules(): ToolModuleDefinition[] {
+  return (selectedGame.value?.catalog?.modules ?? []).filter(
+    (module) => !isCapabilityBackedModule(module),
+  )
+}
+
 const moduleGroups = computed(() => {
-  const modules = selectedGame.value?.catalog?.modules ?? []
+  const modules = libraryOwnedModules()
   return availableModuleCategories.value
     .filter((category) => activeModuleFilter.value === 'all' || activeModuleFilter.value === category)
     .map((category) => ({
@@ -2034,7 +2057,7 @@ onUnmounted(() => {
                   :install-dir="selectedGame.installed.installDir"
                   :executable-dir="gameInspection?.executableDirectory ?? null"
                   :engine="selectedGame.catalog.enginePreset ?? null"
-                  :exclude-ids="selectedGame.catalog.modules.map((module) => module.id)"
+                  :exclude-ids="libraryOwnedModules().map((module) => module.id)"
                   :transactions="transactions"
                   @refresh-request="refreshTransactions"
                 />

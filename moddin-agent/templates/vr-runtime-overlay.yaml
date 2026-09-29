@@ -65,10 +65,16 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the archive into Moddin's download cache, verifying its SHA-256.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: my-vr-runtime.zip
   - kind: extract-zip
     description: Extract the archive.
     params:
-      archivePathField: downloadUrl
+      archivePath: my-vr-runtime.zip
   - kind: move-file
     description: Move the runtime manifest into the per-user ApiLayers directory.
     params:

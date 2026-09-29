@@ -1,0 +1,39 @@
+id: ue4ss
+displayName: UE4SS scripting framework
+category: qol
+status: planned
+supportedEngines:
+  - unreal5
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the pinned UE4SS release archive for the game's engine generation (UE 4.x, UE 5.0-5.4 or 5.5+ builds differ).
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream UE4SS release tag.
+checks:
+  - id: archive-reachable
+    label: UE4SS archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+safetyNotes:
+  - Not installable yet. This spec records the intended recipe; the engine-generation matrix still has to be pinned before an install step can be trusted.
+  - UE4SS injects into the Unreal process. Close the game and any existing UEVR/ERVR injector first.
+  - Scripting mods load from UE4SS/Mods and are separate downloads from the framework itself.

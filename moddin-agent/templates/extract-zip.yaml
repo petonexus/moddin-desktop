@@ -2,10 +2,13 @@
 #
 # Use when the user has an archive (zip) they want unpacked into the game's
 # executable directory. The agent will:
-#   - compute the SHA-256 of the local archive
-#   - fill in downloadUrl (or leave empty if the user already has the file
-#     locally — they can configure Moddin to load the file via the
-#     `archivePath` config field instead)
+#   - compute the SHA-256 of the archive
+#   - fill in downloadUrl
+#   - pick a bare `target` filename for the `download-file` step: a name
+#     with no directory component is stored in Moddin's own download cache
+#     (%LOCALAPPDATA%\Moddin\downloads), so the archive never lands in the
+#     game folder. The `extract-zip` step must name that same file in
+#     `archivePath` — it does NOT accept the URL.
 #   - add a `file-exists` blocker check for at least one critical DLL / EXE
 #     extracted from the archive
 #
@@ -56,10 +59,16 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the archive into Moddin's download cache, verifying its SHA-256.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: my-mod.zip
   - kind: extract-zip
     description: Extract the archive into the game's executable directory.
     params:
-      archivePathField: downloadUrl
+      archivePath: my-mod.zip
 verify:
   - id: critical-file-present
     label: <expectedFile> exists

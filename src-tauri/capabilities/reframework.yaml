@@ -1,0 +1,39 @@
+id: reframework
+displayName: REFramework scripting framework
+category: qol
+status: planned
+supportedEngines:
+  - re-engine
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the pinned REFramework release archive.
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive.
+  - name: version
+    type: string
+    required: true
+    description: Upstream REFramework release tag.
+checks:
+  - id: archive-reachable
+    label: REFramework archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+safetyNotes:
+  - Not installable yet. This spec records the intended recipe; the install step is not written because the RE Engine release layout has not been verified against a real game.
+  - REFramework injects into the game process. Close the game before installing.
+  - Many RE Engine titles ship with anti-cheat. Moddin does not disable it, and the user is responsible for any conflict.

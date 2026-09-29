@@ -48,10 +48,16 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the archive into Moddin's download cache, verifying its SHA-256.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: my-mod-proxy.zip
   - kind: extract-zip
     description: Extract the archive into the staging directory.
     params:
-      archivePathField: downloadUrl
+      archivePath: my-mod-proxy.zip
   - kind: move-file
     description: Copy the addon DLL to the chosen proxy name inside the executable directory.
     params:

@@ -130,13 +130,22 @@ renders (Global / Category / Module-specific).
 
 ```yaml
 install:
-  - kind: extract-zip
-    description: Extract OFXR-Bridge archive into the game's executable directory.
+  - kind: download-file
+    description: Fetch the pinned release into Moddin's download cache.
     params:
-      # `archivePathField` resolves to a config field whose value
-      # is a path; `archiveBytesField` would point at a buffer the
-      # runner hands in (download step, future work).
-      archivePathField: downloadUrl
+      urlField: downloadUrl
+      expectedField: sha256
+      # A bare filename is stored under %LOCALAPPDATA%\Moddin\downloads,
+      # so the archive never lands in the game folder. A name with a
+      # directory component is resolved against the executable directory.
+      target: ofxr-bridge.zip
+  - kind: extract-zip
+    description: Extract the OFXR-Bridge archive into the executable directory.
+    params:
+      # `archivePath` is a literal; `archivePathField` resolves to a
+      # config field holding a path. Neither takes a URL — the download
+      # step is what fetches it.
+      archivePath: ofxr-bridge.zip
   - kind: write-text-file
     description: Render and write tray.ini.
     params:
@@ -151,7 +160,8 @@ Built-in step kinds (extend `builtin_steps.rs` to register more):
 
 | kind               | What it does                                                |
 |--------------------|-------------------------------------------------------------|
-| `extract-zip`      | Reads a `zip` archive and extracts every member into the executable directory, sanitising paths. |
+| `download-file`    | Fetches `urlField`/`url` (HTTPS only, host allow-list, size cap) into `targetField`/`target`, verifying SHA-256 when `expectedField`/`expected` is given. A bare `target` filename goes to Moddin's download cache, not the game folder. Not part of the rollback set. |
+| `extract-zip`      | Reads a `zip` archive (`archivePath` literal or `archivePathField`) and extracts every member into the executable directory, sanitising paths. |
 | `verify-hash`     | Reads `pathField` and compares SHA-256 to `expectedField`.    |
 | `file-delete`     | Removes `pathField` (config field holding an absolute path). |
 | `write-text-file` | Writes `pathField` with `template` rendered (`{field}` → `ResolvedConfig.values`). |

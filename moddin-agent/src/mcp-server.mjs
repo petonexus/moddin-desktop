@@ -54,9 +54,15 @@ const LOCAL_CAPABILITIES_DIR =
 // ---------------------------------------------------------------------------
 
 const STEP_KINDS = Object.freeze({
+  "download-file": {
+    summary:
+      "Fetch an HTTPS URL into Moddin's download cache, optionally verifying SHA-256. Use a bare filename for `target` so the archive stays out of the game folder, and name the same file in the extract-zip step's `archivePath`.",
+    fields: ["urlField", "url", "targetField", "target", "expectedField", "expected", "hostAllowlist"],
+    touches: [],
+  },
   "extract-zip": {
-    summary: "Extract a zip archive into the game's executable directory.",
-    fields: ["archivePathField", "archiveBytesField"],
+    summary: "Extract a zip archive into the game's executable directory. Takes a local path, never a URL — pair it with download-file.",
+    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField"],
     touches: ["executableDir"],
   },
   "verify-hash": {

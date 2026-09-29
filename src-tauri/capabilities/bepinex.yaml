@@ -1,0 +1,70 @@
+id: bepinex
+displayName: BepInEx
+category: qol
+status: available
+supportedEngines:
+  - unity
+configSchema:
+  - name: downloadUrl
+    type: url
+    required: true
+    description: HTTPS URL of the pinned BepInEx release archive. Pick the build that matches the game — `win_x64.zip` for a 64-bit Unity player, `win_x86.zip` for a 32-bit one.
+  - name: sha256
+    type: sha256
+    required: true
+    description: Expected SHA-256 of the archive. Moddin refuses to install when the download does not match.
+  - name: version
+    type: string
+    required: true
+    description: Upstream BepInEx release tag this URL points at.
+checks:
+  - id: archive-reachable
+    label: BepInEx archive reachable
+    kind: archive-reachable
+    severity: warning
+    category: modulespecific
+    description: Confirms the pinned release URL responds before anything is written to the game folder.
+    params:
+      urlField: downloadUrl
+  - id: archive-sha256
+    label: Archive SHA-256 matches
+    kind: archive-sha256
+    severity: blocker
+    category: modulespecific
+    description: Downloads the archive and compares it against the declared digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+install:
+  - kind: download-file
+    description: Fetch the pinned BepInEx release into Moddin's download cache, verifying its digest.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: bepinex-5.zip
+  - kind: extract-zip
+    description: Unpack BepInEx next to the game executable. The release zip is already rooted at the install layout (winhttp.dll, doorstop_config.ini, BepInEx/**), so it lands in the right place without reshuffling.
+    params:
+      archivePath: bepinex-5.zip
+verify:
+  - id: preloader-present
+    label: BepInEx preloader installed
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    params:
+      path: BepInEx/core/BepInEx.Preloader.dll
+  - id: doorstop-present
+    label: Doorstop proxy installed
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    description: winhttp.dll is what injects BepInEx into the player; without it the core DLL is inert.
+    params:
+      path: winhttp.dll
+safetyNotes:
+  - Close the game before installing. BepInEx injects into the running process and a half-written core folder is worse than none.
+  - BepInEx injects a proxy DLL (winhttp.dll) into the game folder and cannot coexist with a mod already using that name.
+  - The 32-bit and 64-bit builds are not interchangeable. A 64-bit archive in a 32-bit game leaves the game silently unmodified; check the release URL before applying.
+  - Plugins are separate downloads. Install BepInEx first, drop the plugin DLLs into BepInEx/plugins, then start the game once to generate the config.
+  - Removing BepInEx rolls the install transaction back, which restores the game folder to its previous state.
