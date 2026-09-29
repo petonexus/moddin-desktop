@@ -41,6 +41,58 @@ const CHEEKY_FOVEATED_DLSS_YAML: &str =
 const RESHADE_YAML: &str = include_str!("../capabilities/reshade.yaml");
 const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
 const UEVR_YAML: &str = include_str!("../capabilities/uevr.yaml");
+const BEPINEX_YAML: &str = include_str!("../capabilities/bepinex.yaml");
+const UE4SS_YAML: &str = include_str!("../capabilities/ue4ss.yaml");
+const REFRAMEWORK_YAML: &str = include_str!("../capabilities/reframework.yaml");
+
+/// Every capability recipe compiled into the binary.
+///
+/// Kept as one list so [`CapabilityRegistry::load`] and
+/// [`CapabilityRegistry::load_with_local_dir`] cannot drift apart, and so
+/// `tests::every_built_in_spec_installs_from_a_local_archive` can cover
+/// each recipe automatically as specs are added.
+const BUILT_IN_YAML: &[&str] = &[
+    OFXR_BRIDGE_YAML,
+    OPTISCALER_YAML,
+    CHEEKY_FOVEATED_DLSS_YAML,
+    RESHADE_YAML,
+    OPENXR_HELPERS_YAML,
+    UEVR_YAML,
+    BEPINEX_YAML,
+    UE4SS_YAML,
+    REFRAMEWORK_YAML,
+];
+
+/// Parse the built-in recipe list into `specs`, failing loudly on a
+/// duplicate id or malformed YAML.
+fn insert_built_ins(specs: &mut HashMap<String, CapabilitySpec>) {
+    for raw in BUILT_IN_YAML {
+        match serde_yaml::from_str::<CapabilitySpec>(raw) {
+            Ok(mut spec) => {
+                spec.origin = SpecOrigin::BuiltIn;
+                if specs.contains_key(&spec.id) {
+                    panic!(
+                        "duplicate built-in capability id '{id}'",
+                        id = spec.id
+                    );
+                }
+                specs.insert(spec.id.clone(), spec);
+            }
+            Err(error) => {
+                // A YAML scalar containing ": " silently becomes a
+                // mapping, which is the single most common authoring
+                // mistake in a safety note or a description. Name the
+                // recipe so the failure is actionable.
+                let id = raw
+                    .lines()
+                    .find_map(|line| line.strip_prefix("id:"))
+                    .map(str::trim)
+                    .unwrap_or("<no id>");
+                panic!("could not parse built-in capability '{id}': {error}");
+            }
+        }
+    }
+}
 
 /// Directory Moddin Desktop scans at startup for user-provided
 /// capability recipes. Files placed here are loaded as `SpecOrigin::Local`,
@@ -73,31 +125,7 @@ impl CapabilityRegistry {
     /// logged and skipped — the runner keeps the first one it finds.
     pub fn load() -> Self {
         let mut specs = HashMap::new();
-
-        for raw in [
-            OFXR_BRIDGE_YAML,
-            OPTISCALER_YAML,
-            CHEEKY_FOVEATED_DLSS_YAML,
-            RESHADE_YAML,
-            OPENXR_HELPERS_YAML,
-            UEVR_YAML,
-        ] {
-            match serde_yaml::from_str::<CapabilitySpec>(raw) {
-                Ok(mut spec) => {
-                    spec.origin = SpecOrigin::BuiltIn;
-                    if specs.contains_key(&spec.id) {
-                        panic!(
-                            "duplicate built-in capability id '{id}'",
-                            id = spec.id
-                        );
-                    }
-                    specs.insert(spec.id.clone(), spec);
-                }
-                Err(error) => {
-                    panic!("could not parse built-in capability YAML: {error}");
-                }
-            }
-        }
+        insert_built_ins(&mut specs);
 
         if let Some(local_dir) = local_capabilities_dir() {
             Self::load_local_into(&local_dir, &mut specs);
@@ -112,19 +140,7 @@ impl CapabilityRegistry {
     /// without restarting.
     pub fn load_with_local_dir<P: AsRef<Path>>(local_dir: P) -> Self {
         let mut registry = Self::default();
-        for raw in [
-            OFXR_BRIDGE_YAML,
-            OPTISCALER_YAML,
-            CHEEKY_FOVEATED_DLSS_YAML,
-            RESHADE_YAML,
-            OPENXR_HELPERS_YAML,
-            UEVR_YAML,
-        ] {
-            if let Ok(mut spec) = serde_yaml::from_str::<CapabilitySpec>(raw) {
-                spec.origin = SpecOrigin::BuiltIn;
-                registry.specs.insert(spec.id.clone(), spec);
-            }
-        }
+        insert_built_ins(&mut registry.specs);
         Self::load_local_into(local_dir.as_ref(), &mut registry.specs);
         registry
     }
@@ -279,29 +295,71 @@ fn execute_install(
     };
     let mut step_results = Vec::new();
     let mut affected = Vec::new();
+
+    // Plan each step's targets, back them up, then run the step. The
+    // order matters: a file the step is about to overwrite has to be in
+    // the backup *before* it is replaced, and a step that fails halfway
+    // must still leave a record that can undo what already landed.
+    let metadata = build_metadata(spec, config);
+    let label = format!("Install {} for {}", spec.display_name, game_name);
+    let mut record: Option<transaction::TransactionRecord> = None;
+    let mut outside_root: Vec<String> = Vec::new();
+
     for step in &spec.install {
-        let result = builtin_steps::execute_step(step, &step_context)?;
+        let planned = builtin_steps::plan_step_targets(step, &step_context)?;
+
+        // Only paths under the install directory are inside the game's
+        // rollback scope. A recipe that writes elsewhere (an OpenXR
+        // runtime manifest, a tray INI) is still allowed to do so, but
+        // the user is told it is not covered by Undo.
+        let mut in_scope = Vec::new();
+        for path in planned {
+            if path.starts_with(install_directory) {
+                in_scope.push(path);
+            } else {
+                outside_root.push(path.to_string_lossy().into_owned());
+            }
+        }
+
+        if !in_scope.is_empty() {
+            record = Some(match record {
+                Some(existing) => {
+                    transaction::add_files_to_transaction(existing, install_directory, &in_scope)?
+                }
+                None => transaction::begin_file_set_transaction(
+                    install_directory,
+                    &in_scope,
+                    &spec.id,
+                    &label,
+                    game_id,
+                    metadata.clone(),
+                )?,
+            });
+        }
+
+        let result = match builtin_steps::execute_step(step, &step_context) {
+            Ok(result) => result,
+            Err(error) => {
+                // Roll back whatever this install already wrote instead
+                // of leaving orphaned files with no undo record.
+                if let Some(prepared) = record {
+                    let _ = transaction::restore_record(prepared);
+                }
+                return Err(error);
+            }
+        };
         affected.extend(result.affected_paths.clone());
         step_results.push(result);
     }
 
-    let transaction = if !affected.is_empty() {
-        let metadata = build_metadata(spec, config);
-        let record = transaction::begin_file_set_transaction(
-            install_directory,
-            &affected
-                .iter()
-                .map(std::path::PathBuf::from)
-                .collect::<Vec<_>>(),
-            &spec.id,
-            &format!("Install {} for {}", spec.display_name, game_name),
-            game_id,
-            metadata,
-        )?;
-        Some(transaction::mark_applied(record)?)
-    } else {
-        None
+    let transaction = match record {
+        Some(prepared) => Some(transaction::mark_applied(prepared)?),
+        None => None,
     };
+
+    if !outside_root.is_empty() {
+        affected.extend(outside_root);
+    }
 
     Ok(InstallResult {
         capability_id: spec.id.clone(),
@@ -886,6 +944,9 @@ pub fn capability_compatibility(
 pub struct CapabilitySummary {
     pub id: String,
     pub display_name: String,
+    /// Same player-facing line as [`CapabilitySpec::description`].
+    /// The card shows this instead of the technical id.
+    pub description: Option<String>,
     pub category: String,
     pub status: String,
     /// Provenance — drives the UI badge ("Verified", "Local",
@@ -903,6 +964,7 @@ pub fn capability_list() -> Vec<CapabilitySummary> {
             CapabilitySummary {
                 id: spec.id.clone(),
                 display_name: spec.display_name.clone(),
+                description: spec.description.clone(),
                 category: spec.category.clone(),
                 status: spec.status.clone(),
                 origin: spec.origin,
@@ -959,6 +1021,7 @@ pub fn capability_reload(
             CapabilitySummary {
                 id: spec.id.clone(),
                 display_name: spec.display_name.clone(),
+                description: spec.description.clone(),
                 category: spec.category.clone(),
                 status: spec.status.clone(),
                 origin: spec.origin,
@@ -1119,7 +1182,20 @@ pub async fn community_capability_install(
 mod tests {
     use super::*;
     use crate::capability::{CheckSpec, SpecOrigin};
+    use serde_json::json;
+    use std::collections::BTreeMap;
     use std::fs;
+
+    /// Build a resolved config from key/value pairs, matching how the
+    /// Tauri command layer deserialises a request.
+    fn config_with(pairs: &[(&str, &str)]) -> ResolvedConfig {
+        ResolvedConfig {
+            values: pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), json!(value)))
+                .collect(),
+        }
+    }
 
     #[test]
     fn registry_loads_ofxr_bridge() {
@@ -1938,6 +2014,252 @@ install:
             !outcome.passed,
             "an unreadable FileVersion is a failed verification, not an absent one"
         );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Guards the bug class behind "adding a mod is one YAML file".
+    ///
+    /// Every shipped recipe that is `available` and actually installs
+    /// something has to read its payload from a local path that a
+    /// previous `download-file` step produced. Pointing `extract-zip` at
+    /// a URL — which every recipe used to do — made the whole install
+    /// chain fail on its first step, at runtime, with a file-not-found
+    /// the user had no way to act on.
+    #[test]
+    fn every_available_built_in_recipe_reads_its_payload_from_the_download_cache() {
+        for raw in BUILT_IN_YAML {
+            let spec: CapabilitySpec = serde_yaml::from_str(raw)
+                .unwrap_or_else(|error| panic!("built-in capability YAML does not parse: {error}"));
+            if spec.status != "available" || spec.install.is_empty() {
+                continue;
+            }
+
+            let extracts_anything = spec.install.iter().any(|step| step.kind == "extract-zip");
+            if !extracts_anything {
+                continue;
+            }
+
+            assert!(
+                spec.install.iter().any(|step| step.kind == "download-file"),
+                "'{}' extracts an archive but never downloads one",
+                spec.id
+            );
+
+            for step in spec.install.iter().filter(|step| step.kind == "extract-zip") {
+                let reference = step
+                    .params
+                    .get("archivePath")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        step.params
+                            .get("archivePathField")
+                            .and_then(|value| value.as_str())
+                            .map(|field| {
+                                format!(
+                                    "{field} -> {}",
+                                    spec.config_schema
+                                        .iter()
+                                        .find(|declared| declared.name == field)
+                                        .map(|declared| declared.field_type.clone())
+                                        .unwrap_or_else(|| "missing field".to_owned())
+                                )
+                            })
+                    })
+                    .expect("extract-zip needs archivePath or archivePathField");
+
+                assert!(
+                    !reference.contains("://"),
+                    "'{}' points extract-zip at a URL ({reference}); \
+                     a download-file step has to fetch it into Moddin's cache first",
+                    spec.id
+                );
+            }
+        }
+    }
+
+    /// The transaction has to be opened *before* the step that overwrites
+    /// a file runs. Opened afterwards — as it used to be — the backup
+    /// holds the mod's own output, so Undo restores the mod instead of
+    /// the player's file and the original is gone for good.
+    #[test]
+    fn an_install_backs_up_an_existing_game_file_before_overwriting_it() {
+        let appdata = IsolatedAppdata::new("overwrite-backup");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "overwriter",
+            r#"
+id: overwriter
+displayName: Overwriter
+category: qol
+status: available
+configSchema:
+  - name: target
+    type: string
+    required: true
+install:
+  - kind: write-text-file
+    description: Overwrite a file the game already shipped with.
+    params:
+      pathField: target
+      template: replaced
+"#,
+        );
+
+        let work = temp_root("overwrite-backup-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+        let victim = executable.join("settings.ini");
+        fs::write(&victim, b"original").expect("seed original");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let config = config_with(&[("target", "settings.ini")]);
+
+        let result = run_install(
+            &registry,
+            "overwriter",
+            "overwrite-game",
+            "Overwrite Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect("install runs");
+        assert!(
+            result.transaction.is_some(),
+            "an install that touches a file records a transaction"
+        );
+        assert_eq!(
+            fs::read_to_string(&victim).expect("read victim"),
+            "replaced",
+            "the step really did overwrite the file"
+        );
+
+        run_uninstall(
+            &registry,
+            "overwriter",
+            "overwrite-game",
+            "Overwrite Game",
+            &work,
+        )
+        .expect("uninstall runs");
+
+        assert_eq!(
+            fs::read_to_string(&victim).expect("read victim after undo"),
+            "original",
+            "Undo must restore the player's original content, not the mod's output"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// A step that fails halfway must not leave the files the earlier
+    /// steps already wrote behind with no rollback record. Before the
+    /// runner was reordered, `?` returned out of the step loop before
+    /// any transaction existed, so those writes were simply orphaned.
+    #[test]
+    fn a_failed_step_rolls_back_what_the_install_already_wrote() {
+        let appdata = IsolatedAppdata::new("partial-failure");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "half-writer",
+            r#"
+id: half-writer
+displayName: Half writer
+category: qol
+status: available
+install:
+  - kind: write-text-file
+    description: Succeeds.
+    params:
+      path: first.ini
+      template: written
+  - kind: file-delete
+    description: Fails on purpose — there is no such file to delete.
+    params:
+      path: does-not-exist.ini
+"#,
+        );
+
+        let work = temp_root("partial-failure-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let error = run_install(
+            &registry,
+            "half-writer",
+            "partial-game",
+            "Partial Game",
+            &ResolvedConfig::default(),
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("the second step fails");
+
+        assert!(error.contains("does-not-exist.ini"), "{error}");
+        assert!(
+            !executable.join("first.ini").exists(),
+            "the file the first step wrote must be rolled back, not orphaned"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Step paths are rendered from config, so `..` in a config value
+    /// would otherwise let a recipe write anywhere on the machine.
+    #[test]
+    fn a_step_cannot_write_outside_the_install_root_without_saying_so() {
+        let appdata = IsolatedAppdata::new("escape-root");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "escaper",
+            r#"
+id: escaper
+displayName: Escaper
+category: qol
+status: available
+configSchema:
+  - name: target
+    type: string
+    required: true
+install:
+  - kind: write-text-file
+    description: Try to climb out of the game folder.
+    params:
+      pathField: target
+      template: owned
+"#,
+        );
+
+        let work = temp_root("escape-root-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+        let outside = work.join("hijacked.ini");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let config = config_with(&[("target", "../hijacked.ini")]);
+
+        let error = run_install(
+            &registry,
+            "escaper",
+            "escape-game",
+            "Escape Game",
+            &config,
+            &work,
+            &executable,
+            false,
+        )
+        .expect_err("traversal out of the install root is refused");
+
+        assert!(error.contains("escapes the install directory"), "{error}");
+        assert!(!outside.exists(), "nothing was written outside the root");
 
         let _ = fs::remove_dir_all(&work);
     }

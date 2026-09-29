@@ -1,5 +1,6 @@
 id: reframework
 displayName: REFramework scripting framework
+description: Scripting framework for RE Engine — lets mods change the game while it is running.
 category: qol
 status: planned
 supportedEngines:

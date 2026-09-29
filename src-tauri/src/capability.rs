@@ -76,6 +76,12 @@ pub struct CapabilitySpec {
     /// specs (the runner asserts this at load time).
     pub id: String,
     pub display_name: String,
+    /// One sentence, written for a person rather than for a recipe
+    /// author: what the mod does for the player, not how it is
+    /// installed. Shown as the card's supporting line. Absent means the
+    /// UI falls back to the technical id rather than inventing copy.
+    #[serde(default)]
+    pub description: Option<String>,
     pub category: String,
     pub status: String,
     #[serde(default)]

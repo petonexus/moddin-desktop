@@ -27,6 +27,17 @@ use std::{
 /// per evaluation run.
 pub type ExeVersionCache = BTreeMap<PathBuf, Option<String>>;
 
+/// Archive size above which the `archive-sha256` preflight check skips
+/// the download instead of fetching the whole payload.
+///
+/// The check exists to tell the user "this archive is not what the
+/// recipe pinned" before they install. It is not the enforcement point:
+/// the `download-file` step re-verifies the digest against the same
+/// `sha256` config field, and that runs with the archive already on the
+/// way to disk. So the honest answer for a large archive is "verified
+/// during install", not "download 300 MB to render a card".
+const PREFLIGHT_MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Catalogue of check kinds the runner knows how to evaluate. The
 /// capability loader rejects specs that reference a kind outside this
 /// set so the failure surfaces at startup.
@@ -209,11 +220,32 @@ async fn evaluate_archive_sha256(
     };
     let parsed = reqwest::Url::parse(&url)
         .map_err(|error| format!("archive-sha256: invalid URL '{url}': {error}"))?;
-    let bytes = crate::archive::RemoteArchive::new(parsed.to_string())
-        .with_host_allowlist(vec!["github.com".to_owned(), "objects.githubusercontent.com".to_owned()])
-        .fetch()
-        .await?;
-    let (downloaded, computed) = bytes;
+    let archive = crate::archive::RemoteArchive::new(parsed.to_string())
+        .with_host_allowlist(vec!["github.com".to_owned(), "objects.githubusercontent.com".to_owned()]);
+
+    // A preflight pass runs while the UI is rendering a module card. If
+    // the archive is large, downloading it to answer "is the button
+    // enabled yet" is worse than useless — the digest is enforced again
+    // by the `download-file` step at install time, which is the moment
+    // it actually protects anything. So ask for the size first and skip
+    // politely rather than pulling hundreds of megabytes.
+    if let Ok(Some(size)) = archive.content_length().await {
+        if size > PREFLIGHT_MAX_DOWNLOAD_BYTES {
+            return Ok(CheckOutcome {
+                id: Some(check.id.clone()),
+                category: parse_category(&check.category),
+                severity: parse_severity(&check.severity),
+                label: check.label.clone(),
+                passed: true,
+                detail: Some(format!(
+                    "Archive is {} MB. The digest is verified during install, so the download was skipped.",
+                    size / (1024 * 1024)
+                )),
+            });
+        }
+    }
+
+    let (_downloaded, computed) = archive.fetch().await?;
     let passed = computed.eq_ignore_ascii_case(&expected);
     Ok(CheckOutcome {
         id: Some(check.id.clone()),

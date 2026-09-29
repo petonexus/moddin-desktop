@@ -1,5 +1,6 @@
 id: openxr-helpers
 displayName: OpenXR runtime helpers
+description: Chooses which OpenXR runtime your games use, and remembers that choice per game.
 category: vr
 status: available
 supportedEngines:

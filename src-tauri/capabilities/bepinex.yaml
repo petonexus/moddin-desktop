@@ -1,5 +1,6 @@
 id: bepinex
 displayName: BepInEx
+description: Lets Unity games load mods and plugins, and is the base most other Unity mods need.
 category: qol
 status: available
 supportedEngines:

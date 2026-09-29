@@ -194,9 +194,13 @@ pub mod test_support {
     /// too, or a concurrent env test's temp dir can vanish mid-read.
     pub fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        // Poisoning is recovered from on purpose. A failing test that
+        // held the lock used to make every other env-touching test fail
+        // with "env test lock", hiding the one real failure behind a
+        // dozen fake ones.
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
-            .expect("env test lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

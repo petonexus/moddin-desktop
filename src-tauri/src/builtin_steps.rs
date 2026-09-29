@@ -251,27 +251,9 @@ fn run_extract_zip(
         let Some(safe_name) = sanitize_archive_member(&name) else {
             return Err(format!("extract-zip: unsafe archive member '{name}'."));
         };
-        let basename = Path::new(&safe_name)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-
-        let target = if let Some(proxy_name) = proxy.as_ref() {
-            if basename == "reshade64.dll" || basename == "dxgi.dll" {
-                let candidate = context.executable_directory.join(proxy_name);
-                affected.push(proxy_name.clone());
-                candidate
-            } else {
-                let candidate = context.executable_directory.join(&safe_name);
-                affected.push(safe_name.clone());
-                candidate
-            }
-        } else {
-            let candidate = context.executable_directory.join(&safe_name);
-            affected.push(safe_name.clone());
-            candidate
-        };
+        let relative = archive_member_target(&safe_name, proxy.as_deref());
+        let target = context.executable_directory.join(&relative);
+        affected.push(relative);
 
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -337,17 +319,35 @@ fn run_verify_hash(
     })
 }
 
+/// Read a step's target path.
+///
+/// The `*Field` form names a config field; the bare form is a literal.
+/// Both are accepted so a recipe can point at a constant path without
+/// inventing a config field for it — the same rule `download-file` and
+/// `verify-hash` already follow, and the one
+/// [`plan_step_targets`] mirrors when it predicts the same target.
+fn path_param(
+    step: &StepSpec,
+    config: &ResolvedConfig,
+    field_key: &str,
+    literal_key: &str,
+) -> Result<String, String> {
+    if let Some(name) = param_string(step, field_key) {
+        return config
+            .get_string(name)
+            .ok_or_else(|| format!("{}: config field '{name}' is missing.", step.kind));
+    }
+    param_string(step, literal_key)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{}: {field_key} or {literal_key} is required.", step.kind))
+}
+
 fn run_file_delete(
     step: &StepSpec,
     context: &StepContext<'_>,
 ) -> Result<StepResult, String> {
-    let path_field = param_string(step, "pathField")
-        .ok_or_else(|| "file-delete: pathField is required.".to_owned())?;
-    let path = context
-        .config
-        .get_string(path_field)
-        .ok_or_else(|| format!("file-delete: config field '{path_field}' is missing."))?;
-    let resolved = resolve_path(context.executable_directory, &path);
+    let path = path_param(step, context.config, "pathField", "path")?;
+    let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if !resolved.is_file() {
         return Err(format!("file-delete: '{path}' is not a regular file."));
     }
@@ -364,13 +364,8 @@ fn run_write_text_file(
     step: &StepSpec,
     context: &StepContext<'_>,
 ) -> Result<StepResult, String> {
-    let path_field = param_string(step, "pathField")
-        .ok_or_else(|| "write-text-file: pathField is required.".to_owned())?;
-    let path = context
-        .config
-        .get_string(path_field)
-        .ok_or_else(|| format!("write-text-file: config field '{path_field}' is missing."))?;
-    let resolved = resolve_path(context.executable_directory, &path);
+    let path = path_param(step, context.config, "pathField", "path")?;
+    let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!("write-text-file: could not create parent dir: {error}")
@@ -409,17 +404,15 @@ fn run_spawn_process(
     let child = command
         .spawn()
         .map_err(|error| format!("spawn-process: could not start '{executable}': {error}"))?;
+    // The child is deliberately detached: the recipe starts a tray
+    // process that must outlive the install. Moddin tracks its liveness
+    // through process snapshots, so the PID is not carried onward —
+    // putting it in `affected_paths` would make a PID look like a file.
+    let _ = child;
     Ok(StepResult {
         kind: step.kind.clone(),
         description: step.description.clone(),
         affected_paths: vec![resolved.to_string_lossy().into_owned()],
-        // Keep the child PID handy for callers via the runtime;
-        // today we just drop it — Moddin tracks tray liveness through
-        // process snapshots instead of carrying child handles.
-    })
-    .map(|mut result| {
-        result.affected_paths.push(format!("pid:{}", child.id()));
-        result
     })
 }
 
@@ -427,13 +420,8 @@ fn run_write_binary_file(
     step: &StepSpec,
     context: &StepContext<'_>,
 ) -> Result<StepResult, String> {
-    let path_field = param_string(step, "pathField")
-        .ok_or_else(|| "write-binary-file: pathField is required.".to_owned())?;
-    let path = context
-        .config
-        .get_string(path_field)
-        .ok_or_else(|| format!("write-binary-file: config field '{path_field}' is missing."))?;
-    let resolved = resolve_path(context.executable_directory, &path);
+    let path = path_param(step, context.config, "pathField", "path")?;
+    let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!("write-binary-file: could not create parent dir: {error}")
@@ -455,20 +443,15 @@ fn run_move_file(
     step: &StepSpec,
     context: &StepContext<'_>,
 ) -> Result<StepResult, String> {
-    let from_field = param_string(step, "fromField")
-        .ok_or_else(|| "move-file: fromField is required.".to_owned())?;
-    let to_field = param_string(step, "toField")
-        .ok_or_else(|| "move-file: toField is required.".to_owned())?;
-    let from_path = context
-        .config
-        .get_string(from_field)
-        .ok_or_else(|| format!("move-file: config field '{from_field}' is missing."))?;
-    let to_path = context
-        .config
-        .get_string(to_field)
-        .ok_or_else(|| format!("move-file: config field '{to_field}' is missing."))?;
-    let from = resolve_path(context.executable_directory, &from_path);
-    let to = resolve_path(context.executable_directory, &to_path);
+    let from_path = path_param(step, context.config, "fromField", "from")?;
+    let to_path = path_param(step, context.config, "toField", "to")?;
+    let from = resolve_write_target(step, context.executable_directory, &from_path)?;
+    let to = resolve_write_target(step, context.executable_directory, &to_path)?;
+    if from == to {
+        return Err(format!(
+            "move-file: source and destination are the same path ('{from_path}')."
+        ));
+    }
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!("move-file: could not create destination parent: {error}")
@@ -692,6 +675,189 @@ fn resolve_path(base: &Path, candidate: &str) -> PathBuf {
     }
 }
 
+/// Relative name an archive member will be written to, after
+/// sanitisation and the optional proxy-DLL rename.
+///
+/// Shared by the executor and by [`plan_step_targets`] so the files a
+/// step is about to overwrite are exactly the files the transaction
+/// backs up first.
+fn archive_member_target(safe_name: &str, proxy: Option<&str>) -> String {
+    if let Some(proxy_name) = proxy.filter(|name| !name.is_empty()) {
+        let basename = Path::new(safe_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if basename == "reshade64.dll" || basename == "dxgi.dll" {
+            return proxy_name.to_owned();
+        }
+    }
+    safe_name.to_owned()
+}
+
+/// Resolve a step's *write* target, refusing to escape its directory.
+///
+/// Step paths are templates rendered from config, so a `..` inside a
+/// config value or a recipe would aim anywhere on the machine. That is
+/// refused outright — no step legitimately needs it, so there is no
+/// opt-in and no escape hatch.
+///
+/// An absolute path is a different case and stays allowed. Config
+/// fields of type `path` exist precisely to name a location outside the
+/// game folder (an OpenXR runtime manifest, a tray INI beside the
+/// executable), and a recipe author writes that value on purpose. The
+/// transaction store separately refuses to *back up* anything outside
+/// the install root, and the runner reports those paths as not covered
+/// by Undo.
+fn resolve_write_target(
+    step: &StepSpec,
+    base: &Path,
+    candidate: &str,
+) -> Result<PathBuf, String> {
+    let path = Path::new(candidate);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+
+    // Reject `..` that walks out of `base`, while still allowing
+    // normalised inner paths such as `BepInEx/core/../winhttp.dll`.
+    let mut depth: i64 = 0;
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(format!(
+                        "{}: path '{}' escapes the install directory.",
+                        step.kind, candidate
+                    ));
+                }
+            }
+            std::path::Component::Normal(_) => depth += 1,
+            std::path::Component::CurDir => {}
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+
+    Ok(base.join(path))
+}
+
+/// Filesystem paths a step is about to create, modify or remove,
+/// resolved to absolute paths.
+///
+/// The runner calls this *before* the step runs and hands the result to
+/// the transaction store, so a file the step is about to overwrite is
+/// backed up in its original state and a step that fails halfway still
+/// leaves a rollback record behind. Steps that write outside the
+/// install directory are returned too; the runner filters them out of
+/// the rollback set but keeps them for disclosure.
+pub fn plan_step_targets(
+    step: &StepSpec,
+    context: &StepContext<'_>,
+) -> Result<Vec<PathBuf>, String> {
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let mut add = |candidate: &str| -> Result<(), String> {
+        let path = resolve_write_target(step, context.executable_directory, candidate)?;
+        if !targets.contains(&path) {
+            targets.push(path);
+        }
+        Ok(())
+    };
+
+    match step.kind.as_str() {
+        "download-file" => {
+            // A bare filename lands in Moddin's own cache, which is not
+            // part of the game's rollback scope. Anything else is written
+            // next to the game and must be covered.
+            if let Some(target) = param_string(step, "targetField")
+                .and_then(|field| context.config.get_string(field))
+                .or_else(|| param_string(step, "target").map(str::to_owned))
+            {
+                let path = Path::new(&target);
+                let is_bare = path.components().count() == 1 && path.file_name().is_some();
+                if !is_bare {
+                    add(&target)?;
+                }
+            }
+        }
+        "extract-zip" => {
+            let Some(archive_path) = param_string(step, "archivePathField")
+                .and_then(|field| context.config.get_string(field))
+                .or_else(|| param_string(step, "archivePath").map(str::to_owned))
+            else {
+                return Err(
+                    "extract-zip: step needs archiveBytesField, archivePathField or archivePath."
+                        .to_owned(),
+                );
+            };
+            let resolved = resolve_download_path(context.executable_directory, &archive_path);
+            if !resolved.is_file() {
+                // The previous `download-file` step has not run yet or
+                // failed. Returning no targets keeps the transaction
+                // accurate; the step itself will report the real error.
+                return Ok(targets);
+            }
+            let bytes = fs::read(&resolved).map_err(|error| {
+                format!(
+                    "extract-zip: could not read archive '{}': {error}",
+                    resolved.display()
+                )
+            })?;
+            let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
+                .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
+            let proxy = param_string(step, "proxyField")
+                .and_then(|field| context.config.get_string(field));
+            for index in 0..archive.len() {
+                let entry = archive
+                    .by_index(index)
+                    .map_err(|error| format!("extract-zip: entry {index} unreadable: {error}"))?;
+                if entry.is_dir() {
+                    continue;
+                }
+                let name = entry.name().to_owned();
+                let Some(safe_name) = sanitize_archive_member(&name) else {
+                    return Err(format!("extract-zip: unsafe archive member '{name}'."));
+                };
+                let relative = archive_member_target(&safe_name, proxy.as_deref());
+                let target = context.executable_directory.join(&relative);
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+        "file-delete" | "write-text-file" | "write-binary-file" => {
+            if let Some(path) = param_string(step, "pathField")
+                .and_then(|field| context.config.get_string(field))
+                .or_else(|| param_string(step, "path").map(str::to_owned))
+            {
+                add(&path)?;
+            }
+        }
+        "move-file" => {
+            // Both ends matter: `from` is restored if the move clobbered
+            // it, and `to` is restored to its previous content.
+            if let Some(from) = param_string(step, "fromField")
+                .and_then(|field| context.config.get_string(field))
+                .or_else(|| param_string(step, "from").map(str::to_owned))
+            {
+                add(&from)?;
+            }
+            if let Some(to) = param_string(step, "toField")
+                .and_then(|field| context.config.get_string(field))
+                .or_else(|| param_string(step, "to").map(str::to_owned))
+            {
+                add(&to)?;
+            }
+        }
+        // verify-hash and kill-process are read-only; spawn-process does
+        // not modify the executable; registry-write and registry-delete
+        // do not touch the filesystem at all.
+        _ => {}
+    }
+
+    Ok(targets)
+}
+
 /// Where `download-file` puts payloads and where `extract-zip` looks
 /// for them when a recipe names a bare filename.
 ///
@@ -807,6 +973,7 @@ mod tests {
         let spec: &'a CapabilitySpec = Box::leak(Box::new(CapabilitySpec {
             id: "probe".to_owned(),
             display_name: "Probe".to_owned(),
+            description: None,
             category: "qol".to_owned(),
             status: "available".to_owned(),
             supported_engines: Vec::new(),

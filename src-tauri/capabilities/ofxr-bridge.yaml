@@ -1,7 +1,8 @@
 id: ofxr-bridge
 displayName: OFXR Bridge FrameGen
+description: Streams the flat desktop into a VR headset through OpenXR, so non-VR games work in VR.
 category: vr
-status: available
+status: planned
 supportedEngines:
   - unreal5
   - redengine
@@ -127,6 +128,8 @@ uninstall:
       pathField: trayIniPath
 
 safetyNotes:
+  - Install chain is not wired yet. Extracting into a staging directory and then promoting one named manifest file into the OpenXR ApiLayers folder needs step support that does not exist yet — `extract-zip` has no target-subdirectory option, and `move-file` cannot move a directory. Until that exists this spec stays `planned` and the game page keeps offering the working OFXR module instead.
+  - The `write-text-file` step that renders `tray.ini` writes outside the game folder, so it will also need an explicit `allowOutsideRoot` opt-in when the chain is wired.
   - OFXR Bridge is an experimental pre-release; it may produce artifacts, freezes, or crashes depending on the game, VR mod, GPU and runtime.
   - The tray requires the Microsoft Visual C++ Redistributable x64; keep the game non-elevated because Windows OpenXR does not apply per-user layers to elevated processes.
   - Requires the Game executable to be closed before install.

@@ -1,5 +1,6 @@
 id: optiscaler
 displayName: OptiScaler DLSS upscaler
+description: Adds DLSS Super Resolution to games that ship FSR instead, or no upscaler at all.
 category: graphics
 status: available
 supportedEngines:
@@ -11,7 +12,7 @@ configSchema:
   - name: downloadUrl
     type: url
     required: true
-    description: HTTPS URL of the OptiScaler release archive (7z or zip).
+    description: HTTPS URL of the OptiScaler release archive. Must be a .zip — the recipe extracts with `extract-zip` and cannot read a 7z payload.
   - name: sha256
     type: sha256
     required: true
@@ -48,20 +49,17 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the pinned OptiScaler archive into Moddin's download cache, verifying its digest before anything touches the game folder.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: optiscaler.zip
   - kind: extract-zip
-    description: Extract the OptiScaler archive into the game executable directory.
+    description: Extract the OptiScaler archive into the game executable directory. The bundled proxy DLL is renamed to the recipe-declared `proxy` on the way out, so it cannot collide with another mod that already owns that name.
     params:
-      archivePathField: downloadUrl
-  - kind: move-file
-    description: Rename OptiScaler's bundled proxy DLL to the recipe-declared `proxy`.
-    params:
-      fromField: downloadUrl
-      toField: proxy
-uninstall:
-  - kind: file-delete
-    description: Remove the proxy DLL OptiScaler dropped next to the game executable.
-    params:
-      pathField: proxy
+      archivePath: optiscaler.zip
+      proxyField: proxy
 safetyNotes:
   - OptiScaler proxies its own DLL into the executable directory; choose a proxy name that does not clash with other mods (UEVR, ReShade, R.E.A.L. VR, ERVR).
   - OptiScaler only ships replacements for DLSS-SR; games that already include DLSS or FSR need their native runtime left untouched.

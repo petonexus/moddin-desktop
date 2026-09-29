@@ -313,6 +313,66 @@ pub fn backup_file_with_metadata(
     Ok(record)
 }
 
+/// Snapshot one target into the transaction's backup directory.
+///
+/// A file that already exists is copied aside so rollback can restore the
+/// user's original content; a file that does not exist yet is recorded
+/// with `existed_before: false` so rollback deletes it instead. `index`
+/// keeps backup names unique and stably ordered.
+fn snapshot_target(
+    backup_directory: &Path,
+    index: usize,
+    target_root: &Path,
+    target: &Path,
+) -> Result<TransactionFile, String> {
+    ensure_target_within_root(target_root, target)?;
+
+    let existed_before = target.is_file();
+    let backup_path = if existed_before {
+        let file_name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file.bin");
+        let backup = backup_directory.join(format!("{index:04}-{file_name}"));
+        fs::copy(target, &backup).map_err(|error| {
+            format!(
+                "Could not back up existing file '{}': {error}",
+                target.display()
+            )
+        })?;
+        Some(backup.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    Ok(TransactionFile {
+        target_path: target.to_string_lossy().into_owned(),
+        backup_path,
+        existed_before,
+    })
+}
+
+/// Directories between `target_root` and each target that do not exist
+/// yet, deepest first, so rollback removes them in a safe order.
+fn collect_created_directories(target_root: &Path, targets: &[PathBuf]) -> Vec<String> {
+    let mut directories = Vec::new();
+    for target in targets {
+        let mut current = target.parent();
+        while let Some(directory) = current {
+            if directory == target_root || !directory.starts_with(target_root) {
+                break;
+            }
+            if !directory.exists() {
+                directories.push(directory.to_string_lossy().into_owned());
+            }
+            current = directory.parent();
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    directories.dedup();
+    directories
+}
+
 pub fn begin_file_set_transaction(
     target_root: &Path,
     targets: &[PathBuf],
@@ -333,48 +393,10 @@ pub fn begin_file_set_transaction(
 
     let mut files = Vec::with_capacity(unique_targets.len());
     for (index, target) in unique_targets.iter().enumerate() {
-        ensure_target_within_root(target_root, target)?;
-
-        let existed_before = target.is_file();
-        let backup_path = if existed_before {
-            let file_name = target
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("file.bin");
-            let backup = backup_directory.join(format!("{index:04}-{file_name}"));
-            fs::copy(target, &backup).map_err(|error| {
-                format!(
-                    "Could not back up existing file '{}': {error}",
-                    target.display()
-                )
-            })?;
-            Some(backup.to_string_lossy().into_owned())
-        } else {
-            None
-        };
-
-        files.push(TransactionFile {
-            target_path: target.to_string_lossy().into_owned(),
-            backup_path,
-            existed_before,
-        });
+        files.push(snapshot_target(&backup_directory, index, target_root, target)?);
     }
 
-    let mut directories = Vec::new();
-    for target in &unique_targets {
-        let mut current = target.parent();
-        while let Some(directory) = current {
-            if directory == target_root || !directory.starts_with(target_root) {
-                break;
-            }
-            if !directory.exists() {
-                directories.push(directory.to_string_lossy().into_owned());
-            }
-            current = directory.parent();
-        }
-    }
-    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
-    directories.dedup();
+    let directories = collect_created_directories(target_root, &unique_targets);
 
     let record = TransactionRecord {
         id,
@@ -389,6 +411,62 @@ pub fn begin_file_set_transaction(
         created_directories: directories,
         metadata,
     };
+
+    write_record(&record)?;
+    Ok(record)
+}
+
+/// Append newly-planned targets to an already-open transaction.
+///
+/// The capability runner plans each step's targets immediately before it
+/// runs that step — an archive cannot be inspected until the previous
+/// `download-file` step has fetched it — so the transaction has to grow as
+/// the install progresses. Targets already recorded, and duplicates within
+/// `extra_targets`, are ignored.
+pub fn add_files_to_transaction(
+    record: TransactionRecord,
+    target_root: &Path,
+    extra_targets: &[PathBuf],
+) -> Result<TransactionRecord, String> {
+    let mut record = record;
+    validate_record(&record, &record.id.clone())?;
+    if record.status != "prepared" {
+        return Err(format!(
+            "Transaction '{}' can only be extended while prepared, but it is '{}'.",
+            record.id, record.status
+        ));
+    }
+
+    let mut fresh: Vec<PathBuf> = Vec::new();
+    for target in extra_targets {
+        if record.files.iter().any(|file| Path::new(&file.target_path) == target) {
+            continue;
+        }
+        if fresh.contains(target) {
+            continue;
+        }
+        fresh.push(target.clone());
+    }
+    if fresh.is_empty() {
+        return Ok(record);
+    }
+
+    let backup_directory = PathBuf::from(&record.backup_path);
+    let index_offset = record.files.len();
+    for (offset, target) in fresh.iter().enumerate() {
+        record
+            .files
+            .push(snapshot_target(&backup_directory, index_offset + offset, target_root, target)?);
+    }
+
+    let mut directories = record.created_directories.clone();
+    for directory in collect_created_directories(target_root, &fresh) {
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    record.created_directories = directories;
 
     write_record(&record)?;
     Ok(record)

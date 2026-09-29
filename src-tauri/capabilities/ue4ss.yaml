@@ -1,5 +1,6 @@
 id: ue4ss
 displayName: UE4SS scripting framework
+description: Scripting framework for Unreal Engine — lets mods change the game while it is running.
 category: qol
 status: planned
 supportedEngines:

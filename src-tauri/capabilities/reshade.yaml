@@ -1,5 +1,6 @@
 id: reshade
 displayName: ReShade host
+description: Adds post-processing to any DirectX game — sharpening, bloom, colour correction and anti-aliasing.
 category: graphics
 status: available
 supportedEngines:
@@ -48,15 +49,17 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 install:
+  - kind: download-file
+    description: Fetch the pinned ReShade archive into Moddin's download cache, verifying its digest before anything touches the game folder.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: reshade.zip
   - kind: extract-zip
-    description: Extract ReShade host archive (ReShade64.dll + ReShadeAddons64.dll + ReShade.ini) next to the game executable.
+    description: Extract ReShade (ReShade64.dll + ReShadeAddons64.dll + ReShade.ini) next to the game executable. The bundled proxy is renamed to the recipe-declared `proxy` on the way out, so ReShade does not clobber a dxgi.dll another mod already owns.
     params:
-      archivePathField: downloadUrl
-  - kind: move-file
-    description: Rename ReShade64.dll to the recipe-declared `proxy` (avoids clashing with UEVR or another mod that already owns dxgi.dll).
-    params:
-      fromField: downloadUrl
-      toField: proxy
+      archivePath: reshade.zip
+      proxyField: proxy
 safetyNotes:
   - ReShade adds post-processing hooks; some games' anti-cheat systems flag ReShade even when offline.
   - ReShade's `dxgi.dll` proxy conflicts with OptiScaler / R.E.A.L. VR. The recipe must declare an alternative proxy (typically `version.dll` for OptiScaler coexistence).

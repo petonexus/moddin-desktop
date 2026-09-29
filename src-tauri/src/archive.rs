@@ -151,6 +151,57 @@ impl RemoteArchive {
         self.expected_sha256 = Some(expected.into());
         self
     }
+
+    /// Size of the remote payload in bytes, from a HEAD request, or
+    /// `None` when the server does not report one.
+    ///
+    /// Exists so a preflight check can decide *whether to download*
+    /// without starting the download. `archive-sha256` is a blocker
+    /// that runs while the UI is rendering a module card, and pulling
+    /// 300 MB to decide whether a button should be enabled is not a
+    /// check.
+    ///
+    /// `Err` means the size could not be determined (offline, host not
+    /// allowed, server rejects HEAD). Callers should treat that as
+    /// "unknown size", not as "download failed".
+    pub async fn content_length(&self) -> Result<Option<u64>, String> {
+        let parsed = reqwest::Url::parse(&self.url)
+            .map_err(|error| format!("{}: invalid URL: {error}", self.label()))?;
+        if parsed.scheme() != "https" {
+            return Err(format!("{}: must use HTTPS.", self.label()));
+        }
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| format!("{}: missing host.", self.label()))?
+            .to_ascii_lowercase();
+        let allowed = if self.host_allowlist.is_empty() {
+            vec!["github.com".to_owned()]
+        } else {
+            self.host_allowlist
+                .iter()
+                .map(|host| host.to_ascii_lowercase())
+                .collect()
+        };
+        if !allowed.iter().any(|candidate| host == *candidate) {
+            return Err(format!(
+                "{}: host '{host}' is not in the allow-list.",
+                self.label()
+            ));
+        }
+
+        let client = Client::builder()
+            .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
+            .build()
+            .map_err(|error| format!("{}: could not create downloader: {error}", self.label()))?;
+
+        let response = client
+            .head(parsed)
+            .send()
+            .await
+            .map_err(|error| format!("{}: could not read archive size: {error}", self.label()))?;
+
+        Ok(response.content_length())
+    }
 }
 
 impl ArchiveSource for RemoteArchive {

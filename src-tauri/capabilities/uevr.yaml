@@ -1,7 +1,8 @@
 id: uevr
 displayName: UEVR engine-aware installer
+description: Brings Unreal Engine VR rendering to flat-screen Unreal games.
 category: vr
-status: available
+status: planned
 supportedEngines:
   - unreal5
 configSchema:
@@ -60,10 +61,7 @@ uninstall:
     params:
       processName: UEVRInjector.exe
       force: true
-  - kind: file-delete
-    description: Remove the staging directory used for this backend.
-    params:
-      pathField: extractedDir
 safetyNotes:
+  - Install chain is not wired yet. UEVR ships as a git tag that has to be checked out and built, and `pinnedTag` is a tag name rather than an archive URL, so no download or extract step can consume it. Wiring this needs a `git-checkout` step kind and a per-backend build step. Until then this spec stays `planned` and the game page keeps offering the working UEVR module instead.
   - UEVR only injects Unreal Engine games (UE 4.8-5.4). Unity, RE Engine, REDengine, and unknown engines are not eligible; the install aborts before writing files.
   - Close the game AND UEVRInjector.exe before applying or changing a backend. Do not run Steam, UEVR or the game as administrator.
