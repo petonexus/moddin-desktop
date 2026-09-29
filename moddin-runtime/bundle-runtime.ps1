@@ -1,24 +1,56 @@
 # Re-creates the moddin-runtime/ folder from scratch.
 #
 # This is the script CI / a developer runs before `npm run tauri build`.
-# It does not require Node.js to be installed on the machine doing the
-# build — the script downloads Node itself.
+#
+# Node.js IS required on the machine running it: step 3 shells out to
+# `npm install` to stage the agent's production dependencies. The script
+# downloads a *portable* Node for the bundle itself, so that copy is
+# pinned and verified rather than whatever the build machine happens
+# to have installed -- but it does not bootstrap a toolchain.
 
 $ErrorActionPreference = 'Stop'
 $here        = $PSScriptRoot
 $runtimeRoot = (Resolve-Path (Join-Path $here '..')).Path
 $outDir      = Join-Path $runtimeRoot 'moddin-runtime'
-$nodeUrl     = 'https://nodejs.org/dist/v20.19.5/node-v20.19.5-win-x64.zip'
+$nodeVersion = 'v20.19.5'
+$nodeFile    = "node-$nodeVersion-win-x64.zip"
+$nodeUrl     = "https://nodejs.org/dist/$nodeVersion/$nodeFile"
+$shasumsUrl  = "https://nodejs.org/dist/$nodeVersion/SHASUMS256.txt"
 $zipPath     = Join-Path $outDir 'node.zip'
 $tmp         = Join-Path $outDir 'tmp'
 
 Write-Host '== Moddin runtime bundle ==' -ForegroundColor Cyan
 
-# 1) Download portable Node if not already present.
+# 1) Download portable Node if not already present, verifying its digest
+#    against the SHASUMS256.txt Node publishes next to the archive.
+#
+#    This archive is downloaded on every release build and then ships
+#    inside the installer, so an unauthenticated download here is the
+#    weakest link in a product whose whole pitch is that it verifies
+#    what it installs. The digests come from the same host as the
+#    archive, which is not a full supply-chain guarantee -- it is what
+#    nodejs.org offers without a signature, and it catches a corrupted
+#    or substituted download rather than a compromised host.
 if (-not (Test-Path (Join-Path $outDir 'node.exe'))) {
     Write-Host '[1/3] Downloading portable Node...' -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-    Invoke-WebRequest -Uri $nodeUrl -OutFile $zipPath | Out-Null
+    Invoke-WebRequest -Uri $shasumsUrl -OutFile (Join-Path $outDir 'SHASUMS256.txt')
+    $expected = (Get-Content (Join-Path $outDir 'SHASUMS256.txt') |
+        Where-Object { $_ -match "\s$([regex]::Escape($nodeFile))\s*$" } |
+        ForEach-Object { ($_ -split '\s+')[0] } |
+        Select-Object -First 1)
+    if (-not $expected) {
+        throw "No published SHA-256 for $nodeFile; refusing to install an unverified runtime."
+    }
+
+    Invoke-WebRequest -Uri $nodeUrl -OutFile $zipPath
+    $actual = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected.ToLowerInvariant()) {
+        Remove-Item -Force $zipPath
+        throw "SHA-256 mismatch for $nodeFile. Expected $expected, got $actual. Refusing to install."
+    }
+    Write-Host "      digest OK: $actual" -ForegroundColor DarkGreen
+
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
     $bin = Get-ChildItem -Path $tmp -Filter 'node.exe' -Recurse | Select-Object -First 1

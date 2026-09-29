@@ -18,6 +18,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The community capabilities repo is a submodule and the
+          # capability-kind parity check reads its validator. Checking
+          # out without it made that check impossible, which is why the
+          # drift it exists to catch went unnoticed.
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -31,13 +37,23 @@ jobs:
       - name: Check and build frontend
         run: |
           npm run check:architecture
+          npm run check:capability-kinds
           npm run build
 
+      # The community repo lives in a submodule, so this only runs when
+      # it is actually checked out. The parity guard inside the desktop
+      # repo is the one that always runs.
       - name: Validate moddin-agent capability templates
         working-directory: moddin-agent
         run: |
           npm ci
           node scripts/validate-templates.mjs
+
+      - name: Validate community capabilities
+        working-directory: moddin-community-capabilities
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python scripts/validate_capability.py capabilities/
 
       - name: Smoke test moddin-agent MCP server
         working-directory: moddin-agent

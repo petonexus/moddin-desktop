@@ -16,6 +16,7 @@
     "dev": "vite --port 1420",
     "typecheck": "vue-tsc --noEmit",
     "check:architecture": "node scripts/check-frontend-architecture.mjs",
+    "check:capability-kinds": "node scripts/check-capability-kind-parity.mjs",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
