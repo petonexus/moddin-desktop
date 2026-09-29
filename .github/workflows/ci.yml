@@ -50,6 +50,15 @@ jobs:
           rustc --version
           cargo --version
 
+      # tauri.conf.json bundles ../moddin-runtime/{node.exe,moddin-agent},
+      # and tauri-build validates those resource paths during cargo's
+      # build script — so cargo test/check fails without them. The folder
+      # is gitignored and generated; this is the documented step that
+      # creates it (same one developers run before `npm run tauri build`).
+      - name: Bundle moddin-runtime
+        shell: pwsh
+        run: pwsh -NoProfile -File ./moddin-runtime/bundle-runtime.ps1
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
