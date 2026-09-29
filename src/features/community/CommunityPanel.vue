@@ -6,6 +6,7 @@ import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { dateLocaleFor } from '../../i18n/locale'
 import { COMMUNITY_TTL_PRESETS, type CommunityCatalogEntry, type CommunityFetchResult } from '../../types/community'
 import { communityCopyForLocale, formatCopy } from './copy'
+import { resolveInstallTarget } from '../capability-modules/service'
 import {
   fetchCommunityCatalog,
   installCommunityCapability as installCapability,
@@ -120,12 +121,21 @@ async function install(entry: CommunityCatalogEntry) {
   error.value = null
   success.value = null
   try {
+    // Installing a community mod still means installing it *for a game*:
+    // recipes extract archives and write files, and the compatibility
+    // gate reads the game exe. Without a resolved target both are
+    // silently skipped, so refuse instead of pretending it worked.
+    const target = await resolveInstallTarget(readSelectedAppId())
+    if (!target) {
+      error.value = copy.value.noGameSelected
+      return
+    }
     await installCapability({
       capabilityId: entry.id,
-      gameId: readSelectedAppId() ?? 'unknown',
-      gameName: 'community install',
-      installDir: '',
-      executableDir: '',
+      gameId: target.gameId,
+      gameName: target.gameName,
+      installDir: target.installDir,
+      executableDir: target.executableDir,
       config: {},
       acceptUnsigned: acceptUnsigned.value[entry.id] ?? false,
     })

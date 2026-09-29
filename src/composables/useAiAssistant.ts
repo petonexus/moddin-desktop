@@ -26,8 +26,18 @@ import type {
   AgentRunResult,
 } from '../features/ai-assistant/service'
 import { listCollections } from '../features/collection/service'
+import { resolveInstallTarget } from '../features/capability-modules/service'
 import { installCommunityCapability as installCapability } from '../features/community/service'
 import { readLocalValue, writeLocalValue } from '../services/storage'
+
+/**
+ * Shown when a recommendation batch cannot be installed because no
+ * supported game is selected. Kept in English on purpose: the composable
+ * has no i18n instance, and the raw string is surfaced in the dialog's
+ * error area alongside already-untranslated backend messages.
+ */
+const NO_GAME_SELECTED =
+  'No supported game is selected. Pick the game in your library, then install the recommendations again.'
 import type { CatalogCapability, CatalogCollection } from '../types/ai-assistant'
 import type { CapabilitySummary } from '../types/capability'
 
@@ -430,16 +440,39 @@ async function installSelectedRecommendations() {
   recommendationInstallStatus.value = status
   step.value = 'installing'
 
+  // Resolve the install target once for the whole batch: every
+  // recommendation lands in the same game folder, and a missing
+  // selection fails loudly instead of "succeeding" against empty paths.
+  let target: Awaited<ReturnType<typeof resolveInstallTarget>> = null
+  try {
+    target = await resolveInstallTarget(context.value.gameId ?? null)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    busy.value = false
+    step.value = 'saved'
+    return
+  }
+  if (!target) {
+    for (const rec of selected) {
+      const key = `${rec.type}:${rec.id}`
+      recommendationInstallStatus.value = { ...recommendationInstallStatus.value, [key]: 'failed' }
+    }
+    error.value = NO_GAME_SELECTED
+    busy.value = false
+    step.value = 'saved'
+    return
+  }
+
   for (const rec of selected) {
     const key = `${rec.type}:${rec.id}`
     recommendationInstallStatus.value = { ...recommendationInstallStatus.value, [key]: 'running' }
     try {
       await installCapability({
         capabilityId: rec.id,
-        gameId: context.value.gameId ?? 'unknown',
-        gameName: context.value.gameName ?? 'AI recommendation',
-        installDir: '',
-        executableDir: '',
+        gameId: target.gameId,
+        gameName: target.gameName,
+        installDir: target.installDir,
+        executableDir: target.executableDir,
         config: { values: {} },
         acceptUnsigned: true,
       })

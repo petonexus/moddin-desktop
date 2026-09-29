@@ -84,7 +84,7 @@ For the full schema, see [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md). For t
 
 | Capability | Status |
 | --- | --- |
-| Steam + Epic install discovery | Stable |
+| Steam + Epic + GOG install discovery | Stable |
 | Game scanning and catalog matching | Stable |
 | OBS VR Capture (Elden Ring, Cyberpunk 2077) | Stable |
 | OFXR Bridge FrameGen | Stable |
@@ -98,7 +98,8 @@ For the full schema, see [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md). For t
 | Transactional Undo | Stable |
 | Activity log | Stable |
 | Auto-update | Beta |
-| 100+ catalog games | In progress |
+| Epic + GOG install discovery | Stable |
+| Game catalog breadth | In progress |
 | Mac / Linux | Out of scope |
 
 ---

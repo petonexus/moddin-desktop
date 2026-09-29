@@ -34,7 +34,7 @@
 - [x] OFXR Bridge FrameGen
 - [x] Cheeky Foveated DLSS ReShade add-on
 - [x] OpenXR helpers
-- [ ] ReShade
+- [x] ReShade
 - [ ] per-game VR / flat profiles
 - [x] module state detection and version reporting
 
@@ -51,5 +51,5 @@
 - [x] GitHub Releases updater
 - [ ] signed/versioned remote catalog
 - [ ] Nexus integration where permitted
-- [ ] Epic / GOG detection
+- [x] Epic / GOG detection
 - [ ] import/export profiles
