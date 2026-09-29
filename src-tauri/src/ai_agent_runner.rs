@@ -189,6 +189,12 @@ pub fn list_agent_clis() -> Vec<AgentCliInfo> {
 /// run is also `--ephemeral` and scoped to a scratch directory, so a
 /// stuck approval fails loudly instead of hanging on an invisible
 /// prompt.
+///
+/// These belong to the `exec` subcommand, not the bare `codex` command.
+/// Current Codex (0.158.x) only accepts them after `exec`; passing them
+/// to the top level fails with "unexpected argument
+/// '--skip-git-repo-check' found", and the bare command would launch the
+/// interactive TUI anyway.
 #[cfg(target_os = "windows")]
 const CODEX_EXTRA_ARGS: &[&str] = &[
     "--skip-git-repo-check",
@@ -208,7 +214,10 @@ fn build_argv(
 ) -> Vec<String> {
     match agent {
         AgentKind::Codex => {
-            let mut argv: Vec<String> = CODEX_EXTRA_ARGS.iter().map(|s| s.to_string()).collect();
+            // `exec` first: it is the documented non-interactive entry
+            // point and the only place these flags are defined.
+            let mut argv: Vec<String> = vec!["exec".to_owned()];
+            argv.extend(CODEX_EXTRA_ARGS.iter().map(|s| s.to_string()));
             argv.push("-C".to_owned());
             argv.push(scratch.display().to_string());
             argv.push("--output-last-message".to_owned());
@@ -513,7 +522,22 @@ mod tests {
         assert!(joined.contains("--approve-for-me"), "{}", joined);
         assert!(!joined.contains("--sandbox"), "{}", joined);
         assert!(joined.contains("-C S"), "{}", joined);
-        assert!(joined.contains("--output-last-message S/last.txt"), "{}", joined);
+        // Regression: these flags moved under the `exec` subcommand in
+        // current Codex. Against the bare command it dies with
+        // "unexpected argument '--skip-git-repo-check' found" and the
+        // user sees the raw CLI error in the AI panel.
+        assert_eq!(argv.first().map(String::as_str), Some("exec"), "{}", joined);
+        let exec_index = argv.iter().position(|arg| arg == "exec").expect("exec");
+        for flag in ["--skip-git-repo-check", "--ephemeral", "--color", "--approve-for-me"] {
+            let index = argv
+                .iter()
+                .position(|arg| arg == flag)
+                .unwrap_or_else(|| panic!("{flag} missing from {joined}"));
+            assert!(
+                index > exec_index,
+                "{flag} must come after `exec`, not before it: {joined}"
+            );
+        }        assert!(joined.contains("--output-last-message S/last.txt"), "{}", joined);
         assert!(argv.last().is_some_and(|a| a == "PROMPT"));
     }
 
