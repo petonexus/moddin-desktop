@@ -65,6 +65,10 @@ Set-Content -Path (Join-Path $agentDst 'package.json') -Value $prodPkg -Encoding
 
 Push-Location $agentDst
 try {
+    if (Test-Path 'node_modules.old') {
+        # A previous run may have left its staging copy behind.
+        Remove-Item -Recurse -Force 'node_modules.old'
+    }
     if (Test-Path 'node_modules') {
         # Move stale node_modules aside so npm install does not pile up.
         Rename-Item -Force -Path 'node_modules' -NewName 'node_modules.old'
@@ -73,9 +77,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
 } finally { Pop-Location }
 
-# Smoke test the staged runtime.
+# Smoke test the staged runtime. MODDIN_PROJECT_ROOT must point at a
+# project root (repo root) so the server resolves src/catalog/games and
+# src-tauri/capabilities — the staged moddin-runtime/ folder itself is
+# not one. Same layout the standalone CI smoke step relies on.
+$env:MODDIN_PROJECT_ROOT = $runtimeRoot
 & (Join-Path $outDir 'node.exe') (Join-Path $agentDst 'scripts\smoke-test.mjs') | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'smoke test failed; refusing to mark runtime OK' }
+Remove-Item Env:MODDIN_PROJECT_ROOT
 
 Set-Content -Path (Join-Path $outDir 'BUNDLE_OK') -Value "built $(Get-Date -Format o)" -Encoding UTF8
 Write-Host '== runtime OK ==' -ForegroundColor Green
