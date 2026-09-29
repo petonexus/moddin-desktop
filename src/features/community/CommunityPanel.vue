@@ -7,6 +7,7 @@ import { dateLocaleFor } from '../../i18n/locale'
 import { COMMUNITY_TTL_PRESETS, type CommunityCatalogEntry, type CommunityFetchResult } from '../../types/community'
 import { communityCopyForLocale, formatCopy } from './copy'
 import { resolveInstallTarget } from '../capability-modules/service'
+import { recordUnsignedConsent } from '../../composables/useAiAssistant'
 import {
   fetchCommunityCatalog,
   installCommunityCapability as installCapability,
@@ -165,6 +166,10 @@ function ttlLabel(seconds: number) {
 
 function setAcceptUnsigned(id: string, value: boolean) {
   acceptUnsigned.value = { ...acceptUnsigned.value, [id]: value }
+  // Persist it: the AI assistant's install flow reads the same record,
+  // so agreeing to an unsigned mod here also allows installing the very
+  // same mod from an AI recommendation instead of silently blocking it.
+  if (value) recordUnsignedConsent(id)
 }
 
 function originLabel(origin: CapabilitySummary['origin']) {

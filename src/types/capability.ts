@@ -2,12 +2,30 @@ export type CapabilityCategory = 'vr' | 'graphics' | 'qol' | 'system'
 export type CapabilityStatus = 'available' | 'planned'
 export type CheckCategory = 'global' | 'category' | 'modulespecific'
 export type CheckSeverity = 'info' | 'warning' | 'blocker'
+/**
+ * Step kinds the runner can execute.
+ *
+ * Kept in lockstep with `builtin_steps::known_kinds()` — the order
+ * mirrors the dispatch arm order there. `scripts/check-capability-kind-parity.mjs`
+ * fails the build if this list, the community validator's
+ * `KNOWN_STEP_KINDS` and the Rust list ever disagree, because a step
+ * kind that exists in the backend but not here cannot be typed by the
+ * AI/MCP authoring path at all.
+ */
 export type StepKind =
+  | 'download-file'
   | 'extract-zip'
   | 'verify-hash'
   | 'file-delete'
   | 'write-text-file'
+  | 'write-binary-file'
   | 'spawn-process'
+  | 'move-file'
+  | 'kill-process'
+  | 'registry-write'
+  | 'registry-delete'
+
+/** Check kinds, mirroring `builtin_checks`. See {@link StepKind}. */
 export type CheckKind =
   | 'process-running'
   | 'file-exists'
@@ -70,6 +88,10 @@ export interface StepSpec {
 export interface CapabilitySpec {
   id: string
   displayName: string
+  /** One sentence written for a person: what the mod does for the
+   * player. Rendered as the card's supporting line; the UI falls back to
+   * the technical id when a recipe does not declare one. */
+  description?: string
   category: CapabilityCategory
   status: CapabilityStatus
   supportedEngines?: string[]
@@ -90,6 +112,9 @@ export interface CapabilitySpec {
 export interface CapabilitySummary {
   id: string
   displayName: string
+  /** Player-facing one-liner. Falls back to `id` in the UI when a recipe
+   * does not declare one. */
+  description?: string
   category: CapabilityCategory
   status: CapabilityStatus
   origin: CapabilityOrigin

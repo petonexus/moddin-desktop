@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { resolveResourceDir, detectAgents, setupAgent, removeAgent } from './service'
 import type { AiAgent } from './types'
@@ -14,6 +15,7 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const busyAgent = ref<string | null>(null)
+const pendingDisconnect = ref<AiAgent | null>(null)
 const resourceDir = ref<string>('')
 const agents = ref<AiAgent[]>([])
 
@@ -84,6 +86,16 @@ async function connect(agent: AiAgent) {
 }
 
 async function disconnect(agent: AiAgent) {
+  // Disconnecting rewrites the user's editor config to stop pointing at
+  // the Moddin server. That is reversible, but it edits a file the user
+  // also edits by hand, so it is worth one question.
+  pendingDisconnect.value = agent
+}
+
+async function confirmDisconnect() {
+  const agent = pendingDisconnect.value
+  if (!agent) return
+  pendingDisconnect.value = null
   busyAgent.value = agent.id
   error.value = null
   try {
@@ -215,6 +227,17 @@ async function disconnect(agent: AiAgent) {
         </footer>
       </section>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingDisconnect"
+      :title="copy.disconnectConfirmTitle"
+      :description="formatLocalAiCopy(copy.disconnectConfirmDescription, { name: pendingDisconnect.displayName })"
+      :confirm-label="copy.disconnect"
+      :cancel-label="copy.disconnectCancel"
+      :details="[copy.disconnectConfirmDetail]"
+      @close="pendingDisconnect = null"
+      @confirm="confirmDisconnect"
+    />
   </Teleport>
 </template>
 

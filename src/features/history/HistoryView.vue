@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import type { TransactionRecord } from '../../types/transaction'
 
 const props = defineProps<{
@@ -22,6 +23,26 @@ const activeCount = computed(() => props.transactions.filter((item) => item.stat
 const visible = computed(() =>
   activeOnly.value ? props.transactions.filter((item) => item.status === 'applied') : props.transactions,
 )
+
+// Undo rewrites files in the game folder. Every row's button is
+// labelled "Desfazer", so the list alone does not tell the user what
+// they are about to revert — the dialog names it and counts the files.
+const pendingUndo = ref<{ transaction: TransactionRecord; label: string; fileCount: number } | null>(null)
+
+function askUndo(transaction: TransactionRecord) {
+  pendingUndo.value = {
+    transaction,
+    label: transaction.label || transaction.kind,
+    fileCount: transaction.files?.length ?? 0,
+  }
+}
+
+function confirmUndo() {
+  const pending = pendingUndo.value
+  if (!pending) return
+  pendingUndo.value = null
+  emit('undo', pending.transaction)
+}
 </script>
 
 <template>
@@ -86,13 +107,24 @@ const visible = computed(() =>
           type="button"
           :disabled="busyId === transaction.id || Boolean(blockedReason(transaction))"
           :title="blockedReason(transaction)"
-          @click="emit('undo', transaction)"
+          @click="askUndo(transaction)"
         >
           <AppIcon v-if="busyId !== transaction.id" name="undo" :size="14" />
           {{ busyId === transaction.id ? t('historyUndoing') : t('historyUndo') }}
         </button>
       </article>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingUndo"
+      :title="t('historyUndoConfirmTitle')"
+      :description="t('historyUndoConfirmDescription', { label: pendingUndo.label })"
+      :confirm-label="t('historyUndo')"
+      :cancel-label="t('cancel')"
+      :details="[t('historyUndoConfirmDetailFiles', { count: pendingUndo.fileCount })]"
+      @close="pendingUndo = null"
+      @confirm="confirmUndo"
+    />
   </section>
 </template>
 

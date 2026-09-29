@@ -38,6 +38,72 @@ import { readLocalValue, writeLocalValue } from '../services/storage'
  */
 const NO_GAME_SELECTED =
   'No supported game is selected. Pick the game in your library, then install the recommendations again.'
+
+/**
+ * Consent key for an unsigned capability.
+ *
+ * The Community panel keeps its consent in component state, so there was
+ * nothing for this flow to read. It is persisted per capability id, and
+ * set from the same checkbox the Community panel shows — see
+ * `recordUnsignedConsent`.
+ */
+const UNSIGNED_CONSENT_KEY = 'moddin-unsigned-consent'
+
+/** Ids the user has explicitly agreed to install unsigned. */
+function readUnsignedConsent(): Record<string, true> {
+  const raw = readLocalValue(UNSIGNED_CONSENT_KEY)
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>)
+          .filter(([, value]) => value === true)
+          .map(([key]) => [key, true as const]),
+      )
+    }
+  } catch {
+    // A corrupt value is treated as "no consent recorded".
+  }
+  return {}
+}
+
+/** Record that the user ticked the unsigned warning for `capabilityId`. */
+export function recordUnsignedConsent(capabilityId: string) {
+  const current = readUnsignedConsent()
+  current[capabilityId] = true
+  writeLocalValue(UNSIGNED_CONSENT_KEY, JSON.stringify(current))
+}
+
+/**
+ * Capabilities from a verified catalog whose signature the app could not
+ * confirm. Signed entries install without any prompt.
+ *
+ * A capability that is not in the catalog at all is treated as
+ * unverified: the safest reading of "I have never heard of this" is
+ * "ask the user", not "install it".
+ */
+async function splitBySignature(
+  ids: string[],
+): Promise<{ verified: string[]; needsConsent: string[] }> {
+  let entries: Array<{ id: string; signed?: boolean }> = []
+  try {
+    const { fetchCommunityCatalog } = await import('../features/community/service')
+    const result = await fetchCommunityCatalog(false, 0)
+    entries = result?.catalog?.capabilities ?? []
+  } catch {
+    // No verified catalog available. Everything is unverified.
+    return { verified: [], needsConsent: [...ids] }
+  }
+  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  const verified: string[] = []
+  const needsConsent: string[] = []
+  for (const id of ids) {
+    if (byId.get(id)?.signed === true) verified.push(id)
+    else needsConsent.push(id)
+  }
+  return { verified, needsConsent }
+}
 import type { CatalogCapability, CatalogCollection } from '../types/ai-assistant'
 import type { CapabilitySummary } from '../types/capability'
 
@@ -463,6 +529,32 @@ async function installSelectedRecommendations() {
     return
   }
 
+  // Every recommendation is a community capability, and an unsigned one
+  // used to install with `acceptUnsigned: true` hard-coded -- so the
+  // consent the Community panel asks for was simply skipped here. Fail
+  // closed instead: install only what the catalog has signed, and tell
+  // the user exactly which ones need their OK.
+  const consent = readUnsignedConsent()
+  const { needsConsent } = await splitBySignature(selected.map((rec) => rec.id))
+  const blocked = needsConsent.filter((id) => consent[id] !== true)
+
+  if (blocked.length > 0) {
+    for (const rec of selected) {
+      const key = `${rec.type}:${rec.id}`
+      recommendationInstallStatus.value = {
+        ...recommendationInstallStatus.value,
+        [key]: blocked.includes(rec.id) ? 'failed' : 'pending',
+      }
+    }
+    error.value =
+      blocked.length === 1
+        ? `"${blocked[0]}" is not signed by the community maintainers. Open Community mods to review it and tick the unsigned warning, then install again.`
+        : `${blocked.length} of these mods are not signed by the community maintainers: ${blocked.join(', ')}. Open Community mods to review them and tick the unsigned warning, then install again.`
+    busy.value = false
+    step.value = 'saved'
+    return
+  }
+
   for (const rec of selected) {
     const key = `${rec.type}:${rec.id}`
     recommendationInstallStatus.value = { ...recommendationInstallStatus.value, [key]: 'running' }
@@ -474,7 +566,9 @@ async function installSelectedRecommendations() {
         installDir: target.installDir,
         executableDir: target.executableDir,
         config: { values: {} },
-        acceptUnsigned: true,
+        // Only ever true for a capability whose unsigned warning the
+        // user has already acknowledged. See `blocked` above.
+        acceptUnsigned: consent[rec.id] === true,
       })
       recommendationInstallStatus.value = {
         ...recommendationInstallStatus.value,

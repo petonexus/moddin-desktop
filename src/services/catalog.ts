@@ -140,6 +140,27 @@ export function findCatalogGameByInstalledGame(game: Pick<InstalledGame, 'store'
 }
 
 /**
+ * Inverse of {@link findCatalogGameByInstalledGame}: given a catalog id,
+ * return the installed game it refers to.
+ *
+ * The UI holds a catalog id everywhere (the selected game, the AI
+ * context, the capability card) and only the store scan produces a store
+ * app id. Without this bridge every caller that starts from the catalog
+ * silently fails to find its install directory.
+ */
+export function findInstalledGameForCatalogGame(
+  games: readonly Pick<InstalledGame, 'store' | 'appId' | 'installDir'>[],
+  catalogGameId: string,
+) {
+  const entry = findCatalogGameById(catalogGameId)
+  if (!entry) return undefined
+  return games.find((game) => {
+    const matched = findCatalogGameByInstalledGame(game)
+    return matched?.id === entry.id
+  })
+}
+
+/**
  * Depth-first collection of the modules that are not installed yet, in
  * dependency order: a dependency always appears before the module that
  * requires it. Already-installed modules are skipped together with their

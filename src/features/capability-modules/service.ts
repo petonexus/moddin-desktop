@@ -1,5 +1,5 @@
 import { invokeDebug as invoke } from '../../debug'
-import { findCatalogGameByInstalledGame } from '../../services/catalog'
+import { findCatalogGameById, findInstalledGameForCatalogGame } from '../../services/catalog'
 import type { GameEnvironmentInspection } from '../../types/inspection'
 import type { InstalledGame } from '../../types/game'
 import type {
@@ -33,7 +33,8 @@ export interface CapabilityInstallTarget {
 }
 
 /**
- * Resolve the install target for a store app id.
+ * Resolve the install target for a **catalog game id** (e.g.
+ * `elden-ring`) — not a store app id.
  *
  * The community panel and the AI recommend flow both used to send empty
  * `installDir` / `executableDir`, which made every path-touching recipe
@@ -41,12 +42,17 @@ export interface CapabilityInstallTarget {
  * cannot resolve a target should refuse the install instead of falling
  * back to blank paths.
  */
-export async function resolveInstallTarget(appId: string | null): Promise<CapabilityInstallTarget | null> {
-  if (!appId) return null
+export async function resolveInstallTarget(
+  catalogGameId: string | null,
+): Promise<CapabilityInstallTarget | null> {
+  if (!catalogGameId) return null
   const games = await invoke<InstalledGame[]>('detect_installed_games')
-  const installed = games.find((game) => game.appId === appId)
+  // Every caller in the UI holds the catalog id. This used to match it
+  // against `InstalledGame.appId` (a store id like `1245620`), which
+  // never matches, so every install ended at "no game selected".
+  const installed = findInstalledGameForCatalogGame(games, catalogGameId)
   if (!installed) return null
-  const catalog = findCatalogGameByInstalledGame(installed)
+  const catalog = findCatalogGameById(catalogGameId)
   if (!catalog) return null
 
   // The executable directory is resolved by the backend, not guessed

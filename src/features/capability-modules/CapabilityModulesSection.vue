@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import ModuleCard from '../library/ModuleCard.vue'
 import type { TransactionRecord } from '../../types/transaction'
 import type { CapabilityOrigin, CapabilitySummary } from '../../types/capability'
@@ -114,9 +115,21 @@ async function onInstall(capability: CapabilitySummary, force = false) {
   await install(capability, { force })
 }
 
+const pendingRemoval = ref<CapabilitySummary | null>(null)
+
 async function onRemove(capability: CapabilitySummary) {
   const state = stateFor(capability.id)
   if (state.busy) return
+  // Removing a capability writes into the game folder. The transaction
+  // store can undo it, but "can be undone" is not the same as "asked
+  // first" — so ask first.
+  pendingRemoval.value = capability
+}
+
+async function confirmRemoval() {
+  const capability = pendingRemoval.value
+  if (!capability) return
+  pendingRemoval.value = null
   await uninstall(capability)
 }
 
@@ -221,7 +234,7 @@ onUnmounted(() => {
 
         <ModuleCard
           :name="capability.displayName"
-          :description="capability.id"
+          :description="capability.description || capability.id"
           :state="isInstalled(capability.id) ? 'active' : 'available'"
           :tag="{ label: originLabel(capability.origin), tone: originTone(capability.origin) }"
           :action-label="isInstalled(capability.id) ? t('actionReinstall') : t('actionInstall')"
@@ -315,6 +328,18 @@ onUnmounted(() => {
         </ModuleCard>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingRemoval"
+      :title="t('capabilityRemoveConfirmTitle')"
+      :description="t('capabilityRemoveConfirmDescription', { name: pendingRemoval.displayName })"
+      :confirm-label="t('actionRemove')"
+      :cancel-label="t('actionCancel')"
+      :details="[t('capabilityRemoveDetailFiles'), t('capabilityRemoveDetailUndo')]"
+      :footnote="t('capabilityRemoveFootnote')"
+      @close="pendingRemoval = null"
+      @confirm="confirmRemoval"
+    />
   </section>
 </template>
 

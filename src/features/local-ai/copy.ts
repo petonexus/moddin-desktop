@@ -21,6 +21,10 @@ const ptBR = {
   banner: 'O Moddin nunca grava nada dentro das pastas dos jogos. A IA só escreve arquivos YAML em uma pasta local sua, e você aplica pelo Moddin com preview e rollback.',
   connectFailed: 'Não foi possível conectar: {error}',
   disconnectFailed: 'Não foi possível desconectar: {error}',
+  disconnectConfirmTitle: 'Desconectar este agente?',
+  disconnectConfirmDescription: '{name} vai parar de responder ao Moddin.',
+  disconnectConfirmDetail: 'O Moddin reescreve o arquivo de configuração do seu editor para apontar para o servidor do Moddin — desfazer devolve o conteúdo original.',
+  disconnectCancel: 'Cancelar',
   installCursorHint: 'Você não tem o Cursor instalado. Baixe em cursor.com e clique em "Atualizar status" depois.',
 } as const
 
@@ -45,6 +49,10 @@ const enUS = {
   banner: 'Moddin never writes inside game folders. The AI only writes YAML files to a local folder of yours, and you apply from Moddin with preview and rollback.',
   connectFailed: 'Could not connect: {error}',
   disconnectFailed: 'Could not disconnect: {error}',
+  disconnectConfirmTitle: 'Disconnect this agent?',
+  disconnectConfirmDescription: '{name} will stop responding to Moddin.',
+  disconnectConfirmDetail: 'Moddin rewrites your editor config to point at the Moddin server — undoing restores the original content.',
+  disconnectCancel: 'Cancel',
   installCursorHint: 'You do not have Cursor installed. Download it from cursor.com then click "Refresh status".',
 } as const
 
@@ -69,6 +77,10 @@ const esES = {
   banner: 'Moddin nunca escribe dentro de las carpetas de los juegos. La IA solo escribe YAML en una carpeta local tuya, y tú aplicas desde Moddin con vista previa y rollback.',
   connectFailed: 'No se pudo conectar: {error}',
   disconnectFailed: 'No se pudo desconectar: {error}',
+  disconnectConfirmTitle: '¿Desconectar este agente?',
+  disconnectConfirmDescription: '{name} dejará de responder a Moddin.',
+  disconnectConfirmDetail: 'Moddin reescribe la configuración de tu editor para apuntar al servidor de Moddin — deshacer devuelve el contenido original.',
+  disconnectCancel: 'Cancelar',
   installCursorHint: 'No tienes Cursor instalado. Descárgalo de cursor.com y haz clic en "Actualizar estado" después.',
 } as const
 

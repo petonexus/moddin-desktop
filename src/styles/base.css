@@ -118,6 +118,18 @@ code, .mono { font-family: var(--moddin-mono); font-size: var(--moddin-text-xs);
 .btn-danger { border-color: transparent; background: transparent; color: var(--moddin-danger); }
 .btn-danger:hover:not(:disabled) { border-color: var(--moddin-danger-line); color: var(--moddin-danger); background: var(--moddin-danger-bg); }
 
+/* Filled variant, for the one button in a confirmation dialog that
+   actually does the removing. `.btn-danger` above is the ghost style
+   used for inline "Remove" links; a confirm button needs weight. */
+.btn-danger-solid { border-color: var(--moddin-danger-line); background: var(--moddin-danger-bg); color: var(--moddin-danger); }
+.btn-danger-solid:hover:not(:disabled) { background: var(--moddin-danger-line); color: var(--moddin-bg); }
+
+/* Confirmation body: what is about to change, listed, so the user reads
+   it instead of skimming to the button. */
+.confirm-details { margin: 0; padding-left: var(--moddin-space-5); color: var(--moddin-text-muted); }
+.confirm-details li { margin-block: var(--moddin-space-1); }
+.confirm-footnote { margin: var(--moddin-space-4) 0 0; color: var(--moddin-text-faint); font-size: var(--moddin-text-sm); }
+
 .btn-sm { min-height: 30px; padding: 0 var(--moddin-space-3); font-size: var(--moddin-text-sm); }
 .btn-lg { min-height: 42px; padding: 0 var(--moddin-space-5); font-size: var(--moddin-text-base); }
 

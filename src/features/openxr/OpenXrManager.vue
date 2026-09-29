@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import { openXrCopyForLocale } from './copy'
 import { useOpenXrManager } from './useOpenXrManager'
 
@@ -34,6 +35,23 @@ const {
   setGameRuntime,
   setSystemRuntime,
 } = useOpenXrManager()
+
+// Making a runtime the Windows-wide default writes to HKLM and prompts
+// for elevation. It changes every VR game on the machine, not the one
+// on screen, so it gets a confirmation of its own rather than living
+// in a passive callout at the bottom of the dialog.
+const pendingSystemRuntime = ref<{ name: string; manifestPath: string } | null>(null)
+
+function askSetSystemRuntime(runtime: { name: string; manifestPath: string }) {
+  pendingSystemRuntime.value = runtime
+}
+
+async function confirmSetSystemRuntime() {
+  const runtime = pendingSystemRuntime.value
+  if (!runtime) return
+  pendingSystemRuntime.value = null
+  await setSystemRuntime(runtime.manifestPath)
+}
 
 function effectiveSourceLabel() {
   if (state.value?.effectiveSource === 'game') return copy.value.sourceGame
@@ -144,7 +162,7 @@ function effectiveSourceLabel() {
                       :class="{ 'btn-primary': !selectedGameId, 'is-loading': busyAction === `system:${runtime.manifestPath}` }"
                       type="button"
                       :disabled="!runtimeUsable(runtime) || busyAction !== null || runtime.active"
-                      @click="setSystemRuntime(runtime.manifestPath)"
+                      @click="askSetSystemRuntime(runtime)"
                     >
                       {{ busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem }}
                     </button>
@@ -169,6 +187,17 @@ function effectiveSourceLabel() {
         </div>
       </section>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingSystemRuntime"
+      :title="copy.makeSystemConfirmTitle"
+      :description="copy.makeSystemConfirmDescription"
+      :confirm-label="copy.makeSystem"
+      :cancel-label="copy.cancelAction"
+      :details="[copy.makeSystemConfirmScope, copy.makeSystemConfirmAdmin]"
+      @close="pendingSystemRuntime = null"
+      @confirm="confirmSetSystemRuntime"
+    />
   </Teleport>
 </template>
 
