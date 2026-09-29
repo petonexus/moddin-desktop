@@ -178,7 +178,7 @@ Each pre-release tagged `vX.Y.Z-beta.N` has a **beta** release in the [Releases]
 
 To test:
 
-1. Download the `.msi` from the latest beta release.
+1. Download the `Moddin.Desktop_*_x64-setup.exe` from the latest beta release.
 2. Install over your current Moddin (your data is preserved).
 3. Try the changes listed in the release notes.
 4. File any issues with the **beta** label and the version number.
