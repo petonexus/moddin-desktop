@@ -14,7 +14,9 @@ The catalog is **declarative**, not code. Adding support for a new game is a sin
 
 ## What you can do with it
 
-- **VR-ready launch profiles** for Elden Ring, Cyberpunk 2077, Dawnwalker, STALKER 2, Dead Island 2
+- **VR-ready launch profiles** for Elden Ring and Cyberpunk 2077. Dawnwalker, STALKER 2 and
+  Dead Island 2 are catalogueued and get the VR toolchain (UEVR / OFXR / Cheeky), but have no
+  `vr-launch` profile yet, so they launch flat unless the user starts them from SteamVR.
 - **OBS VR Capture** — clone a Game Capture source, back it up, target the game
 - **OFXR Bridge FrameGen** — download the pinned pre-release, verify SHA-256, configure and start the tray
 - **UEVR engine-aware installer** — supports Nightly, JoeyHodge, and PureDark AFW backends
@@ -82,6 +84,10 @@ For the full schema, see [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md). For t
 
 ## Current status
 
+Reconciled against the code on 2026-09-29. "Stable" here means the legacy
+module path works end to end; the declarative capability path is called out
+separately because the two are not the same thing.
+
 | Capability | Status |
 | --- | --- |
 | Steam + Epic + GOG install discovery | Stable |
@@ -91,15 +97,14 @@ For the full schema, see [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md). For t
 | UEVR (Nightly + Joey + AFW) | Stable |
 | OptiScaler | Stable |
 | Cheeky Foveated DLSS | Stable |
-| ReShade host | Stable |
+| ReShade host | Not reachable from the UI — the Rust commands have no caller and the catalog recipe is `planned` |
 | OpenXR per-game runtime override | Stable |
-| Community catalog (Ed25519-signed) | Stable |
+| Community catalog (Ed25519-signed, keyring-pinned) | Stable |
 | Local override directory | Stable |
-| Transactional Undo | Stable |
+| Transactional Undo | Stable on the legacy module path; correct on the capability path as of 2026-09-29 |
 | Activity log | Stable |
-| Auto-update | Beta |
-| Epic + GOG install discovery | Stable |
-| Game catalog breadth | In progress |
+| Auto-update | Not implemented. What ships is a per-module *version check*, not app self-update — there is no `tauri-plugin-updater` and no `plugins.updater` in `tauri.conf.json` |
+| Game catalog breadth | In progress — six games, one of which is a single-module stub |
 | Mac / Linux | Out of scope |
 
 ---
