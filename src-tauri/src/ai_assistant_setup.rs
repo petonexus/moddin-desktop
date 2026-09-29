@@ -636,6 +636,17 @@ mod tests {
         unique
     }
 
+    /// Stub the Cursor binary detection: create the expected
+    /// `%LOCALAPPDATA%\Programs\Cursor\Cursor.exe` layout under `dir`
+    /// and point LOCALAPPDATA at it, so tests don't depend on the
+    /// machine running them actually having Cursor installed.
+    fn stub_cursor_install(dir: &Path) -> EnvGuard {
+        let bin_dir = dir.join("Programs").join("Cursor");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::write(bin_dir.join("Cursor.exe"), "stub").unwrap();
+        EnvGuard::set("LOCALAPPDATA", dir.to_string_lossy().as_ref())
+    }
+
     #[test]
     fn setup_then_remove_round_trip() {
         let _env = env_test_lock();
@@ -647,6 +658,7 @@ mod tests {
         fs::write(&cfg_path, r#"{ "mcpServers": { "hindsight": { "command": "node", "args": ["h.js"] } } }"#).unwrap();
 
         let _userprofile = EnvGuard::set("USERPROFILE", dir.to_string_lossy().as_ref());
+        let _localappdata = stub_cursor_install(&dir);
         let res_dir = make_runtime_layout(&dir.join("resources"));
 
         // SETUP
@@ -682,6 +694,7 @@ mod tests {
         fs::create_dir_all(&cfg_dir).unwrap();
         let res_dir = make_runtime_layout(&dir.join("resources"));
         let _userprofile = EnvGuard::set("USERPROFILE", dir.to_string_lossy().as_ref());
+        let _localappdata = stub_cursor_install(&dir);
 
         for _ in 0..3 {
             let agent = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned()).expect("setup should succeed");
@@ -742,13 +755,7 @@ mod tests {
         let cfg_path = cfg_dir.join("mcp.json");
         fs::write(&cfg_path, r#"{ "mcpServers": {} }"#).unwrap();
         let _userprofile = EnvGuard::set("USERPROFILE", dir.to_string_lossy().as_ref());
-
-        // Stub the Cursor binary detection by creating the expected path
-        // and pointing LOCALAPPDATA at it so the layout probe finds it.
-        let bin_dir = dir.join("Programs").join("Cursor");
-        fs::create_dir_all(&bin_dir).unwrap();
-        fs::write(bin_dir.join("Cursor.exe"), "stub").unwrap();
-        let _localappdata = EnvGuard::set("LOCALAPPDATA", dir.to_string_lossy().as_ref());
+        let _localappdata = stub_cursor_install(&dir);
 
         let res_dir = dir.join("resources");
         fs::create_dir_all(&res_dir).unwrap();
