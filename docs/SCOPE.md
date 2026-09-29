@@ -111,6 +111,7 @@ separately because the two are not the same thing.
 
 ## Where to read more
 
+- [README.md](README.md) — the docs index
 - [USER-GUIDE.md](USER-GUIDE.md) — how to install and use Moddin
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to add a capability
 - [DEVELOPMENT.md](DEVELOPMENT.md) — how to build Moddin from source

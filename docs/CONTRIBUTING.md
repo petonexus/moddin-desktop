@@ -16,6 +16,105 @@ Thank you for helping build Moddin! There are many ways to contribute, from fili
 | Code in Rust (Tauri commands, capabilities, etc) | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Code in Vue 3 (UI, components) | [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Test pre-release builds and report issues | [Testing beta releases](#testing-beta-releases) |
+| Know how to name a branch or write a commit | [Conventions](#conventions) |
+
+---
+
+## Conventions
+
+These are not aspirations. Every one of them was read off the existing history
+(`git log`, and the branch refs in `.git/refs/heads` and `.git/packed-refs`)
+before being written down. If you find yourself breaking one, change this
+document in the same commit.
+
+### Branch names
+
+`<type>/<short-kebab-description>`, one branch per piece of work:
+
+| Prefix | For |
+| --- | --- |
+| `feat/` | A new capability, module, command or user-facing feature. The most common prefix here. |
+| `fix/` | A defect, on any layer. `fix/capability-engine-integrity` — the branch that carried the 2026-09-29 capability-engine fix pass — is one. |
+| `refactor/` | Restructuring with no behaviour change — 18 branches, mostly the `App.vue` decomposition. |
+| `hardening/` | A change that makes something fail safer rather than make it work: bounds, locking, snapshotting, recovery, refusal paths. |
+| `docs/` | Documentation only. |
+| `chore/` | Repo mechanics that are not features, fixes or refactors: release prep, dependency bumps, removing dead files. |
+
+`feat/` (7 branches) and `refactor/` (18) are attested many times over,
+`hardening/` seven times, `docs/` and `fix/` once each. `chore/` is the repo's
+commit type for exactly this kind of work and is the right branch prefix for it,
+but no branch has ever carried it — a gap in the practice, not in the rule. Two
+other prefixes exist historically, `reliability/` and `backup/` (one branch
+each); neither is current practice.
+
+**CI only runs on `main`, `feat/**` and `refactor/**` pushes**
+(`.github/workflows/ci.yml`). A `fix/`, `hardening/`, `docs/` or `chore/` branch
+gets no feedback until you open a PR — which is the gate for those anyway.
+
+### Commits
+
+[Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`,
+subject in the imperative, lower case, no trailing period.
+
+Seven types are in use. The distribution over the last 37 non-merge commits:
+
+| Type | Count | For |
+| --- | --- | --- |
+| `feat` | 11 | A new capability, module, command, or user-facing behaviour. |
+| `fix` | 10 | A defect, or a promise the code does not keep. |
+| `chore` | 8 | Release prep, dependency work, removing dead code and branches. |
+| `docs` | 3 | Documentation only. |
+| `ci` | 3 | Workflows and the guards that gate them. |
+| `test` | 1 | Tests added or fixed, with no production change. |
+| `release` | 1 | The one commit that changed the shipped product line (MSI → NSIS). |
+
+A `release:` commit is a shipped-artifact change, not a routine chore. If you
+find yourself writing one, that is a decision, not a chore.
+
+The scope is the area, not the type: `catalog`, `capability`, `ai`, `runtime`,
+`docs`, `frontend`, `trust`, `rust`, `release`, `activity`, `openxr`,
+`community`, `ui` are all in use. Two adjacent ids — `capability` and
+`capabilities` — both appear; pick the one matching the file you touched and do
+not add a third spelling for the same area.
+
+### One roadmap story per commit
+
+A **story** is one reviewable outcome. A commit may close several closely
+related audit ids, but it must not mix stories. `1818fdd` closes P0-1, P0-2,
+P0-3 and F-02 in one pass because all four are the capability engine failing to
+install what it advertises; that is one story. A commit that fixes a YAML typo
+and changes a registry default is two.
+
+Every `ROADMAP.md` item is meant to carry a **Done when** line, and the roadmap
+is explicit that an item is not done until that line is true and reviewable.
+When a commit satisfies one, the body says which item and names the evidence —
+usually the test that now enforces it
+(`an_install_backs_up_an_existing_game_file_before_overwriting_it`) or the guard
+that now fails without it.
+
+### What a commit body owes the reviewer
+
+The diff shows what changed. The body has to carry what the diff cannot:
+
+1. **The id it closes** — the audit or roadmap item, at the top. `P0-1:`,
+   `O-06:`, `F-05:`. Without this, nobody can tell whether the item is finished.
+2. **The failure, concretely.** The mechanism, not the symptom: *"extract-zip
+   resolves its archive with `resolve_download_path`, which only
+   special-cases a bare filename"* — not *"extract-zip was broken"*.
+3. **The evidence.** Which test now covers it, and how the fix was verified. If
+   a guard was added, say how you proved it fires: *"verified by deliberately
+   removing `download-file` from the Python set: the guard failed, and passed
+   again once restored."*
+4. **What you deliberately did not do, and why.** `1818fdd` leaves
+   `ofxr-bridge` and `uevr` as `status: planned` and says which step kind each
+   one is waiting for. A reviewer needs to know a scope was left open on
+   purpose.
+5. **Anything a human has to do by hand**, and anything that stays uncovered.
+   *"None of this is covered by a test: the project still has no frontend test
+   runner, which is F-12."*
+
+A body that only restates the subject line is worse than an empty one — it
+costs the reviewer time and tells them nothing.
 
 ---
 
@@ -135,17 +234,8 @@ Open an [issue](https://github.com/petonexus/moddin-desktop/issues) with the **b
 
 ## Improving docs
 
-Docs live in `docs/`:
-
-| File | Audience |
-| --- | --- |
-| `docs/USER-GUIDE.md` | End users (players) |
-| `docs/CONTRIBUTING.md` | New contributors (you are here) |
-| `docs/DEVELOPMENT.md` | Engineers building Moddin |
-| `docs/ARCHITECTURE.md` | Engineers maintaining Moddin |
-| `docs/SCOPE.md` | Everyone (the project charter) |
-| `docs/MODULES.md` | Engineers maintaining module recipes |
-| `docs/CAPABILITY-CONTRACT.md` | Capability authors |
+Docs live in [`docs/`](README.md), which indexes every one of them and says what
+each is for. If you add a document, add the row there too.
 
 To propose a docs change:
 

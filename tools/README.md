@@ -5,9 +5,15 @@ directly by the user, independently of the Moddin Desktop app.
 
 A tool is the right home for a workflow that genuinely needs Windows shell
 semantics, its own state directory, or a quarantine / restore flow that does
-not fit cleanly into the transaction store. Anything reusable across games
-and expressible as a catalog module should become a Rust module under
-`src-tauri/src/` instead — see [`docs/SCOPE.md`](../docs/SCOPE.md).
+not fit cleanly into the transaction store.
+
+**If the workflow is reusable across games and the app can express it, it
+becomes a YAML capability**, not a Rust module and not a tool — see
+[`docs/MODULES.md`](../docs/MODULES.md#two-ways-to-add-a-mod). `tools/` is for
+what has to run *without* Moddin installed; a capability is for what runs
+*through* Moddin, with its preview, transaction and Undo. Rust comes into it
+only when the capability engine is missing a step or check kind the workflow
+needs — see [`docs/MODULES.md`](../docs/MODULES.md#two-ways-to-add-a-mod).
 
 ---
 
@@ -102,9 +108,10 @@ state/
 | `cheeky-foveated-dlss/` | Multi-game scanner + installer for Cheeky Foveated DLSS. READY / EXPERIMENTAL_READY classification. | Overlaps with the Rust `cheeky` module (ReShade add-on path); covers the UEVR-plugin and Cyberpunk VR Port paths the Rust module does not. |
 
 The overlap is **intentional**: tools run without the app, so they must be
-self-sufficient even when the user has not installed Moddin Desktop. The
-roadmap may unify some of these flows into a Rust module once the
-capabilities are stable enough to remove the standalone script.
+self-sufficient even when the user has not installed Moddin Desktop. Where a
+flow converges, it converges on a **capability recipe** — the roadmap's goal
+is one declarative description of the install, not a second Rust installer
+alongside the first.
 
 ---
 
@@ -116,8 +123,10 @@ capabilities are stable enough to remove the standalone script.
 3. Implement `scripts/<core>.ps1` and the `.cmd` shims.
 4. Add an entry to the table in this file.
 5. If the tool is meant to also be available from inside the Moddin Desktop
-   app, plan the integration as a Rust module that **calls** the tool's
-   documented contract, not by re-implementing its logic.
+   app, write a **capability recipe** for the parts of it that the engine can
+   already express, and add a step kind for the parts it cannot — not a second
+   implementation in Rust. The tool keeps its documented contract; the recipe
+   names what it automates.
 
 ---
 
