@@ -58,6 +58,37 @@ const MAX_TTL_SECONDS: u64 = 30 * 24 * 60 * 60; // 30d ceiling
 const BOOTSTRAP_PUBLIC_KEY_B64: &str =
     "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=";
 
+/// Every key this build is willing to trust, newest first.
+///
+/// This is the trust anchor. `pinned-public-key.bin` on disk is a
+/// *cache* of which of these is active, not an independent source of
+/// trust: anything that could write to `%LOCALAPPDATA%` could also
+/// write a key of its own there, and the previous implementation
+/// returned whatever 32 bytes it found without ever comparing it to
+/// the compiled value. That is trust-on-first-use with no anchor, in a
+/// product whose pitch is that it signs what it installs.
+///
+/// Rotation is therefore: add the new key to this list and ship a
+/// build, which is the same cadence the keyring in the community repo
+/// documents. Keeping the previous key for one release lets users who
+/// have not updated yet finish a verification instead of seeing a hard
+/// failure. A key that is compromised goes in `REVOKED_KEY_FINGERPRINTS`
+/// below and never has to wait for a build to be neutralised in the
+/// on-disk cache, because the cache is only ever accepted when it
+/// matches a key that is neither absent from this list nor revoked.
+const TRUSTED_PUBLIC_KEYS_B64: &[&str] = &[
+    // @moddin-bot, active since the 2026-09-24 rotation.
+    "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=",
+    // @marcoasjunior, retired at the same rotation. Kept so a user who
+    // has not updated since 2026-09-24 can still verify a catalog that
+    // was signed before the change. Safe to drop after the next release.
+    "Mh/WGQ0kCviGtiX/8wLB5fqBCLgtVR/4smlVai13xs8=",
+];
+
+/// Fingerprints (first 16 hex of SHA-256, as shown in the UI) that
+/// must never be trusted, even if they appear in [`TRUSTED_PUBLIC_KEYS_B64`].
+const REVOKED_KEY_FINGERPRINTS: &[&str] = &[];
+
 fn community_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -143,34 +174,75 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-fn ensure_bootstrap_key_material(dir: &Path) -> Result<VerifyingKey, String> {
-    let path = dir.join("pinned-public-key.bin");
-    if let Ok(bytes) = std::fs::read(&path) {
-        if bytes.len() == 32 {
-            if let Ok(array) =
-                <[u8; 32]>::try_from(bytes.as_slice()).map_err(|error: std::array::TryFromSliceError| error.to_string())
-            {
-                if let Ok(key) = VerifyingKey::from_bytes(&array) {
-                    return Ok(key);
-                }
-            }
-        }
-    }
-    // Fall back to the compile-time bootstrap key.
+/// Decode one base64 Ed25519 public key.
+fn decode_public_key(encoded: &str) -> Result<VerifyingKey, String> {
     let bytes = BASE64
-        .decode(BOOTSTRAP_PUBLIC_KEY_B64)
-        .map_err(|error| format!("bootstrap public key is not valid base64: {error}"))?;
+        .decode(encoded.trim())
+        .map_err(|error| format!("public key is not valid base64: {error}"))?;
     if bytes.len() != 32 {
         return Err(format!(
-            "bootstrap public key must be 32 bytes, got {}",
+            "Ed25519 public key must be 32 bytes, got {}",
             bytes.len()
         ));
     }
-    let bytes_array: [u8; 32] = bytes
+    let array: [u8; 32] = bytes
         .as_slice()
         .try_into()
         .map_err(|error: std::array::TryFromSliceError| error.to_string())?;
-    VerifyingKey::from_bytes(&bytes_array).map_err(|error| format!("invalid Ed25519 key: {error}"))
+    VerifyingKey::from_bytes(&array).map_err(|error| format!("invalid Ed25519 key: {error}"))
+}
+
+/// Is this key one this build is willing to trust?
+fn is_trusted(key: &VerifyingKey) -> bool {
+    if REVOKED_KEY_FINGERPRINTS.contains(&fingerprint(key).as_str()) {
+        return false;
+    }
+    TRUSTED_PUBLIC_KEYS_B64
+        .iter()
+        .filter_map(|encoded| decode_public_key(encoded).ok())
+        .any(|trusted| trusted.to_bytes() == key.to_bytes())
+}
+
+/// Resolve the key used to verify the community catalog.
+///
+/// The on-disk pin is accepted only when it matches a key from
+/// [`TRUSTED_PUBLIC_KEYS_B64`]. A pin that does not match is discarded
+/// and the anchor is used instead — so tampering with the cache
+/// degrades to "no worse than a fresh install" rather than to
+/// "attacker-chosen key". A corrupt or revoked pin is reported so the
+/// user is not silently handed a different key than the one they
+/// were shown a fingerprint for.
+fn ensure_bootstrap_key_material(dir: &Path) -> Result<VerifyingKey, String> {
+    let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64)?;
+
+    let path = dir.join("pinned-public-key.bin");
+    let mut pin_rejected: Option<String> = None;
+    if let Ok(bytes) = std::fs::read(&path) {
+        match <[u8; 32]>::try_from(bytes.as_slice()) {
+            Ok(array) => match VerifyingKey::from_bytes(&array) {
+                Ok(key) if is_trusted(&key) => return Ok(key),
+                Ok(key) => {
+                    pin_rejected = Some(format!(
+                        "pinned key {} is not in this build's trust list",
+                        fingerprint(&key)
+                    ));
+                }
+                Err(_) => pin_rejected = Some("pinned key is not a valid Ed25519 point".to_owned()),
+            },
+            Err(_) => pin_rejected = Some(format!(
+                "pinned key is {} bytes, expected 32",
+                bytes.len()
+            )),
+        }
+    }
+
+    if let Some(reason) = pin_rejected {
+        eprintln!("moddin: {reason}; falling back to the compiled trust anchor");
+    }
+
+    // Repair the cache so the mismatch is not re-reported on every call.
+    let _ = pin_pinned_public_key(dir, &anchor);
+    Ok(anchor)
 }
 
 fn fingerprint(key: &VerifyingKey) -> String {
@@ -532,6 +604,100 @@ mod tests {
             .decode(BOOTSTRAP_PUBLIC_KEY_B64)
             .expect("placeholder is valid base64");
         assert_eq!(bytes.len(), 32, "Ed25519 public keys are 32 bytes");
+    }
+
+    /// Every key the app ships in the trust list has to decode, or a
+    /// rotation that ships a typo silently stops trusting a key.
+    #[test]
+    fn every_trusted_key_in_the_keyring_decodes() {
+        for encoded in TRUSTED_PUBLIC_KEYS_B64 {
+            let key = decode_public_key(encoded)
+                .unwrap_or_else(|error| panic!("trust list entry {encoded} does not decode: {error}"));
+            assert!(is_trusted(&key), "{encoded} is in the list but not trusted");
+        }
+    }
+
+    #[test]
+    fn the_anchor_is_itself_trusted() {
+        let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).expect("anchor decodes");
+        assert!(
+            is_trusted(&anchor),
+            "the compiled anchor must be present in the trust list"
+        );
+    }
+
+    /// The pin on disk used to be returned unverified. Anything able to
+    /// write to %LOCALAPPDATA% could drop in its own 32 bytes and sign
+    /// whatever it liked, and the app would call it verified.
+    #[test]
+    fn a_pin_that_is_not_in_the_trust_list_is_discarded_for_the_anchor() {
+        let dir = std::env::temp_dir().join(format!(
+            "moddin-community-pin-{}-{}",
+            std::process::id(),
+            now_unix()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp community dir");
+
+        // A well-formed Ed25519 point that is in nobody's keyring. The
+        // decode is asserted rather than skipped: a test that quietly
+        // no-ops when its key is malformed is worse than no test.
+        let attacker = decode_public_key("3pTDeCH5FEXkAdT1GVcE6McbxoHqTzZ1CkjPGCPYE9I=")
+            .expect("the test key is a valid Ed25519 point");
+        assert!(!is_trusted(&attacker), "test key must not be trusted");
+        std::fs::write(dir.join("pinned-public-key.bin"), attacker.to_bytes())
+            .expect("write attacker pin");
+
+        let resolved = ensure_bootstrap_key_material(&dir).expect("falls back to the anchor");
+        let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).expect("anchor decodes");
+        assert_eq!(
+            resolved.to_bytes(),
+            anchor.to_bytes(),
+            "an untrusted pin must never be the key the catalog is verified with"
+        );
+        assert!(
+            is_trusted(&resolved),
+            "whatever we resolve to is still a key we trust"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_pin_is_discarded_for_the_anchor() {
+        let dir = std::env::temp_dir().join(format!(
+            "moddin-community-corrupt-pin-{}-{}",
+            std::process::id(),
+            now_unix()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp community dir");
+        std::fs::write(dir.join("pinned-public-key.bin"), b"too short")
+            .expect("write corrupt pin");
+
+        let resolved = ensure_bootstrap_key_material(&dir).expect("falls back to the anchor");
+        let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).expect("anchor decodes");
+        assert_eq!(resolved.to_bytes(), anchor.to_bytes());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pin that matches the anchor is kept, so the on-disk cache
+    /// still does its job and does not churn on every call.
+    #[test]
+    fn a_pin_matching_the_anchor_is_accepted() {
+        let dir = std::env::temp_dir().join(format!(
+            "moddin-community-good-pin-{}-{}",
+            std::process::id(),
+            now_unix()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp community dir");
+        let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).expect("anchor decodes");
+        std::fs::write(dir.join("pinned-public-key.bin"), anchor.to_bytes())
+            .expect("write anchor pin");
+
+        let resolved = ensure_bootstrap_key_material(&dir).expect("anchor pin accepted");
+        assert_eq!(resolved.to_bytes(), anchor.to_bytes());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
