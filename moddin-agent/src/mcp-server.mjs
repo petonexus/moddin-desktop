@@ -61,8 +61,8 @@ const STEP_KINDS = Object.freeze({
     touches: [],
   },
   "extract-zip": {
-    summary: "Extract a zip archive into the game's executable directory. Takes a local path, never a URL — pair it with download-file. `targetSubdir` extracts into a staging subdirectory instead, so a later move-file can promote one named file out of it.",
-    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField", "targetSubdir", "targetSubdirField"],
+    summary: "Extract an archive into the game's executable directory. The format is read from the archive's magic bytes, not its name, so a 7z staged under a .zip filename still extracts; a format it cannot name is refused. Takes a local path, never a URL — pair it with download-file. `targetSubdir` extracts into a staging subdirectory instead, so a later move-file can promote one named file out of it. `payload` names the archive member that is the main payload DLL, and that member takes the `proxyField` name; without it only members basenamed `reshade64.dll` or `dxgi.dll` are renamed.",
+    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField", "payload", "payloadField", "targetSubdir", "targetSubdirField"],
     touches: ["executableDir"],
   },
   "verify-hash": {

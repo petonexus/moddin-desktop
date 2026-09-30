@@ -12,7 +12,7 @@ configSchema:
   - name: downloadUrl
     type: url
     required: true
-    description: HTTPS URL of the OptiScaler release archive. Must be a .zip — the recipe extracts with `extract-zip` and cannot read a 7z payload.
+    description: HTTPS URL of the OptiScaler release archive. Upstream publishes one `.7z` asset and no zip; `extract-zip` reads the container from the bytes, so the local staging name below is only a cache key.
   - name: sha256
     type: sha256
     required: true
@@ -24,12 +24,12 @@ configSchema:
   - name: proxy
     type: path
     required: true
-    description: Absolute path of the proxy DLL OptiScaler ships in place of the archive's bundled one (e.g. dxgi.dll, version.dll). The runner walks the proxy candidates from the recipe in `proxyCandidates` and picks the first that does not already live in the game directory.
+    description: Filename OptiScaler's own OptiScaler.dll is installed under in the game directory (dxgi.dll, version.dll, wininet.dll). Moddin never picks this for the user; the catalogue stores the choice, and the install refuses to run if that name is already taken by another mod.
   - name: proxyCandidates
     type: enum
-    enumValues: [dxgi.dll, version.dll, d3d11.dll, d3d12.dll, winmm.dll, dinput8.dll, xinput1_3.dll]
+    enumValues: [dxgi.dll, version.dll, d3d11.dll, d3d12.dll, winmm.dll, dinput8.dll, xinput1_3.dll, dbghelp.dll, wininet.dll, winhttp.dll]
     required: true
-    description: Ordered list of proxy DLLs OptiScaler accepts; the runner picks the first available one.
+    description: The proxy names OptiScaler accepts, covering its own setup_windows.bat (dxgi, winmm, d3d12, dbghelp, version, wininet, winhttp) plus the three ReShade-era names. A game picks the one Moddin will install under.
 checks:
   - id: archive-reachable
     label: OptiScaler archive reachable
@@ -54,12 +54,13 @@ install:
     params:
       urlField: downloadUrl
       expectedField: sha256
-      target: optiscaler.zip
+      target: optiscaler.7z
   - kind: extract-zip
-    description: Extract the OptiScaler archive into the game executable directory. The bundled proxy DLL is renamed to the recipe-declared `proxy` on the way out, so it cannot collide with another mod that already owns that name.
+    description: Extract the OptiScaler archive into the game executable directory. The archive is a 7z; the step reads the container from the bytes, not from the staging name. The payload named below is renamed to the game-chosen `proxy` on the way out, so it cannot collide with another mod that already owns that name.
     params:
-      archivePath: optiscaler.zip
+      archivePath: optiscaler.7z
       proxyField: proxy
+      payload: OptiScaler.dll
 safetyNotes:
   - OptiScaler proxies its own DLL into the executable directory; choose a proxy name that does not clash with other mods (UEVR, ReShade, R.E.A.L. VR, ERVR).
   - OptiScaler only ships replacements for DLSS-SR; games that already include DLSS or FSR need their native runtime left untouched.

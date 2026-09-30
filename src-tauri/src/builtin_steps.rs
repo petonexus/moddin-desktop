@@ -16,6 +16,7 @@ use crate::{
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, VecDeque},
     fs::{self, File},
     io::{Cursor, Read, Write as IoWrite},
     path::{Path, PathBuf},
@@ -231,10 +232,15 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
     //   2. archivePathField / archivePath — bytes come from a path the
     //      runner resolves via config (local archive).
     //
-    // Both extract every member of the archive into the target root
-    // after sanitising the member path. Members that match a known proxy
-    // DLL filename are renamed to honour the recipe's chosen proxy name
-    // (only when `proxyField` resolves to a non-empty string).
+    // Either way the container is decided by the bytes, never by the
+    // name: a recipe is free to stage a `.7z` as `something.zip`, and
+    // the OptiScaler release it comes from ships no zip at all.
+    //
+    // Both formats extract every member of the archive into the target
+    // root after sanitising the member path. Members that match the
+    // recipe's declared payload DLL take the recipe's chosen proxy name
+    // (only when `proxyField` resolves to a non-empty string); a recipe
+    // that names no payload falls back to the ReShade-era defaults.
     let bytes: Vec<u8> = if let Some(field) = param_string(step, "archiveBytesField") {
         return Err(format!(
             "extract-zip: archiveBytesField '{field}' requires the runner to \
@@ -254,44 +260,111 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
         );
     };
 
-    let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
-        .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
+    let format = detect_archive_format(&bytes).ok_or_else(|| {
+        format!(
+            "extract-zip: could not open zip: '{}' is not a zip or a 7z archive \
+             (it looks like {}). Only zip and 7z payloads can be extracted.",
+            step_archive_label(step, context),
+            describe_archive_format(&bytes)
+        )
+    })?;
 
     let root = extract_target_root(step, context)?;
-
     let proxy = param_string(step, "proxyField").and_then(|field| context.config.get_string(field));
+    // Every member, named once, so the executor and the transaction
+    // planner resolve the same targets for both formats.
+    let names = archive_member_names(&bytes, format)?;
+    let payload = declared_payload_member(step, context, &names)?;
+    let members = archive_member_targets(&names, proxy.as_deref(), payload.as_deref())?;
 
     let mut affected = Vec::new();
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| format!("extract-zip: entry {index} unreadable: {error}"))?;
-        if entry.is_dir() {
-            continue;
-        }
-        let name = entry.name().to_owned();
-        let Some(safe_name) = sanitize_archive_member(&name) else {
-            return Err(format!("extract-zip: unsafe archive member '{name}'."));
-        };
-        let relative = archive_member_target(&safe_name, proxy.as_deref());
-        let target = root.join(&relative);
+    for member in &members {
         affected.push(match staging_prefix(step, context.config) {
-            Some(prefix) => format!("{prefix}/{relative}"),
-            None => relative,
+            Some(prefix) => format!("{prefix}/{}", member.target),
+            None => member.target.clone(),
         });
+    }
 
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("extract-zip: could not create parent dir: {error}"))?;
+    match format {
+        ArchiveFormat::Zip => {
+            let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
+                .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
+            // `members` was built from the same walk — every non-directory
+            // entry, in order — so one cursor keeps the two aligned.
+            let mut cursor = 0usize;
+            for index in 0..archive.len() {
+                let mut entry = archive
+                    .by_index(index)
+                    .map_err(|error| format!("extract-zip: entry {index} unreadable: {error}"))?;
+                if entry.is_dir() {
+                    continue;
+                }
+                let name = entry.name().to_owned();
+                // `members` came from the same walk, so this cannot run
+                // out — and if it somehow did, writing less than the
+                // transaction was promised is not a success.
+                let Some(member) = members.get(cursor) else {
+                    return Err(format!(
+                        "extract-zip: entry {index} ('{name}') has no planned target."
+                    ));
+                };
+                cursor += 1;
+                write_extracted_member(&root.join(&member.target), &mut entry, &name)?;
+            }
         }
-        let mut buffer = Vec::new();
-        entry
-            .read_to_end(&mut buffer)
-            .map_err(|error| format!("extract-zip: could not read '{name}': {error}"))?;
-        let mut file = File::create(&target)
-            .map_err(|error| format!("extract-zip: could not create target: {error}"))?;
-        file.write_all(&buffer)
-            .map_err(|error| format!("extract-zip: could not write target: {error}"))?;
+        ArchiveFormat::SevenZ => {
+            // The 7z reader hands its entries over in block order, which
+            // is not always the order the header lists them, so targets
+            // are looked up by the member's own name.
+            let mut pending: HashMap<String, VecDeque<String>> = HashMap::new();
+            for member in &members {
+                pending
+                    .entry(member.safe_name.clone())
+                    .or_default()
+                    .push_back(member.target.clone());
+            }
+            let mut stopped: Option<String> = None;
+            let outcome = sevenz_rust::SevenZReader::new(
+                Cursor::new(bytes.as_slice()),
+                bytes.len() as u64,
+                sevenz_rust::Password::empty(),
+            )
+            .map_err(|error| format!("extract-zip: could not open 7z: {error}"))?
+            .for_each_entries(|entry, reader| {
+                if stopped.is_some() {
+                    return Ok(false);
+                }
+                if entry.is_directory() {
+                    return Ok(true);
+                }
+                let name = entry.name().to_owned();
+                let Some(safe_name) = sanitize_archive_member(&name) else {
+                    stopped = Some(format!("extract-zip: unsafe archive member '{name}'."));
+                    return Ok(false);
+                };
+                let Some(relative) = pending.get_mut(&safe_name).and_then(VecDeque::pop_front)
+                else {
+                    // Not a member this step planned; the transaction was
+                    // handed a path that will not exist.
+                    stopped = Some(format!(
+                        "extract-zip: the archive yielded a member '{name}' that was not planned."
+                    ));
+                    return Ok(false);
+                };
+                let target = root.join(&relative);
+                match write_extracted_member(&target, reader, &name) {
+                    Ok(()) => Ok(true),
+                    Err(error) => {
+                        stopped = Some(error);
+                        Ok(false)
+                    }
+                }
+            });
+            if let Some(error) = stopped {
+                return Err(error);
+            }
+            outcome.map_err(|error| format!("extract-zip: could not read 7z: {error}"))?;
+        }
     }
 
     Ok(StepResult {
@@ -300,6 +373,215 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
         affected_paths: affected,
         resolved_commit: None,
     })
+}
+
+/// A member that has been read out of an archive, written to its final
+/// path. Shared by both containers so a zip member and a 7z member get
+/// the same parent-directory and error treatment.
+fn write_extracted_member(target: &Path, reader: &mut dyn Read, name: &str) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("extract-zip: could not create parent dir for '{name}': {error}")
+        })?;
+    }
+    let mut buffer = Vec::new();
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(|error| format!("extract-zip: could not read '{name}': {error}"))?;
+    let mut file = File::create(target)
+        .map_err(|error| format!("extract-zip: could not create target: {error}"))?;
+    file.write_all(&buffer)
+        .map_err(|error| format!("extract-zip: could not write target: {error}"))
+}
+
+/// The archive's own location, for an error message. Recipe authors read
+/// the path they wrote, not the resolved cache path the runner used.
+fn step_archive_label(step: &StepSpec, context: &StepContext<'_>) -> String {
+    param_string(step, "archivePathField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "archivePath").map(str::to_owned))
+        .unwrap_or_else(|| "<downloaded buffer>".to_owned())
+}
+
+/// Container formats the `extract-zip` step can open. Nothing else is in
+/// scope: `zip` and `sevenz-rust` are the only decoders the crate
+/// depends on, and adding a third is a dependency decision, not a
+/// detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchiveFormat {
+    Zip,
+    SevenZ,
+}
+
+/// Decide the container from the leading bytes.
+///
+/// Magic bytes, not the file name. A recipe's `target` /
+/// `archivePath` is the author's choice, and in these recipes it is
+/// demonstrably wrong: the OptiScaler release publishes one `.7z` asset
+/// that the recipe stages as `optiscaler.zip`. Both decoders are handed
+/// a byte slice and open what they recognise, so sniffing first is what
+/// lets the step hand the payload to the reader that can read it.
+fn detect_archive_format(bytes: &[u8]) -> Option<ArchiveFormat> {
+    // Local file header, or the end-of-central-directory record an
+    // archive with no members starts with.
+    const ZIP: [&[u8]; 2] = [b"PK\x03\x04", b"PK\x05\x06"];
+    // `7z` + version 0.2 + start header CRC.
+    const SEVEN_Z: &[u8] = b"7z\xBC\xAF\x27\x1C";
+
+    if bytes.starts_with(SEVEN_Z) {
+        Some(ArchiveFormat::SevenZ)
+    } else if ZIP.iter().any(|magic| bytes.starts_with(magic)) {
+        Some(ArchiveFormat::Zip)
+    } else {
+        None
+    }
+}
+
+/// Name a payload this step cannot open, for the refusal message.
+///
+/// A step that installs nothing and reports success is the worst
+/// outcome available, so an unrecognised container has to say what it
+/// actually is rather than fail with a decoder's internal error.
+fn describe_archive_format(bytes: &[u8]) -> String {
+    const KNOWN: [(&[u8], &str); 7] = [
+        (b"\x1f\x8b", "gzip"),
+        (b"Rar!\x1a\x07\x00", "rar"),
+        (b"Rar!\x1a\x07\x01\x00", "rar5"),
+        (b"\xFD7zXZ\x00", "xz"),
+        (b"BZh", "bzip2"),
+        (b"\x28\xB5\x2F\xFD", "zstd"),
+        (b"\x04\x22\x4D\x18", "lz4"),
+    ];
+    if let Some((_, name)) = KNOWN.iter().find(|(magic, _)| bytes.starts_with(magic)) {
+        return (*name).to_owned();
+    }
+    if bytes.get(257..262) == Some(b"ustar") {
+        return "tar".to_owned();
+    }
+    let head: Vec<String> = bytes
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if head.is_empty() {
+        "an empty file".to_owned()
+    } else {
+        format!("an unrecognised container starting with {}", head.join(" "))
+    }
+}
+
+/// Every non-directory member of an archive, in archive order.
+fn archive_member_names(bytes: &[u8], format: ArchiveFormat) -> Result<Vec<String>, String> {
+    match format {
+        ArchiveFormat::Zip => {
+            let mut archive = ZipArchive::new(Cursor::new(bytes))
+                .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
+            let mut names = Vec::with_capacity(archive.len());
+            for index in 0..archive.len() {
+                let entry = archive
+                    .by_index(index)
+                    .map_err(|error| format!("extract-zip: entry {index} unreadable: {error}"))?;
+                if !entry.is_dir() {
+                    names.push(entry.name().to_owned());
+                }
+            }
+            Ok(names)
+        }
+        ArchiveFormat::SevenZ => {
+            let reader = sevenz_rust::SevenZReader::new(
+                Cursor::new(bytes),
+                bytes.len() as u64,
+                sevenz_rust::Password::empty(),
+            )
+            .map_err(|error| format!("extract-zip: could not open 7z: {error}"))?;
+            Ok(reader
+                .archive()
+                .files
+                .iter()
+                .filter(|entry| !entry.is_directory())
+                .map(|entry| entry.name().to_owned())
+                .collect())
+        }
+    }
+}
+
+/// The member that takes the recipe's proxy name, if the recipe named
+/// one with `payload` / `payloadField`.
+///
+/// The recipe names the main payload DLL — the single file the archive
+/// exists to install, the one that has to land next to the executable
+/// under a name the game will load. When the archive carries more than
+/// one member with that name, the shallowest one is the payload, which
+/// is the rule the dedicated OptiScaler module already applies in
+/// `find_payload_root`: the copy at the archive root is the payload and
+/// anything deeper is a bundled sample.
+///
+/// A declared payload the archive does not ship is an error. Extracting
+/// the rest and reporting success would install a mod that loads
+/// nothing.
+fn declared_payload_member(
+    step: &StepSpec,
+    context: &StepContext<'_>,
+    safe_names: &[String],
+) -> Result<Option<String>, String> {
+    let Some(wanted) = param_string(step, "payloadField")
+        .and_then(|field| context.config.get_string(field))
+        .or_else(|| param_string(step, "payload").map(str::to_owned))
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let mut candidates = safe_names
+        .iter()
+        .enumerate()
+        .filter(|(_, safe_name)| {
+            Path::new(safe_name.as_str())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
+        })
+        .collect::<Vec<_>>();
+    // Shallowest wins; archive order breaks a tie, so the choice does
+    // not depend on how a reader happened to enumerate the members.
+    candidates.sort_by_key(|(index, safe_name)| {
+        (Path::new(safe_name.as_str()).components().count(), *index)
+    });
+    match candidates.into_iter().next() {
+        Some((_, safe_name)) => Ok(Some(safe_name.clone())),
+        None => Err(format!(
+            "extract-zip: the recipe names '{wanted}' as the archive's payload DLL, but no \
+             member of the archive has that name."
+        )),
+    }
+}
+
+/// One archive member, paired with the path it will be written to.
+struct ArchiveMember {
+    /// The member's own name, after `sanitize_archive_member`.
+    safe_name: String,
+    /// Where it lands, with the proxy rename applied.
+    target: String,
+}
+
+/// Resolve every member of an archive to the path it is written to, in
+/// the same order as `names`, after sanitising and the optional proxy
+/// rename.
+fn archive_member_targets(
+    names: &[String],
+    proxy: Option<&str>,
+    payload: Option<&str>,
+) -> Result<Vec<ArchiveMember>, String> {
+    let mut members = Vec::with_capacity(names.len());
+    for name in names {
+        let Some(safe_name) = sanitize_archive_member(name) else {
+            return Err(format!("extract-zip: unsafe archive member '{name}'."));
+        };
+        let target = archive_member_target(&safe_name, proxy, payload);
+        members.push(ArchiveMember { safe_name, target });
+    }
+    Ok(members)
 }
 
 /// The `targetSubdirField` / `targetSubdir` value an `extract-zip` step
@@ -1281,17 +1563,25 @@ fn resolve_path(base: &Path, candidate: &str) -> PathBuf {
 /// Relative name an archive member will be written to, after
 /// sanitisation and the optional proxy-DLL rename.
 ///
+/// A recipe that named its payload DLL (`payload` / `payloadField`)
+/// gets exactly that member renamed. A recipe that named none falls
+/// back to the names this step shipped with, so ReShade-era chains keep
+/// behaving the way they always have.
+///
 /// Shared by the executor and by [`plan_step_targets`] so the files a
 /// step is about to overwrite are exactly the files the transaction
 /// backs up first.
-fn archive_member_target(safe_name: &str, proxy: Option<&str>) -> String {
+fn archive_member_target(safe_name: &str, proxy: Option<&str>, payload: Option<&str>) -> String {
     if let Some(proxy_name) = proxy.filter(|name| !name.is_empty()) {
         let basename = Path::new(safe_name)
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        if basename == "reshade64.dll" || basename == "dxgi.dll" {
+        if payload == Some(safe_name) {
+            return proxy_name.to_owned();
+        }
+        if payload.is_none() && matches!(basename.as_str(), "reshade64.dll" | "dxgi.dll") {
             return proxy_name.to_owned();
         }
     }
@@ -1403,23 +1693,19 @@ pub fn plan_step_targets(
                     resolved.display()
                 )
             })?;
-            let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
-                .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
+            let Some(format) = detect_archive_format(&bytes) else {
+                return Err(format!(
+                    "extract-zip: could not open zip: '{archive_path}' is not a zip or a 7z \
+                     archive (it looks like {}). Only zip and 7z payloads can be extracted.",
+                    describe_archive_format(&bytes)
+                ));
+            };
+            let names = archive_member_names(&bytes, format)?;
             let proxy =
                 param_string(step, "proxyField").and_then(|field| context.config.get_string(field));
-            for index in 0..archive.len() {
-                let entry = archive
-                    .by_index(index)
-                    .map_err(|error| format!("extract-zip: entry {index} unreadable: {error}"))?;
-                if entry.is_dir() {
-                    continue;
-                }
-                let name = entry.name().to_owned();
-                let Some(safe_name) = sanitize_archive_member(&name) else {
-                    return Err(format!("extract-zip: unsafe archive member '{name}'."));
-                };
-                let relative = archive_member_target(&safe_name, proxy.as_deref());
-                let target = staging_root.join(&relative);
+            let payload = declared_payload_member(step, context, &names)?;
+            for member in archive_member_targets(&names, proxy.as_deref(), payload.as_deref())? {
+                let target = staging_root.join(&member.target);
                 if !targets.contains(&target) {
                     targets.push(target);
                 }
@@ -1856,6 +2142,276 @@ pub(crate) mod tests {
         let error = execute_step(&spec, &download_context(&config, &root))
             .expect_err("a staging directory outside the game folder is refused");
         assert!(error.contains("escapes the install directory"), "{error}");
+    }
+
+    /// A real 7z payload, built with the same crate the step reads it
+    /// with, so the fixture is a real archive rather than a byte string
+    /// that only looks like one.
+    fn write_7z(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut writer =
+            sevenz_rust::SevenZWriter::new(Cursor::new(Vec::new())).expect("seven-z writer");
+        for (name, body) in entries {
+            // The struct has a private field, so it is built through
+            // `new()` rather than struct-update syntax.
+            let mut entry = sevenz_rust::SevenZArchiveEntry::new();
+            entry.name = (*name).to_owned();
+            writer
+                .push_archive_entry(entry, Some(*body))
+                .expect("push seven-z entry");
+        }
+        let finished = writer.finish().expect("finish seven-z archive");
+        fs::write(path, finished.into_inner()).expect("write seven-z archive");
+    }
+
+    #[test]
+    fn extract_step_opens_a_seven_zip_whatever_the_staging_file_is_called() {
+        let tree = TempTree::new("extract-7z");
+        let root = tree.0.clone();
+        // Upstream OptiScaler publishes exactly one asset and it is a
+        // 7z. The staging name is the recipe author's choice and lies
+        // about the content, so the step has to read the bytes.
+        let archive = root.join("optiscaler.zip");
+        write_7z(
+            &archive,
+            &[
+                ("OptiScaler.dll", b"the payload"),
+                ("OptiScaler.ini", b"[Upscaler]\n"),
+            ],
+        );
+
+        let spec = step_of(
+            "extract-zip",
+            &[("archivePath", json!(archive.to_string_lossy()))],
+        );
+        let config = ResolvedConfig::default();
+
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("a 7z payload extracts even when the file is named .zip");
+        assert_eq!(
+            fs::read(root.join("OptiScaler.dll")).expect("payload"),
+            b"the payload"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("OptiScaler.ini")).expect("ini"),
+            "[Upscaler]\n"
+        );
+        assert_eq!(
+            result.affected_paths,
+            vec!["OptiScaler.dll".to_owned(), "OptiScaler.ini".to_owned()]
+        );
+    }
+
+    #[test]
+    fn extract_step_refuses_an_archive_it_cannot_name() {
+        let tree = TempTree::new("extract-unknown");
+        let root = tree.0.clone();
+        let archive = root.join("payload.zip");
+        // gzip: a real and common container this step deliberately has
+        // no decoder for. It must be refused by name, not extracted.
+        fs::write(&archive, b"\x1f\x8b\x08\x00payload").expect("write gzip-shaped bytes");
+
+        let spec = step_of(
+            "extract-zip",
+            &[("archivePath", json!(archive.to_string_lossy()))],
+        );
+        let config = ResolvedConfig::default();
+
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a format the step cannot read is refused, not extracted");
+        assert!(
+            error.contains("gzip"),
+            "the error names the format: {error}"
+        );
+        assert!(
+            !root.join("payload").exists(),
+            "nothing may be written for an unreadable archive: {error}"
+        );
+    }
+
+    #[test]
+    fn the_recipe_names_its_payload_dll_and_it_takes_the_proxy_name() {
+        let tree = TempTree::new("extract-payload");
+        let root = tree.0.clone();
+        let archive = root.join("optiscaler.7z");
+        write_7z(
+            &archive,
+            &[
+                ("OptiScaler.dll", b"the payload"),
+                ("OptiScaler.ini", b"[Upscaler]\n"),
+                ("extras/docs/OptiScaler.dll", b"a bundled copy"),
+            ],
+        );
+
+        let mut config = ResolvedConfig::default();
+        config.values.insert("proxy".to_owned(), json!("dxgi.dll"));
+        config
+            .values
+            .insert("payloadDll".to_owned(), json!("OptiScaler.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+                ("payloadField", json!("payloadDll")),
+            ],
+        );
+
+        execute_step(&spec, &download_context(&config, &root)).expect("the archive installs");
+
+        // The shallowest copy is the payload, which is the same rule the
+        // dedicated OptiScaler module applies in `find_payload_root`.
+        assert_eq!(
+            fs::read(root.join("dxgi.dll")).expect("proxy"),
+            b"the payload"
+        );
+        assert!(
+            !root.join("OptiScaler.dll").exists(),
+            "the payload is renamed, not copied"
+        );
+        assert_eq!(
+            fs::read(root.join("extras").join("docs").join("OptiScaler.dll"))
+                .expect("the deeper copy keeps its own name"),
+            b"a bundled copy"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("OptiScaler.ini")).expect("ini"),
+            "[Upscaler]\n"
+        );
+    }
+
+    #[test]
+    fn a_declared_payload_the_archive_does_not_contain_stops_the_install() {
+        let tree = TempTree::new("extract-payload-missing");
+        let root = tree.0.clone();
+        let archive = root.join("optiscaler.7z");
+        write_7z(&archive, &[("OptiScaler.ini", b"[Upscaler]\n")]);
+
+        let mut config = ResolvedConfig::default();
+        config.values.insert("proxy".to_owned(), json!("dxgi.dll"));
+        config
+            .values
+            .insert("payloadDll".to_owned(), json!("OptiScaler.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+                ("payloadField", json!("payloadDll")),
+            ],
+        );
+
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a payload the archive does not ship is not a success");
+        assert!(error.contains("OptiScaler.dll"), "{error}");
+        assert!(
+            !root.join("dxgi.dll").exists(),
+            "no proxy may be invented: {error}"
+        );
+    }
+
+    #[test]
+    fn the_transaction_plans_the_same_paths_a_seven_zip_writes() {
+        let tree = TempTree::new("extract-7z-plan");
+        let root = tree.0.clone();
+        let archive = root.join("optiscaler.7z");
+        write_7z(
+            &archive,
+            &[
+                ("OptiScaler.dll", b"the payload"),
+                ("notes/readme.txt", b"hi"),
+            ],
+        );
+
+        let mut config = ResolvedConfig::default();
+        config.values.insert("proxy".to_owned(), json!("dxgi.dll"));
+        config
+            .values
+            .insert("payloadDll".to_owned(), json!("OptiScaler.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+                ("payloadField", json!("payloadDll")),
+            ],
+        );
+
+        let mut planned =
+            plan_step_targets(&spec, &download_context(&config, &root)).expect("planned targets");
+        planned.sort();
+        assert_eq!(
+            planned,
+            vec![root.join("dxgi.dll"), root.join("notes").join("readme.txt")]
+        );
+    }
+
+    #[test]
+    fn a_recipe_that_names_no_payload_keeps_the_reshade_proxy_rule() {
+        let tree = TempTree::new("extract-default-payload");
+        let root = tree.0.clone();
+        let archive = root.join("payload.zip");
+        write_zip(
+            &archive,
+            &[
+                ("ReShade/ReShade64.dll", b"reshade"),
+                ("ReShade/ReShade.ini", b"[General]\n"),
+            ],
+        );
+
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("proxy".to_owned(), json!("winhttp.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+            ],
+        );
+
+        execute_step(&spec, &download_context(&config, &root)).expect("the archive installs");
+        assert!(
+            !root.join("ReShade").join("ReShade64.dll").exists(),
+            "the payload still takes the proxy name"
+        );
+        assert_eq!(
+            fs::read(root.join("winhttp.dll")).expect("the renamed payload"),
+            b"reshade"
+        );
+        assert_eq!(
+            fs::read(root.join("ReShade").join("ReShade.ini")).expect("sibling kept its name"),
+            b"[General]\n"
+        );
+    }
+
+    #[test]
+    fn the_container_is_chosen_by_its_bytes_not_by_its_name() {
+        assert_eq!(
+            detect_archive_format(b"PK\x03\x04rest"),
+            Some(ArchiveFormat::Zip)
+        );
+        assert_eq!(
+            detect_archive_format(b"PK\x05\x06"),
+            Some(ArchiveFormat::Zip)
+        );
+        assert_eq!(
+            detect_archive_format(b"7z\xBC\xAF\x27\x1Crest"),
+            Some(ArchiveFormat::SevenZ)
+        );
+        // The extension is the recipe author's guess; none of these are
+        // a container this step can open, whatever they are called.
+        assert_eq!(detect_archive_format(b"not an archive"), None);
+        assert_eq!(detect_archive_format(b""), None);
+        assert_eq!(describe_archive_format(b"\x1f\x8b\x08"), "gzip");
+        assert_eq!(describe_archive_format(b"Rar!\x1a\x07\x00"), "rar");
+        assert_eq!(describe_archive_format(b"Rar!\x1a\x07\x01\x00"), "rar5");
+        assert!(describe_archive_format(b"tarball").contains("74 61 72"));
+        assert_eq!(describe_archive_format(b""), "an empty file");
+        // tar has no leading magic; its identifier sits at offset 257.
+        let mut tar = vec![0u8; 257];
+        tar.extend_from_slice(b"ustar");
+        assert_eq!(describe_archive_format(&tar), "tar");
     }
 
     #[test]
