@@ -1,4 +1,6 @@
-/** One entry of the community repo's `revoked-ids.json`. */
+/** One capability-level revocation, carried *inside* the signed
+ *  catalog. It arrives inlined from `revoked-ids.json` by the community
+ *  repo's `regenerate_catalog.py`. */
 export interface CommunityRevocation {
   id: string
   reason: string
@@ -20,15 +22,6 @@ export interface CommunityFetchResult {
   /** When `signatureVerified` is false OR the fetch failed, this
    *  carries the underlying error message for the UI banner. */
   lastError: string | null
-  /** False when `revoked-ids.json` could not be read at all. The
-   *  catalog can be perfectly signed and still be unusable: Moddin
-   *  refuses to install while this is false, because "I could not check
-   *  the kill switch" and "nothing is revoked" must not look the same. */
-  revocationsVerified: boolean
-  /** Revoked capabilities stay in the list, flagged, so the panel can
-   *  say why one of them cannot be installed instead of quietly hiding
-   *  it. */
-  revoked: CommunityRevocation[]
 }
 
 export interface CommunityCatalog {
@@ -36,6 +29,13 @@ export interface CommunityCatalog {
   generatedAt: string
   generator: string
   capabilities: CommunityCatalogEntry[]
+  /** The maintainers' kill switch, covered by the same signature as
+   *  `capabilities`. An absent field in a validly signed catalog is a
+   *  statement that nothing is revoked, not a failed load — see
+   *  `moddin-community-capabilities/SECURITY.md`, "Layer 6 — kill
+   *  switch". There is no `revocationsVerified` flag: the list is part
+   *  of the signed bytes, so `signatureVerified` already covers it. */
+  revoked: CommunityRevocation[]
 }
 
 export interface CommunityCatalogEntry {

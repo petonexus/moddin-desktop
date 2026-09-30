@@ -75,14 +75,17 @@ function closeDialog() {
 }
 
 /**
- * The maintainers' kill switch, keyed by capability id. A revoked entry
- * stays in the list and is flagged rather than hidden: the user asked
- * what the community catalogue offers, and "this one was withdrawn,
- * here is why" is more useful than a silently shorter list.
+ * The maintainers' kill switch, keyed by capability id. It arrives inside
+ * the signed catalog — the same bytes that carried the capability list —
+ * so a revoked entry stays in the list and is flagged rather than
+ * hidden: the user asked what the community catalogue offers, and "this
+ * one was withdrawn, here is why" is more useful than a silently shorter
+ * list. An absent list is the maintainer saying nothing is revoked, and
+ * is read the same as an empty one.
  */
 const revocations = computed<Map<string, string>>(() => {
   const map = new Map<string, string>()
-  for (const entry of fetchResult.value?.revoked ?? []) map.set(entry.id, entry.reason)
+  for (const entry of fetchResult.value?.catalog.revoked ?? []) map.set(entry.id, entry.reason)
   return map
 })
 
@@ -91,14 +94,14 @@ function revocationFor(id: string): string | null {
 }
 
 /**
- * A capability is only installable when the catalogue is signed *and* the
- * revocation list was readable. `revocationsVerified === false` means
- * Moddin could not check the kill switch, and the backend refuses the
- * install for the same reason — the button says so rather than failing
- * later with a surprise error.
+ * A capability is installable unless the maintainers revoked it. There is
+ * no second "could not check the kill switch" case to guard here: the
+ * list and the signature are one thing now, so a catalogue that did not
+ * verify carries no capabilities at all (`communityEntries` is empty)
+ * and the backend refuses the install anyway.
  */
 function isBlocked(entry: CommunityCatalogEntry): boolean {
-  return revocations.value.has(entry.id) || fetchResult.value?.revocationsVerified === false
+  return revocations.value.has(entry.id)
 }
 
 async function refreshCapabilities() {
@@ -150,10 +153,6 @@ async function install(entry: CommunityCatalogEntry) {
   const revoked = revocationFor(entry.id)
   if (revoked !== null) {
     error.value = formatCopy(copy.value.revokedReason, { name: entry.displayName || entry.id, reason: revoked || copy.value.revokedNoReason })
-    return
-  }
-  if (fetchResult.value?.revocationsVerified === false) {
-    error.value = copy.value.revocationsUnknown
     return
   }
   if (!entry.signed && !acceptUnsigned.value[entry.id]) {
@@ -269,10 +268,12 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div v-if="fetchResult" class="community-trust" :class="{ bad: !fetchResult.signatureVerified || !fetchResult.revocationsVerified }">
-        <AppIcon :name="fetchResult.signatureVerified && fetchResult.revocationsVerified ? 'shield' : 'alert'" />
+      <!-- One trust fact, not two. The revocation list rides inside the
+           signed bytes, so an unverified signature means Moddin has
+           neither a usable capability list nor a usable kill switch. -->
+      <div v-if="fetchResult" class="community-trust" :class="{ bad: !fetchResult.signatureVerified }">
+        <AppIcon :name="fetchResult.signatureVerified ? 'shield' : 'alert'" />
         <span v-if="!fetchResult.signatureVerified">{{ copy.catalogNotVerified }}</span>
-        <span v-else-if="!fetchResult.revocationsVerified">{{ copy.revocationsUnknown }}</span>
         <span v-else>{{ copy.catalogVerified }}</span>
         <small :title="fetchResult.bootstrapPublicKeyFingerprint">
           {{ formatCopy(copy.keyFingerprint, { fingerprint: fetchResult.bootstrapPublicKeyFingerprint }) }}
@@ -327,7 +328,7 @@ onMounted(async () => {
               :class="{ 'is-loading': installingId === entry.id }"
               type="button"
               :disabled="installingId === entry.id || isBlocked(entry) || (!entry.signed && !acceptUnsigned[entry.id])"
-              :title="isBlocked(entry) ? (revocationFor(entry.id) !== null ? copy.revoked : copy.revocationsUnknown) : undefined"
+              :title="isBlocked(entry) ? copy.revoked : undefined"
               @click="install(entry)"
             >
               {{ installingId === entry.id ? copy.installing : isBlocked(entry) ? copy.unavailable : copy.install }}
