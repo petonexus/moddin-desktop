@@ -555,13 +555,20 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       If that call is wrong, the honest way to reverse it is per-field opt-in with a human
       reviewer on the copy, not a blanket pass. `check.detail` stays as-is either way: it is
       data with an embedded version, not prose.
-- [ ] **A real Save-As in the profile import/export.** — new
-      The profiles feature has a storage layer and a YAML shape, but there is no file dialog,
-      so export writes nothing the user can reach. `tauri-plugin-dialog` is the missing
-      piece. Not started: it needs `Cargo.toml`, which serialises against the self-updater
-      work. *Note the correction:* an earlier revision of this file claimed the storage layer
-      "already exists" and implied only a dialog was missing. The layer exists and has **zero
-      callers**.
+- [x] **A real Save-As in the profile import/export.** — new
+      `tauri-plugin-dialog`, pinned to the 2.7 line because 2.8 requires
+      `tauri = "^2.12"` and the graph is deliberately on 2.11.5. Export
+      opens a native save dialog and reports the path the file really
+      landed at, replacing a writer that picked
+      `%LOCALAPPDATA%\Moddin\profiles\exports\` on the user's behalf. Import
+      gains a Browse button that opens a native open dialog and drops the
+      answer into the path box. A dismissed dialog is not a failure: it
+      resolves to "nothing happened" and leaves the box and the preview
+      untouched. The webview gets no dialog permission, so a profile can
+      only be written to a path the user picked.
+      *The correction this item carried was the useful part:* the previous
+      wording claimed the storage layer "already exists" and implied only
+      a dialog was missing. The layer existed and had zero callers.
 - [x] **Resolve the eight baselined catalogue defects.** — new
       `scripts/validate-catalog.mjs` found them; they were reported by name rather than
       suppressed, and all eight are now fixed. The validator reports **zero** open data defects
