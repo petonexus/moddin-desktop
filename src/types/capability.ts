@@ -15,6 +15,8 @@ export type CheckSeverity = 'info' | 'warning' | 'blocker'
 export type StepKind =
   | 'download-file'
   | 'extract-zip'
+  | 'git-checkout'
+  | 'build-project'
   | 'verify-hash'
   | 'file-delete'
   | 'write-text-file'
@@ -140,6 +142,12 @@ export interface InstallResult {
     kind: string
     description: string | null
     affectedPaths: string[]
+    /**
+     * Full commit SHA a `git-checkout` landed on, when the step kind
+     * produces one. The tag a recipe pins can be moved upstream; the
+     * commit cannot, so this is what makes an install reproducible.
+     */
+    resolvedCommit?: string
   }>
   affectedPaths: string[]
   /** Ids auto-installed as dependencies of this install, in install order. */

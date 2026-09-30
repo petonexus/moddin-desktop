@@ -131,6 +131,8 @@
           "enum": [
             "download-file",
             "extract-zip",
+            "git-checkout",
+            "build-project",
             "verify-hash",
             "file-delete",
             "write-text-file",

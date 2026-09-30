@@ -35,9 +35,13 @@ Do **not** use this skill for:
   the Moddin codebase first; tell the user to open an issue / PR.
 - Cross-store content (Microsoft Store, Battle.net, …) — Moddin
   currently discovers Steam + Epic + GOG only.
-- Anything that would write to HKLM or require admin rights — Moddin's
-  `path_guard` rejects HKLM and the install will fail. Refuse and
-  explain.
+- Anything that needs admin rights — Moddin runs steps as the current
+  user, so an install that would write `HKLM` or anywhere else only an
+  elevated process can reach is out of scope. Refuse and explain.
+  This is a rule about privilege, not about the registry key: a
+  capability *may* name `HKLM`, and `registry-write` will try. What the
+  engine actually enforces is narrower and is described under
+  **Path and backup limits** below. Say which one you mean.
 
 ## Workflow
 
@@ -113,7 +117,10 @@ Rules:
   must exist in `configSchema`.
 - Never use a step or check kind outside the enums returned by
   `get_step_kinds` / `get_check_kinds`. If the mod needs a kind the
-  runner does not yet support, **stop** and tell the user.
+  runner does not yet support, **stop** and tell the user. The bundled
+  `schema/capability.schema.json` is the authority: `validate_capability_yaml`
+  rejects anything its enums do not list, and the tool's kind list can
+  lag a kind that has since shipped.
 
 ### 6. Validate
 
@@ -187,6 +194,36 @@ to run.
 5. **Never set `overwrite=true`** without an explicit user instruction
    on this turn. Built-in capabilities are read-only; local files are
    user-authored and should only be replaced on demand.
+
+## Path and backup limits
+
+Two different things are refused, and the difference matters when you
+explain one to a user. Describe neither as "Moddin blocks HKLM".
+
+**Refused — a step path that walks out of the install root.** Step paths
+resolve against the game directory, and a `..` that escapes it fails the
+install with *"path … escapes the install directory"*. There is no
+opt-in. This covers `file-delete`, `write-text-file`, `write-binary-file`,
+both ends of `move-file`, and `extract-zip`'s `targetSubdir`.
+
+**Refused — a backup of anything outside the install root.** The
+transaction store will not copy a file from outside the game folder into
+its backup, so a capability writing there is not covered by Undo. The
+install still proceeds; the runner reports every such path as outside
+the rollback set. Tell the user "Undo will not put that back", not
+"Moddin will not write there".
+
+**Honoured — an absolute path from a `path`-typed config field.** Those
+fields exist precisely to name a location outside the game folder: an
+OpenXR runtime manifest under `%LOCALAPPDATA%`, a tray INI beside the
+installer, a staging directory under `%LOCALAPPDATA%/Moddin/tools`. A
+step that names one writes exactly where the recipe author intended and
+the engine does not object.
+
+The registry is the same split. A `registry-write` to `HKLM` is allowed
+by the engine and fails only for lack of admin rights, so it is an
+admin-rights problem — which is why the out-of-scope rule above is
+worded about privileges and not about the key.
 
 ## Tool reference
 

@@ -1114,21 +1114,12 @@ pub struct CommunityInstallRequest {
 pub async fn community_capability_install(
     request: CommunityInstallRequest,
 ) -> Result<InstallResult, String> {
-    let catalog = crate::community_catalog::read_cached_catalog_only()
-        .ok_or_else(|| {
-            "Community catalog has not been fetched yet. Call community_catalog_fetch first."
-                .to_owned()
-        })?;
-    let entry = catalog
-        .capabilities
-        .iter()
-        .find(|candidate| candidate.id == request.capability_id)
-        .ok_or_else(|| {
-            format!(
-                "Community catalog does not list a capability named '{}'.",
-                request.capability_id
-            )
-        })?;
+    // The cached catalog is re-verified against the keyring here, inside
+    // the install flow, and the capability is checked against
+    // `revoked-ids.json` before its `downloadUrl` is read. Both fail
+    // closed, so an install never runs off an entry the app has not just
+    // proved is still signed and still live.
+    let entry = crate::community_catalog::verified_entry_for_install(&request.capability_id)?;
     let download_url = entry.download_url.clone().ok_or_else(|| {
         format!(
             "Community catalog entry '{}' has no downloadUrl.",
@@ -1137,7 +1128,7 @@ pub async fn community_capability_install(
     })?;
 
     let (yaml_text, signed_by_text) =
-        crate::community_catalog::fetch_capability_yaml(&download_url).await?;
+        crate::community_catalog::fetch_capability_yaml(&download_url, None).await?;
 
     if let Some(signed_by) = signed_by_text.as_deref() {
         if let Err(error) = verify_signed_by(&yaml_text, signed_by) {
