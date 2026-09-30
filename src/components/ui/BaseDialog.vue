@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, useId } from 'vue'
+import { onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from './AppIcon.vue'
+import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 
 withDefaults(defineProps<{
   title: string
@@ -14,51 +15,27 @@ const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 
 const titleId = useId()
-const dialogElement = ref<HTMLElement | null>(null)
-let opener: HTMLElement | null = null
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+// Every dialog in the app is mounted only while it is open, so its mount
+// *is* its open. Routing the focus handling through the shared lifecycle
+// is what makes a keyboard user land in the same place in all of them.
+const open = ref(true)
+const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
 
-function focusable() {
-  return Array.from(dialogElement.value?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
-}
-
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    emit('close')
-    return
-  }
-  if (event.key !== 'Tab') return
-  const items = focusable()
-  if (!items.length) return
-  const first = items[0]
-  const last = items[items.length - 1]
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
-}
-
-onMounted(async () => {
-  opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  window.addEventListener('keydown', onKeydown)
-  await nextTick()
-  // Focus the dialog itself so screen readers announce the title first.
-  dialogElement.value?.focus()
+onMounted(() => {
+  void openDialog()
 })
 
-onUnmounted(() => {
-  window.removeEventListener('keydown', onKeydown)
-  opener?.focus()
+// The lifecycle owns Escape, so the emit is derived from the state it sets
+// rather than from the call site — otherwise the key would close a ref the
+// parent never reads and the dialog would simply stay on screen.
+watch(open, (isOpen) => {
+  if (!isOpen) emit('close')
 })
 </script>
 
 <template>
-  <div class="dialog-backdrop" @click.self="emit('close')">
+  <div class="dialog-backdrop" @click.self="closeDialog">
     <section
       ref="dialogElement"
       class="dialog"
@@ -74,7 +51,7 @@ onUnmounted(() => {
           <h2 :id="titleId">{{ title }}</h2>
           <p v-if="description" class="dialog-description">{{ description }}</p>
         </div>
-        <button class="btn btn-icon" type="button" :aria-label="t('close')" @click="emit('close')">
+        <button class="btn btn-icon" type="button" :aria-label="t('close')" @click="closeDialog">
           <AppIcon name="close" :size="18" />
         </button>
       </header>

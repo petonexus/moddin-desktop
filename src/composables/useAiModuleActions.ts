@@ -68,23 +68,9 @@ export function useAiModuleActions() {
     })
   }
 
-  async function openAiAudit(opts: {
-    gameId: string | null
-    gameName: string | null
-    intent?: string
-  }) {
-    const gameLabel = opts.gameName ?? opts.gameId ?? ''
-    await trigger.openAiAssistantRecommendations({
-      gameId: opts.gameId,
-      gameName: opts.gameName,
-      intent: opts.intent ?? t('aiAssistantAuditIntent', { game: gameLabel }),
-    })
-  }
-
   return {
     openImproveWithAi,
     openDiagnoseWithAi,
     openWhyThisAi,
-    openAiAudit,
   }
 }

@@ -27,7 +27,6 @@ const ptBR = {
   errorDiskWhy: 'Libere espaço em %LOCALAPPDATA%\\Moddin\\logs ou em outra unidade e clique em Atualizar. Sem espaço, o Moddin continua funcionando, mas não consegue registrar novas atividades.',
   errorGenericTitle: 'Não consegui ler ou gravar o registro de atividades.',
   errorGenericWhy: 'Tente atualizar daqui a pouco. Se persistir, abra uma issue em github.com/petonexus/moddin-desktop com o detalhe técnico abaixo.',
-  errorRawToggle: 'Ver detalhe técnico',
 } as const
 
 const activityMessages = defineLocalizedCopy(
@@ -59,7 +58,6 @@ const activityMessages = defineLocalizedCopy(
     errorDiskWhy: 'Free space under %LOCALAPPDATA%\\Moddin\\logs (or another drive) and click Refresh. Without space, Moddin keeps working but cannot record new activities.',
     errorGenericTitle: 'Could not read or write the activity log.',
     errorGenericWhy: 'Try refreshing in a few seconds. If it persists, open an issue at github.com/petonexus/moddin-desktop with the technical detail below.',
-    errorRawToggle: 'Show technical detail',
   },
   {
     button: 'Actividad',
@@ -88,7 +86,6 @@ const activityMessages = defineLocalizedCopy(
     errorDiskWhy: 'Libera espacio en %LOCALAPPDATA%\\Moddin\\logs o en otra unidad y haz clic en Actualizar. Sin espacio, Moddin sigue funcionando, pero no puede registrar nuevas actividades.',
     errorGenericTitle: 'No pude leer ni escribir el registro de actividad.',
     errorGenericWhy: 'Intenta actualizar en unos segundos. Si persiste, abre un issue en github.com/petonexus/moddin-desktop con el detalle técnico de abajo.',
-    errorRawToggle: 'Ver detalle técnico',
   },
 )
 

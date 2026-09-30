@@ -1,5 +1,4 @@
 import { computed, ref } from 'vue'
-import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { clearActionLogs, listActionLogs } from './service'
 import type { ActionLogEntry, ActionLogLevel } from './types'
 
@@ -12,7 +11,16 @@ export function useActivityLogPanel() {
   const search = ref('')
   const level = ref<'all' | ActionLogLevel>('all')
   const expanded = ref(new Set<string>())
-  const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
+
+  // Focus, Escape and focus restore are BaseDialog's job; this only has to
+  // say whether the dialog is on screen.
+  function openDialog() {
+    open.value = true
+  }
+
+  function closeDialog() {
+    open.value = false
+  }
 
   const filteredLogs = computed(() => {
     const term = search.value.trim().toLowerCase()
@@ -66,7 +74,6 @@ export function useActivityLogPanel() {
 
   return {
     open,
-    dialogElement,
     loading,
     clearing,
     error,

@@ -3,9 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
-import ModuleCard from '../library/ModuleCard.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
+import ModuleCard, { type ModuleCardState, type ModuleCardVerification } from '../library/ModuleCard.vue'
 import type { TransactionRecord } from '../../types/transaction'
 import type { CapabilityOrigin, CapabilitySummary } from '../../types/capability'
+import type { ModuleVerificationCheck } from '../../types/module-verification'
 import { useCapabilityModules } from './useCapabilityModules'
 import type { CapabilityCardState, CapabilityConfigValue } from './types'
 
@@ -38,6 +40,7 @@ const modules = useCapabilityModules({
 
 const {
   visibleCapabilities,
+  loading,
   loadError,
   ensureLoaded,
   stateFor,
@@ -63,6 +66,35 @@ function safetyNotesOf(capabilityId: string) {
 /** Failing `compatibility` probe, if any — the only case that blocks Apply. */
 function blockedCompatibility(state: CapabilityCardState) {
   return state.compatibility && !state.compatibility.passed ? state.compatibility : null
+}
+
+/**
+ * The capability runner reports `detail: null` for checks that carry no
+ * detail; the card's check shape has no null. Everything else (including
+ * the backend's own summary sentence) is left to the card to render.
+ */
+function cardChecks(state: CapabilityCardState): ModuleVerificationCheck[] {
+  return (state.verification?.checks ?? []).map((item) => ({
+    label: item.label,
+    passed: item.passed,
+    detail: item.detail ?? undefined,
+  }))
+}
+
+function cardVerification(state: CapabilityCardState): ModuleCardVerification | null {
+  return state.verification ? { checks: cardChecks(state) } : null
+}
+
+/**
+ * Same derivation the catalog cards use in `App.vue`: a check that failed
+ * must not read as a healthy mod. The runner never reports `installed`, so
+ * the transaction history owns the installed half of the state.
+ */
+function cardState(capabilityId: string): ModuleCardState {
+  const state = stateFor(capabilityId)
+  if (state.verifyBusy) return 'checking'
+  if (state.verification && cardChecks(state).some((check) => !check.passed)) return 'attention'
+  return isInstalled(capabilityId) ? 'active' : 'available'
 }
 
 /** Ids auto-installed by the backend as dependencies of the last install. */
@@ -174,6 +206,12 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <EmptyState
+      v-else-if="loading && !visibleCapabilities.length"
+      busy
+      :description="t('capabilityLoading')"
+    />
+
     <div v-if="visibleCapabilities.length" class="mod-grid">
       <div v-for="capability in visibleCapabilities" :key="capability.id" class="capability-cell">
         <div
@@ -235,13 +273,14 @@ onUnmounted(() => {
         <ModuleCard
           :name="capability.displayName"
           :description="capability.description || capability.id"
-          :state="isInstalled(capability.id) ? 'active' : 'available'"
+          :state="cardState(capability.id)"
           :tag="{ label: originLabel(capability.origin), tone: originTone(capability.origin) }"
           :action-label="isInstalled(capability.id) ? t('actionReinstall') : t('actionInstall')"
           :action-primary="!isInstalled(capability.id)"
           :action-busy="stateFor(capability.id).busy"
           :action-disabled="dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || (!isInstalled(capability.id) && compatibilityBlocks(capability.id))"
           :blocked-reason="blockedReasonText"
+          :verification="cardVerification(stateFor(capability.id))"
           :verify-busy="stateFor(capability.id).verifyBusy"
           :remove-label="isInstalled(capability.id) ? t('actionRemove') : null"
           @action="onInstall(capability)"
@@ -301,29 +340,6 @@ onUnmounted(() => {
                 </label>
               </div>
             </section>
-
-            <section v-if="stateFor(capability.id).verification" class="capability-detail">
-              <div class="capability-detail-heading">
-                <h5 class="capability-detail-title">{{ t('checklistTitle') }}</h5>
-                <small>{{ stateFor(capability.id).verification?.summary }}</small>
-              </div>
-              <ul v-if="stateFor(capability.id).verification?.checks.length" class="capability-checks">
-                <li
-                  v-for="(check, index) in stateFor(capability.id).verification?.checks ?? []"
-                  :key="check.id ?? `${check.label}-${index}`"
-                  :class="check.passed ? 'ok' : 'fail'"
-                >
-                  <AppIcon :name="check.passed ? 'check' : 'alert'" :size="13" />
-                  <span>
-                    {{ check.label }}
-                    <small v-if="check.detail">{{ check.detail }}</small>
-                  </span>
-                </li>
-              </ul>
-              <p v-else class="capability-hint">
-                {{ stateFor(capability.id).verification?.summary }}
-              </p>
-            </section>
           </template>
         </ModuleCard>
       </div>
@@ -360,15 +376,6 @@ onUnmounted(() => {
 .capability-fields { display: grid; gap: var(--moddin-space-3); }
 .capability-required { margin-left: 2px; color: var(--moddin-danger); font-style: normal; }
 .capability-checkbox { width: 15px; height: 15px; margin-top: 3px; accent-color: var(--moddin-accent); }
-
-.capability-checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.capability-checks li { display: flex; align-items: flex-start; gap: var(--moddin-space-2); color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
-.capability-checks li .app-icon { margin-top: 2px; }
-.capability-checks li.ok .app-icon { color: var(--moddin-success); }
-.capability-checks li.fail .app-icon { color: var(--moddin-warning); }
-.capability-checks small { display: block; color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
-
-.capability-hint { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
 
 .capability-compat { display: grid; justify-items: start; gap: var(--moddin-space-2); }
 .capability-compat small { color: var(--moddin-text-soft); font-size: var(--moddin-text-xs); }

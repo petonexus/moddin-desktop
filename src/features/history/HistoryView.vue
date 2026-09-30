@@ -70,15 +70,17 @@ function confirmUndo() {
     </div>
 
     <div class="panel history-list">
-      <div v-if="loading && !transactions.length" class="empty-state">
-        <span class="spinner" />
-        <span>{{ t('historyLoading') }}</span>
-      </div>
-      <div v-else-if="!visible.length" class="empty-state">
-        <AppIcon name="history" :size="28" />
-        <strong>{{ t('historyEmptyTitle') }}</strong>
-        <span>{{ t('historyEmptyHint') }}</span>
-      </div>
+      <EmptyState
+        v-if="loading && !transactions.length"
+        busy
+        :description="t('historyLoading')"
+      />
+      <EmptyState
+        v-else-if="!visible.length"
+        icon="history"
+        :title="t('historyEmptyTitle')"
+        :description="t('historyEmptyHint')"
+      />
 
       <article v-for="transaction in visible" :key="transaction.id" class="history-row" :class="{ undone: transaction.status !== 'applied' }">
         <div class="history-marker" aria-hidden="true">

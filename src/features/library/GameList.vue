@@ -51,14 +51,16 @@ const { t } = useI18n()
     </div>
 
     <div class="game-list-body">
-      <div v-if="loading && !games.length" class="empty-state">
-        <span class="spinner" />
-        <span>{{ t('scanningLibraries') }}</span>
-      </div>
-      <div v-else-if="!games.length" class="empty-state">
-        <strong>{{ t('noGamesFound') }}</strong>
-        <span>{{ t('noGamesHint') }}</span>
-      </div>
+      <EmptyState
+        v-if="loading && !games.length"
+        busy
+        :description="t('scanningLibraries')"
+      />
+      <EmptyState
+        v-else-if="!games.length"
+        :title="t('noGamesFound')"
+        :description="t('noGamesHint')"
+      />
 
       <button
         v-for="game in games"

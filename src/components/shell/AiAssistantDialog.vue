@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../ui/AppIcon.vue'
 import BaseDialog from '../ui/BaseDialog.vue'
+import EmptyState from '../ui/EmptyState.vue'
 import { useAiAssistant } from '../../composables/useAiAssistant'
 import { openAiAssistantLink } from '../../features/ai-assistant/service'
 import type { AgentKind } from '../../features/ai-assistant/service'
@@ -433,14 +434,14 @@ function goToPrompt() {
 
         <!-- ============ STEP: saved ============ -->
         <template v-else-if="step === 'saved'">
-          <div class="empty-state ai-saved">
-            <AppIcon name="check" :size="28" class="ai-status-done" />
-            <strong v-if="saveResult">{{ t('aiAssistantSavedHeading', { id: saveResult.id }) }}</strong>
-            <strong v-else>{{ t('aiAssistantInstallDoneHeading') }}</strong>
-            <span v-if="saveResult">{{ t('aiAssistantSavedBody') }}</span>
-            <span v-else>{{ t('aiAssistantInstallDoneBody') }}</span>
+          <EmptyState
+            class="ai-saved"
+            icon="check"
+            :title="saveResult ? t('aiAssistantSavedHeading', { id: saveResult.id }) : t('aiAssistantInstallDoneHeading')"
+            :description="saveResult ? t('aiAssistantSavedBody') : t('aiAssistantInstallDoneBody')"
+          >
             <small v-if="saveResult?.overwrote" class="ai-meta">{{ t('aiAssistantOverwrote') }}</small>
-          </div>
+          </EmptyState>
           <div v-if="error" class="callout callout-danger" role="alert">
             <AppIcon name="alert" :size="16" />
             <p>{{ error }}</p>
@@ -684,5 +685,9 @@ function goToPrompt() {
 .ai-status-done { color: var(--moddin-success); }
 .ai-status-failed { color: var(--moddin-danger); }
 
-.ai-saved .app-icon { margin-bottom: var(--moddin-space-1); }
+/* The icon now lives inside `EmptyState`, so the scope id stops at its root. */
+.ai-saved :deep(.app-icon) {
+  margin-bottom: var(--moddin-space-1);
+  color: var(--moddin-success);
+}
 </style>

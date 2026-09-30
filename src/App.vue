@@ -26,6 +26,7 @@ import { version as appVersion } from '../package.json'
 import AppIcon from './components/ui/AppIcon.vue'
 import BaseDialog from './components/ui/BaseDialog.vue'
 import ChangePreview from './components/ui/ChangePreview.vue'
+import EmptyState from './components/ui/EmptyState.vue'
 import ToastStack from './components/ui/ToastStack.vue'
 import GlobalTools from './components/shell/GlobalTools.vue'
 import GameList from './features/library/GameList.vue'
@@ -1842,10 +1843,7 @@ onUnmounted(() => {
         </button>
       </nav>
 
-      <div class="nav-section">
-        <span class="nav-label">{{ t('navTools') }}</span>
-        <GlobalTools />
-      </div>
+      <GlobalTools />
 
       <footer class="sidebar-footer">
         <label>
@@ -1891,11 +1889,13 @@ onUnmounted(() => {
           />
 
           <div class="panel game-detail">
-            <div v-if="!selectedGame" class="empty-state game-detail-empty">
-              <AppIcon name="gamepad" :size="32" />
-              <strong>{{ t('selectGameTitle') }}</strong>
-              <span>{{ t('selectGameHint') }}</span>
-            </div>
+            <EmptyState
+              v-if="!selectedGame"
+              class="game-detail-empty"
+              icon="gamepad"
+              :title="t('selectGameTitle')"
+              :description="t('selectGameHint')"
+            />
 
             <template v-else>
               <header class="game-hero">
@@ -1914,16 +1914,7 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="game-hero-actions">
-                  <AiTopbarMenu
-                    :selected-app-id="selectedGame.catalog?.id ?? null"
-                    :selected-game-name="selectedGame.catalog?.name ?? null"
-                    :has-error="Boolean(error)"
-                    @ask="aiTopbar.ask"
-                    @recommend="aiTopbar.recommend"
-                    @audit="aiTopbar.audit"
-                    @diagnose="aiTopbar.diagnose"
-                    @contribute="aiTopbar.contribute"
-                  />
+                  <AiTopbarMenu @ask="aiTopbar.ask" />
                   <button
                     v-if="primaryModule?.id === 'vr-launch'"
                     class="btn btn-primary btn-lg"
@@ -2109,11 +2100,12 @@ onUnmounted(() => {
                 </details>
               </template>
 
-              <div v-else class="empty-state">
-                <AppIcon name="info" :size="28" />
-                <strong>{{ t('notCataloguedTitle') }}</strong>
-                <span>{{ t('notCataloguedHint') }}</span>
-              </div>
+              <EmptyState
+                v-else
+                icon="info"
+                :title="t('notCataloguedTitle')"
+                :description="t('notCataloguedHint')"
+              />
             </template>
           </div>
         </div>

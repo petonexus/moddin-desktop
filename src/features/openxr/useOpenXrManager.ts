@@ -1,5 +1,4 @@
 import { computed, ref, watch } from 'vue'
-import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { findCatalogGameByInstalledGame } from '../../services/catalog'
 import { readLocalValue, writeLocalValue } from '../../services/storage'
 import type { InstalledGame } from '../../types/game'
@@ -18,10 +17,21 @@ export function useOpenXrManager() {
   const loading = ref(false)
   const busyAction = ref<string | null>(null)
   const error = ref<string | null>(null)
+  /** Which action produced `error`; the raw string alone cannot say. */
+  const errorContext = ref<string | null>(null)
   const state = ref<OpenXrState | null>(null)
   const installedGames = ref<InstalledGame[]>([])
   const selectedGameId = ref('')
-  const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
+
+  // Focus, Escape and focus restore are BaseDialog's job; this only has to
+  // say whether the dialog is on screen.
+  function openDialog() {
+    open.value = true
+  }
+
+  function closeDialog() {
+    open.value = false
+  }
 
   const gameChoices = computed(() => installedGames.value.flatMap((game) => {
     const catalog = findCatalogGameByInstalledGame(game)
@@ -42,6 +52,7 @@ export function useOpenXrManager() {
   async function inspect() {
     loading.value = true
     error.value = null
+    errorContext.value = 'inspect'
     try {
       state.value = await inspectOpenXr(selectedGameId.value || null)
     } catch (err) {
@@ -75,6 +86,7 @@ export function useOpenXrManager() {
     if (!selectedGameId.value) return
     busyAction.value = `game:${manifestPath ?? 'system'}`
     error.value = null
+    errorContext.value = 'write'
     try {
       state.value = await setGameOpenXrRuntime(selectedGameId.value, manifestPath)
     } catch (err) {
@@ -87,6 +99,7 @@ export function useOpenXrManager() {
   async function setSystemRuntime(manifestPath: string) {
     busyAction.value = `system:${manifestPath}`
     error.value = null
+    errorContext.value = 'write'
     try {
       state.value = await setSystemOpenXrRuntime(manifestPath, selectedGameId.value || null)
     } catch (err) {
@@ -103,10 +116,10 @@ export function useOpenXrManager() {
 
   return {
     open,
-    dialogElement,
     loading,
     busyAction,
     error,
+    errorContext,
     state,
     selectedGameId,
     gameChoices,
