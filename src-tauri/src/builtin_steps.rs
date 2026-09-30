@@ -1012,33 +1012,103 @@ fn run_kill_process(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepR
     })
 }
 
-fn run_registry_write(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
-    let key =
-        param_string(step, "key").ok_or_else(|| "registry-write: key is required.".to_owned())?;
-    let value = param_string(step, "value")
+/// Value types `reg.exe` will not write without a payload.
+///
+/// `reg add` answers an empty `/d` with "invalid syntax" for all three,
+/// and a `REG_DWORD` has no number to store when `/d` is left off
+/// entirely, so a recipe that asks for one of these without data is told
+/// which param is missing instead of being handed reg.exe's parse error.
+const REGISTRY_TYPES_NEEDING_DATA: [&str; 3] = ["REG_DWORD", "REG_MULTI_SZ", "REG_BINARY"];
+
+/// Read a registry step param and render it through [`render_template`].
+///
+/// A per-game registry key is *always* templated — the per-game name
+/// lives in the key, and the key is a string the recipe composes — so
+/// `key` and `value` are read the way every other step reads a param and
+/// rendered the way `write-text-file` renders its body.
+fn registry_param(step: &StepSpec, config: &ResolvedConfig, name: &str) -> Option<String> {
+    param_string(step, name).map(|raw| render_template(raw, config))
+}
+
+/// The value's payload: a literal `data` or the config field `dataField`
+/// names, either way rendered. Absent on purpose — an empty payload is
+/// what the OpenXR implicit-layer convention writes, where the value
+/// *name* is the manifest path and the data is empty.
+///
+/// The field is read through [`config_scalar`], so a `number` or `bool`
+/// field can carry a `REG_DWORD` payload as well as a string can.
+fn registry_data_param(step: &StepSpec, config: &ResolvedConfig) -> Result<Option<String>, String> {
+    if let Some(field) = param_string(step, "dataField") {
+        let value = config
+            .get(field)
+            .and_then(config_scalar)
+            .ok_or_else(|| format!("{}: config field '{field}' is missing.", step.kind))?;
+        return Ok(Some(render_template(&value, config)));
+    }
+    Ok(registry_param(step, config, "data"))
+}
+
+/// Is this key — or, with `value`, this one value under it — in the
+/// registry right now?
+///
+/// `reg query` exits non-zero for a missing key and for a missing value
+/// alike, and the message that tells the two apart is localised, so the
+/// exit code is the only signal a step can read.
+fn registry_target_exists(key: &str, value: Option<&str>) -> bool {
+    let mut command = std::process::Command::new("reg.exe");
+    crate::process::HideConsole::hide_console(&mut command);
+    command.arg("query").arg(key);
+    if let Some(name) = value {
+        command.arg("/v").arg(name);
+    }
+    command
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_registry_write(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
+    let key = registry_param(step, context.config, "key")
+        .ok_or_else(|| "registry-write: key is required.".to_owned())?;
+    let value = registry_param(step, context.config, "value")
         .ok_or_else(|| "registry-write: value is required.".to_owned())?;
+    let data = registry_data_param(step, context.config)?.unwrap_or_default();
     let value_kind = param_string(step, "type").unwrap_or("REG_SZ");
     let force = param(step, "force")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
 
-    let mut command = std::process::Command::new("reg.exe");
-    crate::process::HideConsole::hide_console(&mut command);
-    command.arg("add").arg(key);
-    if value_kind == "REG_SZ" || value_kind == "REG_EXPAND_SZ" || value_kind == "REG_DWORD" {
-        command.arg("/v").arg(value).arg("/t").arg(value_kind);
-    } else if value_kind == "REG_BINARY" || value_kind == "REG_MULTI_SZ" {
-        command
-            .arg("/v")
-            .arg(value)
-            .arg("/t")
-            .arg(value_kind)
-            .arg("/d")
-            .arg("");
-    } else {
+    if value_kind != "REG_SZ"
+        && value_kind != "REG_EXPAND_SZ"
+        && value_kind != "REG_DWORD"
+        && value_kind != "REG_BINARY"
+        && value_kind != "REG_MULTI_SZ"
+    {
         return Err(format!(
             "registry-write: unsupported value type '{value_kind}'."
         ));
+    }
+    if data.is_empty() && REGISTRY_TYPES_NEEDING_DATA.contains(&value_kind) {
+        return Err(format!(
+            "registry-write: type {value_kind} has no value to store; set data or dataField."
+        ));
+    }
+
+    let mut command = std::process::Command::new("reg.exe");
+    crate::process::HideConsole::hide_console(&mut command);
+    command
+        .arg("add")
+        .arg(&key)
+        .arg("/v")
+        .arg(&value)
+        .arg("/t")
+        .arg(value_kind);
+    // `/d` is passed only when the recipe carries a payload. A recipe
+    // that declares no data gets the empty-value write it got before
+    // this param existed — which is what the OpenXR implicit-layer
+    // convention needs, and the only registry write that ever shipped.
+    if !data.is_empty() {
+        command.arg("/d").arg(data);
     }
     if force {
         command.arg("/f");
@@ -1061,18 +1131,18 @@ fn run_registry_write(step: &StepSpec, _context: &StepContext<'_>) -> Result<Ste
     })
 }
 
-fn run_registry_delete(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
-    let key =
-        param_string(step, "key").ok_or_else(|| "registry-delete: key is required.".to_owned())?;
-    let value = param_string(step, "value");
+fn run_registry_delete(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
+    let key = registry_param(step, context.config, "key")
+        .ok_or_else(|| "registry-delete: key is required.".to_owned())?;
+    let value = registry_param(step, context.config, "value");
     let force = param(step, "force")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
 
     let mut command = std::process::Command::new("reg.exe");
     crate::process::HideConsole::hide_console(&mut command);
-    command.arg("delete").arg(key);
-    if let Some(name) = value {
+    command.arg("delete").arg(&key);
+    if let Some(name) = &value {
         command.arg("/v").arg(name);
     }
     if force {
@@ -1082,6 +1152,20 @@ fn run_registry_delete(step: &StepSpec, _context: &StepContext<'_>) -> Result<St
         .output()
         .map_err(|error| format!("registry-delete: could not spawn reg.exe: {error}"))?;
     if !output.status.success() {
+        // `reg delete` exits 1 for "there was nothing to delete" and for
+        // a real failure alike, and the message that tells them apart is
+        // localised. Asking the registry is the locale-independent way to
+        // tell them: a target that is verifiably gone has been deleted,
+        // whatever reg.exe called it, and an uninstall chain has to stay
+        // runnable twice. A target that is still there is a real error.
+        if !registry_target_exists(&key, value.as_deref()) {
+            return Ok(StepResult {
+                kind: step.kind.clone(),
+                description: step.description.clone(),
+                affected_paths: vec![format!("registry:{key}")],
+                resolved_commit: None,
+            });
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "registry-delete: reg.exe failed ({}): {stderr}",
@@ -1134,6 +1218,25 @@ fn base64_decode(value: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
+/// The string a config value renders to, for the scalar kinds a recipe
+/// can declare in `configSchema`.
+///
+/// `None` for anything else — an object, an array, a fractional number —
+/// so a template leaves its placeholder in place instead of writing half
+/// a value into a key or a registry payload.
+fn config_scalar(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(string) => Some(string.clone()),
+        JsonValue::Bool(boolean) => Some(if *boolean {
+            "1".to_owned()
+        } else {
+            "0".to_owned()
+        }),
+        JsonValue::Number(number) => number.as_u64().map(|number| number.to_string()),
+        _ => None,
+    }
+}
+
 fn render_template(template: &str, config: &ResolvedConfig) -> String {
     let mut output = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
@@ -1152,18 +1255,7 @@ fn render_template(template: &str, config: &ResolvedConfig) -> String {
                 }
                 name.push(next);
             }
-            if let Some(value) = config.get(&name).and_then(|v| -> Option<String> {
-                match v {
-                    JsonValue::String(string) => Some(string.clone()),
-                    JsonValue::Bool(boolean) => Some(if *boolean {
-                        "1".to_string()
-                    } else {
-                        "0".to_string()
-                    }),
-                    JsonValue::Number(number) => number.as_u64().map(|v| v.to_string()),
-                    _ => None,
-                }
-            }) {
+            if let Some(value) = config.get(&name).and_then(config_scalar) {
                 output.push_str(&value);
             } else {
                 output.push('{');
@@ -1404,10 +1496,10 @@ fn resolve_download_path(base: &Path, candidate: &str) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn known_kinds_include_the_core_set() {
@@ -2165,5 +2257,340 @@ mod tests {
         execute_step(&spec, &download_context(&config, &root))
             .expect("the command comes from the config field the recipe named");
         assert!(root.join("src").join("artifact.bin").is_file());
+    }
+
+    /// A throwaway HKCU key, removed when the guard drops.
+    ///
+    /// `reg.exe` is only ever pointed at a key this suite created, under
+    /// `HKCU\Software\Moddin\BuiltinStepsTest\<uuid>`. Unique per test so
+    /// the suite can run in parallel, and nothing outside it is touched.
+    struct RegScratch(String);
+
+    impl RegScratch {
+        fn new() -> Self {
+            Self(format!(
+                "HKCU\\Software\\Moddin\\BuiltinStepsTest\\{}",
+                uuid::Uuid::new_v4().simple()
+            ))
+        }
+
+        fn child(&self, name: &str) -> String {
+            format!("{}\\{name}", self.0)
+        }
+    }
+
+    impl Drop for RegScratch {
+        fn drop(&mut self) {
+            let mut command = std::process::Command::new("reg.exe");
+            crate::process::HideConsole::hide_console(&mut command);
+            let _ = command.arg("delete").arg(&self.0).arg("/f").output();
+        }
+    }
+
+    /// `reg query` output for a key / value, or `None` when reg.exe says
+    /// it is not there.
+    fn reg_query(key: &str, value: Option<&str>) -> Option<String> {
+        let mut command = std::process::Command::new("reg.exe");
+        crate::process::HideConsole::hide_console(&mut command);
+        command.arg("query").arg(key);
+        if let Some(name) = value {
+            command.arg("/v").arg(name);
+        }
+        let output = command.output().expect("reg.exe query");
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    #[test]
+    fn registry_write_stores_a_string_value() {
+        let scratch = RegScratch::new();
+        let key = scratch.child("OpenXR");
+        let config = ResolvedConfig::default();
+        // Registry steps read neither directory, so any root will do.
+        let root = std::env::temp_dir();
+        let manifest = "C:\\Program Files\\Moddin\\runtime\\openxr_runtime.json";
+
+        let spec = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!("ActiveRuntime")),
+                ("type", json!("REG_SZ")),
+                ("data", json!(manifest)),
+            ],
+        );
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("a REG_SZ value carrying data writes");
+        assert_eq!(result.affected_paths, vec![format!("registry:{key}")]);
+
+        let read_back = reg_query(&key, Some("ActiveRuntime")).expect("the value is there");
+        assert!(read_back.contains(manifest), "{read_back}");
+    }
+
+    #[test]
+    fn registry_write_stores_a_dword() {
+        // The shape the step used to refuse outright: `reg add <key> /v
+        // <name> /t REG_DWORD` with no /d answers "invalid syntax.
+        // Specify a valid numeric value for '/d'".
+        let scratch = RegScratch::new();
+        let key = scratch.child("AvailableRuntimes");
+        let config = ResolvedConfig::default();
+        let root = std::env::temp_dir();
+
+        let from_literal = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!("Enabled")),
+                ("type", json!("REG_DWORD")),
+                ("data", json!("1")),
+            ],
+        );
+        execute_step(&from_literal, &download_context(&config, &root))
+            .expect("a REG_DWORD carries its number as data");
+        assert!(
+            reg_query(&key, Some("Enabled"))
+                .expect("the value is there")
+                .contains("0x1"),
+            "the number landed, not an empty value"
+        );
+
+        // A `number` config field is the natural source for a DWORD, so
+        // `dataField` has to read one — not just a string field.
+        let mut config = ResolvedConfig::default();
+        config.values.insert("enabled".to_owned(), json!(2));
+        let from_config = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!("Ordinal")),
+                ("type", json!("REG_DWORD")),
+                ("dataField", json!("enabled")),
+            ],
+        );
+        execute_step(&from_config, &download_context(&config, &root))
+            .expect("a REG_DWORD takes its number from a config field");
+        assert!(
+            reg_query(&key, Some("Ordinal"))
+                .expect("the value is there")
+                .contains("0x2"),
+            "the number came from the field the recipe named"
+        );
+    }
+
+    #[test]
+    fn registry_write_refuses_a_dword_with_no_data() {
+        let scratch = RegScratch::new();
+        let key = scratch.child("AvailableRuntimes");
+        let config = ResolvedConfig::default();
+        let root = std::env::temp_dir();
+        let spec = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!("Enabled")),
+                ("type", json!("REG_DWORD")),
+            ],
+        );
+        // reg.exe would answer this with a parse error about /d, which
+        // tells a recipe author nothing about which param to set.
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a DWORD with no number is not a writeable value");
+        assert!(error.contains("set data or dataField"), "{error}");
+    }
+
+    #[test]
+    fn registry_write_templates_a_per_game_key_from_a_config_field() {
+        // A per-game key is always templated: the per-game name lives in
+        // the key, so a recipe that spells it out writes one garbage key
+        // for every game instead.
+        let scratch = RegScratch::new();
+        let root = std::env::temp_dir();
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("gameExecutable".to_owned(), json!("Cyberpunk2077.exe"));
+
+        let spec = step_of(
+            "registry-write",
+            &[
+                ("key", json!(scratch.child("per-game\\{gameExecutable}"))),
+                ("value", json!("ActiveRuntime")),
+                ("type", json!("REG_SZ")),
+                ("dataField", json!("runtimeManifest")),
+            ],
+        );
+        config
+            .values
+            .insert("runtimeManifest".to_owned(), json!("C:\\xr\\steamvr.json"));
+
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("the key renders from the config field");
+        let per_game = scratch.child("per-game\\Cyberpunk2077.exe");
+        assert_eq!(result.affected_paths, vec![format!("registry:{per_game}")]);
+        assert!(
+            reg_query(&per_game, Some("ActiveRuntime"))
+                .expect("the value landed under the per-game key")
+                .contains("C:\\xr\\steamvr.json"),
+            "the manifest path is the value data, as the OpenXR runtime convention requires"
+        );
+        assert!(
+            reg_query(&scratch.child("per-game\\{gameExecutable}"), None).is_none(),
+            "the unrendered placeholder is not a key that got written"
+        );
+    }
+
+    #[test]
+    fn registry_write_without_data_still_writes_the_empty_value() {
+        // The OpenXR implicit-layer convention: the value *name* is the
+        // manifest path and the data is empty. That is what the step did
+        // before it could carry data, and a recipe that declares no
+        // `data` has to keep landing exactly there.
+        let scratch = RegScratch::new();
+        let key = scratch.child("ImplicitLayers");
+        let config = ResolvedConfig::default();
+        let root = std::env::temp_dir();
+        let manifest = "C:\\xr\\implicit.json";
+
+        let spec = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!(manifest)),
+                ("type", json!("REG_SZ")),
+            ],
+        );
+        execute_step(&spec, &download_context(&config, &root))
+            .expect("a REG_SZ value with no data writes an empty value");
+
+        let read_back = reg_query(&key, Some(manifest)).expect("the value is there");
+        let line = read_back
+            .lines()
+            .find(|line| line.contains(manifest))
+            .expect("the manifest-named value line");
+        assert!(
+            line.trim_end().ends_with("REG_SZ"),
+            "the value still holds no data: {line:?}"
+        );
+    }
+
+    #[test]
+    fn registry_delete_is_idempotent() {
+        // `reg delete` exits 1 both for "there was nothing to delete" and
+        // for a real failure, so a step that forwarded that code made a
+        // second uninstall fail on a machine that was already clean.
+        let scratch = RegScratch::new();
+        let key = scratch.child("per-game\\Cyberpunk2077.exe");
+        let config = ResolvedConfig::default();
+        let root = std::env::temp_dir();
+        let remove = step_of(
+            "registry-delete",
+            &[
+                ("key", json!(key)),
+                ("value", json!("ActiveRuntime")),
+                ("force", json!(true)),
+            ],
+        );
+
+        execute_step(&remove, &download_context(&config, &root))
+            .expect("deleting a value that was never written is a no-op");
+        assert!(reg_query(&key, None).is_none(), "nothing to remove yet");
+
+        let write = step_of(
+            "registry-write",
+            &[
+                ("key", json!(key)),
+                ("value", json!("ActiveRuntime")),
+                ("type", json!("REG_SZ")),
+                ("data", json!("C:\\xr\\steamvr.json")),
+            ],
+        );
+        execute_step(&write, &download_context(&config, &root)).expect("the value is written");
+        execute_step(&remove, &download_context(&config, &root))
+            .expect("the first delete removes it");
+        assert!(
+            reg_query(&key, Some("ActiveRuntime")).is_none(),
+            "the value is gone after the first delete"
+        );
+        execute_step(&remove, &download_context(&config, &root))
+            .expect("the second delete has nothing left to do, so a chain can run twice");
+    }
+
+    /// The shipped OpenXR recipe, parsed by the type the runner loads it
+    /// as, so a YAML edit that the loader would reject fails here first.
+    const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
+
+    /// Every `{name}` a step param holds, the config fields named by a
+    /// `*Field` param, and nothing else a step looks at.
+    ///
+    /// Shared with the recipe-wide invariant in `capability_runner`, which
+    /// is about specs rather than about this module's steps.
+    pub(crate) fn config_fields_a_step_reads(
+        spec: &crate::capability::CapabilitySpec,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for step in spec.install.iter().chain(spec.uninstall.iter()) {
+            for (param, value) in &step.params {
+                if param.ends_with("Field") {
+                    if let Some(field) = value.as_str() {
+                        names.insert(field.to_owned());
+                    }
+                    continue;
+                }
+                if let Some(text) = value.as_str() {
+                    let mut rest = text;
+                    while let Some(start) = rest.find('{') {
+                        rest = &rest[start + 1..];
+                        match rest.find('}') {
+                            Some(end) => {
+                                names.insert(rest[..end].to_owned());
+                                rest = &rest[end + 1..];
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// `openxr-helpers` is `planned` and declares no chain, because the
+    /// OpenXR loader has no per-game registry key to write. The loader
+    /// specification puts `ActiveRuntime` under one machine-level
+    /// `HKLM\SOFTWARE\Khronos\OpenXR\<major_api_version>` value and states
+    /// that "the selection of the active runtime is handled external to the
+    /// loader". An earlier revision of this recipe wrote
+    /// `HKCU\...\OpenXR\1\per-game\{gameExecutable}\ActiveRuntime` and
+    /// described that as binding a runtime for this game alone: a key no
+    /// OpenXR loader reads, verified against the specification on
+    /// 2026-09-29 (registry.khronos.org/OpenXR/specs/1.1/loader.html).
+    ///
+    /// The test exists so that adding a chain back is a deliberate act with
+    /// the reason attached, rather than a quiet edit. Making this recipe
+    /// work is a runner gap — a step that expands environment variables to
+    /// reach `%LOCALAPPDATA%\Moddin\profiles\openxr\`, and JSON escaping so
+    /// a Windows path can be embedded in the preference document — not
+    /// another step kind.
+    #[test]
+    fn openxr_helpers_is_planned_with_no_chain() {
+        let spec: crate::capability::CapabilitySpec =
+            serde_yaml::from_str(OPENXR_HELPERS_YAML).expect("openxr-helpers.yaml parses");
+
+        assert_eq!(
+            spec.status, "planned",
+            "openxr-helpers is available again, so it can be installed. The OpenXR loader binds \
+             ActiveRuntime from a single machine-level key and defines no per-game key; a chain \
+             here writes a key nothing reads"
+        );
+        assert!(
+            spec.install.is_empty() && spec.uninstall.is_empty(),
+            "an empty chain is the honest shape for a planned recipe. A chain here describes an \
+             effect no step can produce (install: {}, uninstall: {})",
+            spec.install.len(),
+            spec.uninstall.len()
+        );
     }
 }

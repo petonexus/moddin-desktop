@@ -102,12 +102,13 @@ const STEP_KINDS = Object.freeze({
   },
   "registry-write": {
     summary:
-      "Write a value under an HKCU key. The params are literal, not config references: `key`, `value` and `type` are read directly from the step.",
-    fields: ["key", "value", "type", "force"],
+      "Write a value under a registry key. `key`, `value` and `data` are rendered as templates (`{configField}`); `dataField` names a config field to take the payload from. Omit `data`/`dataField` for the empty-value write.",
+    fields: ["key", "value", "type", "data", "dataField", "force"],
     touches: ["registry"],
   },
   "registry-delete": {
-    summary: "Delete a value under an HKCU key. `key` is read directly from the step.",
+    summary:
+      "Delete a value under a registry key. `key` is rendered as a template, and deleting a value that is already gone succeeds.",
     fields: ["key", "value", "force"],
     touches: ["registry"],
   },

@@ -148,12 +148,13 @@ Step kinds live in `src-tauri/src/builtin_steps.rs` as `match` arms in `execute_
 5. Document in [CAPABILITY-CONTRACT.md → Steps](CAPABILITY-CONTRACT.md#steps), where the
    built-in step kinds table lives.
 
-Currently supported kinds (11):
+Currently supported kinds (13):
 
 - `download-file`, `extract-zip`, `verify-hash`, `file-delete`
 - `write-text-file`, `write-binary-file`
 - `move-file`, `spawn-process`, `kill-process`
 - `registry-write`, `registry-delete`
+- `git-checkout`, `build-project`
 
 ---
 
@@ -181,7 +182,7 @@ Several of these files have an `X_module.rs` twin; read
 | OptiScaler | `src-tauri/src/optiscaler.rs` | Yes | Proxy candidate walk, marker-file rotation. The `optiscaler` recipe is `available` and uses `proxyField` |
 | Cheeky Foveated DLSS | `src-tauri/src/cheeky.rs` | Yes | ReShade add-on drop + hash. The recipe is `available` |
 | ReShade host | `src-tauri/src/reshade.rs` | **No** | The Rust commands have no caller in `src/`, and every catalog `reshade` module entry is `status: planned`. The `available` recipe is not offered anywhere yet |
-| OpenXR per-game runtime | `src-tauri/src/openxr.rs` | Yes | HKCU registry override |
+| OpenXR per-game runtime | `src-tauri/src/openxr.rs` | Yes | Per-game choice is a JSON file under `%LOCALAPPDATA%\Moddin\profiles\openxr`, injected as `XR_RUNTIME_JSON` at launch. Only the Windows-global runtime is a registry write (`HKLM\...\OpenXR\1\ActiveRuntime`, UAC). The `openxr-helpers` recipe is `planned` and installs nothing: the OpenXR loader has no per-game registry key |
 | VR launch profile | `src-tauri/src/vr_launch.rs` | Yes | Catalog-declared INI patches |
 | Desktop shortcut | `src-tauri/src/desktop_shortcut.rs` | Yes | `.lnk` writer |
 
