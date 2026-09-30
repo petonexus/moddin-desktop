@@ -666,6 +666,64 @@ mod tests {
         assert!(ensure_target_within_root(&root, &target).is_err());
     }
 
+    fn record(id: &str, game_id: &str, status: &str) -> TransactionRecord {
+        TransactionRecord {
+            id: id.to_owned(),
+            created_at: 0,
+            kind: "module".to_owned(),
+            label: "BepInEx".to_owned(),
+            game_id: game_id.to_owned(),
+            target_path: format!("C:/games/{game_id}"),
+            backup_path: format!("C:/backup/{game_id}/{id}"),
+            status: status.to_owned(),
+            files: Vec::new(),
+            created_directories: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_captures_only_its_own_games_transactions() {
+        // Rolling a snapshot back replays its ids, so a snapshot that
+        // captured another title would undo mods in a game the user
+        // never named. The filter used to be a tautology and every
+        // snapshot took the whole log.
+        let log = vec![
+            record("a", "elden-ring", "applied"),
+            record("b", "cyberpunk", "applied"),
+            record("c", "elden-ring", "applied"),
+        ];
+
+        let captured = snapshot_transaction_ids(&log, "elden-ring");
+
+        assert_eq!(captured, vec!["a".to_owned(), "c".to_owned()]);
+        assert!(
+            !captured.contains(&"b".to_owned()),
+            "a snapshot of Elden Ring must not capture Cyberpunk's transaction"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_skips_transactions_that_are_not_applied() {
+        let log = vec![
+            record("a", "elden-ring", "applied"),
+            record("b", "elden-ring", "rolled_back"),
+            record("c", "elden-ring", "planned"),
+        ];
+
+        assert_eq!(
+            snapshot_transaction_ids(&log, "elden-ring"),
+            vec!["a".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_snapshot_of_a_game_with_no_changes_is_empty_rather_than_the_whole_log() {
+        let log = vec![record("a", "elden-ring", "applied")];
+
+        assert!(snapshot_transaction_ids(&log, "cyberpunk").is_empty());
+    }
+
     #[test]
     fn target_validation_rejects_sibling_path() {
         let root = env::temp_dir().join("moddin-target-root");
@@ -781,24 +839,35 @@ pub fn create_snapshot(name: String, game_id: String) -> Result<Snapshot, String
     let (id_part, created_at) = new_transaction_id()?;
     // Snapshot ids share the transaction-id shape (timestamp-nonce) so
     // existing path-validation rules apply unchanged.
+    let transaction_ids = snapshot_transaction_ids(&list_transactions_sync()?, &game_id);
     let snapshot = Snapshot {
         id: id_part,
         name: trimmed.to_owned(),
         created_at,
         game_id,
-        transaction_ids: list_transactions_sync()?
-            .into_iter()
-            .filter(|record| record.status == "applied" && record.game_id == snapshot_game_filter(&record))
-            .map(|record| record.id)
-            .collect(),
+        transaction_ids,
     };
-    let _ = snapshot_game_filter; // placeholder for future per-game filtering
     write_snapshot(&snapshot)?;
     Ok(snapshot)
 }
 
-fn snapshot_game_filter(record: &TransactionRecord) -> String {
-    record.game_id.clone()
+/// Ids of the applied transactions a snapshot of `game_id` captures.
+///
+/// Per-game by construction. A snapshot is the user's "put this game
+/// back the way it was" button, so capturing another title's applied
+/// changes and rolling them back would undo mods the user never asked
+/// to touch — in a game they may not even have open. The previous
+/// version compared `record.game_id` against a helper that returned
+/// `record.game_id.clone()`, which is a tautology: it always held, and
+/// every snapshot of every game captured the whole log. It carried a
+/// `placeholder for future per-game filtering` note at the call site,
+/// so the intent was always this; only the filter was missing.
+fn snapshot_transaction_ids(records: &[TransactionRecord], game_id: &str) -> Vec<String> {
+    records
+        .iter()
+        .filter(|record| record.status == "applied" && record.game_id == game_id)
+        .map(|record| record.id.clone())
+        .collect()
 }
 
 #[tauri::command]

@@ -1,5 +1,5 @@
 import { enableAutoUnmount, mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import HistoryView from '../HistoryView.vue'
 import { i18n } from '../../../i18n'
 import type { TransactionRecord } from '../../../types/transaction'
@@ -11,6 +11,17 @@ import type { TransactionRecord } from '../../../types/transaction'
  * tell the user what they are about to revert. The dialog is what names
  * the change and counts the files.
  */
+
+// `HistoryView` renders the snapshot panel, which loads on mount. Left
+// unmocked it would reach for the Tauri bridge from jsdom and park a
+// load failure in the panel; the snapshot behaviour is covered in
+// `SnapshotPanel.test.ts`.
+vi.mock('../service', () => ({
+  createSnapshot: vi.fn(),
+  listSnapshots: vi.fn().mockResolvedValue([]),
+  rollbackSnapshot: vi.fn(),
+  deleteSnapshot: vi.fn(),
+}))
 
 enableAutoUnmount(afterEach)
 

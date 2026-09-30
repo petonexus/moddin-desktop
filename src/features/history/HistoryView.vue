@@ -3,7 +3,9 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
 import type { TransactionRecord } from '../../types/transaction'
+import SnapshotPanel from './SnapshotPanel.vue'
 
 const props = defineProps<{
   transactions: TransactionRecord[]
@@ -57,6 +59,15 @@ function confirmUndo() {
         {{ t('historyRefresh') }}
       </button>
     </header>
+
+    <!-- Restoring a snapshot changes every transaction it captured, so the
+         panel reports the change upward instead of only refreshing itself. -->
+    <SnapshotPanel
+      :transactions="transactions"
+      :game-name="gameName"
+      :format-date="formatDate"
+      @changed="emit('refresh')"
+    />
 
     <div class="history-toolbar">
       <div class="segmented" role="group" :aria-label="t('historyTitle')">
