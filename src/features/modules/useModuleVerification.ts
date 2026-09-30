@@ -251,11 +251,26 @@ export function useModuleVerification(host: ModuleVerificationHost) {
   /**
    * Verify every module whose answer is missing or older than the TTL.
    *
-   * UEVR is skipped, as it has always been, which makes it the one
-   * available card that sits on "unknown" until the player presses
-   * Verify. Whether that is deliberate is worth a second look; it is
-   * called out here so the next reader does not read the skip as
-   * obvious, and because the skip is invisible from the card itself.
+   * UEVR used to be skipped here, which made it the one available card
+   * that sat on "unknown" until the player pressed Verify. The grid
+   * renders that card, so there was no gate hiding it to justify the
+   * skip, and "the engine gate" was not an answer.
+   *
+   * What the skip was actually avoiding is `preview_uevr`: the one
+   * preview of the six that can reach the network, because it resolves
+   * the release it compares the installed version against. That is
+   * narrower than it sounds. It only reaches out once the local
+   * preflight says the game really is Unreal and nothing is running —
+   * every other game answers from disk alone — and a release that will
+   * not resolve degrades to the local preview with a warning rather than
+   * failing the card.
+   *
+   * It was not buying anything, either. `checkAvailableModuleUpdates`
+   * runs on the same selection, in the same background pass, and UEVR's
+   * recipe declares `releaseApiUrl`, so that call already fetches the
+   * same GitHub release endpoint. Skipping the verification only left
+   * the card blank. A request this pass already makes is not a reason to
+   * refuse an answer.
    */
   async function verifyAvailableModules(
     expectedAppId = host.selectedAppId(),
@@ -266,7 +281,7 @@ export function useModuleVerification(host: ModuleVerificationHost) {
     if (!game || !current(expectedAppId, expectedGeneration) || !expectedAppId) return
     const now = Date.now()
     const modules = game.catalog.modules.filter((module) => {
-      if (module.status !== 'available' || module.id === 'uevr') return false
+      if (module.status !== 'available') return false
       const previous = verifications.value[host.stateKey(module, expectedAppId)]
       return force || !previous || now - previous.checkedAt > AUTO_VERIFICATION_TTL_MS
     })
@@ -309,23 +324,17 @@ export function useModuleVerification(host: ModuleVerificationHost) {
 
     const key = host.stateKey(module, expectedAppId)
     if (updateBusyKeys.value.has(key)) return
+    // A recipe with nowhere to look is not a failure to report: it is a
+    // card that should not have offered the check, and the card agrees —
+    // `hasUpdateSource` is the same predicate, so the whole update area
+    // is hidden. A record written here had nothing to explain on screen
+    // and no reader but this file, so all it accomplished was putting a
+    // hardcoded English sentence in the store.
+    const updateUrl = resolveModuleUpdateSource(module, host.requestContext(module))
+    if (!updateUrl) return
+
     const config = module.config ?? {}
     const configuredVersion = typeof config.version === 'string' ? config.version : null
-    const updateUrl = resolveModuleUpdateSource(module, host.requestContext(module))
-    if (!updateUrl) {
-      // A recipe with nowhere to look is not a failure to report, it is a
-      // card that should not have offered the check.
-      updates.value[key] = {
-        status: 'unavailable',
-        currentVersion: configuredVersion,
-        latestVersion: null,
-        releaseUrl: null,
-        checkedAt: Date.now(),
-        detail: 'This module recipe does not define an update source.',
-      }
-      return
-    }
-
     const busyKeys = new Set(updateBusyKeys.value)
     busyKeys.add(key)
     updateBusyKeys.value = busyKeys

@@ -92,6 +92,14 @@ export function useAppUpdate() {
       status.value = await readAppUpdateStatus()
     } catch (err) {
       fail('check', err)
+      return
+    }
+    // The build already knows whether its key is a placeholder, and it
+    // says so before any network call. Settle the phase here rather
+    // than offering a Check button whose only possible outcome is a
+    // refusal the user has to trigger to learn.
+    if (!status.value.configured) {
+      applyPhase('not-configured')
     }
   }
 

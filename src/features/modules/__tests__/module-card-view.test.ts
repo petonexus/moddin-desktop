@@ -277,12 +277,51 @@ describe('how the grid is grouped', () => {
 })
 
 describe('the progress bar above the grid', () => {
+  // S.T.A.L.K.E.R. 2's shape: five available modules, two of which the
+  // capability section renders and the grid never verifies.
+  const available = [
+    module({ id: 'obs-vr', category: 'vr' }),
+    module({ id: 'uevr', category: 'vr' }),
+    module({ id: 'ofxr-bridge', category: 'vr' }),
+    module({ id: 'reshade', category: 'graphics' }),
+    module({ id: 'optiscaler', category: 'graphics' }),
+  ]
+  const stateOf = (entry: ToolModuleDefinition) =>
+    entry.id === 'obs-vr' ? 'active' : entry.id === 'uevr' ? 'attention' : 'unknown'
+
   it('counts working modules out of the available ones', () => {
-    expect(summariseModuleProgress(['active', 'attention', 'active', 'checking', 'unknown']))
-      .toEqual({ total: 5, active: 2, attention: 1, checking: true })
+    const progress = summariseModuleProgress(available, stateOf)
+
+    expect(progress).toEqual({ total: 3, active: 1, attention: 1, checking: false })
+  })
+
+  it('leaves the capability-backed modules out of the total, so the bar can be finished', () => {
+    // `ofxr-bridge` and `reshade` are available in the catalogue but
+    // rendered by the capability section, which owns its own progress.
+    // Counting them is what made the total unreachable: installing
+    // everything the grid owns still left the bar short, forever.
+    const progress = summariseModuleProgress(available, stateOf)
+
+    expect(available.filter(isCapabilityBackedModule).map((entry) => entry.id))
+      .toEqual(['ofxr-bridge', 'reshade'])
+    expect(progress.total).toBe(available.length - 2)
+    expect(progress.active + progress.attention).toBeLessThanOrEqual(progress.total)
+  })
+
+  it('counts a module that can be finished at all: a planned one is never active', () => {
+    const withPlanned = [...available, module({ id: 'graphics-profile', category: 'graphics', status: 'planned' })]
+
+    expect(summariseModuleProgress(withPlanned, () => 'active'))
+      .toEqual({ total: 3, active: 3, attention: 0, checking: false })
   })
 
   it('says nothing is running when nothing is', () => {
-    expect(summariseModuleProgress(['active'])).toEqual({ total: 1, active: 1, attention: 0, checking: false })
+    const progress = summariseModuleProgress([module({ id: 'obs-vr' })], () => 'active')
+
+    expect(progress).toEqual({ total: 1, active: 1, attention: 0, checking: false })
+  })
+
+  it('reports a check still running, so the bar is not read as settled', () => {
+    expect(summariseModuleProgress([module({ id: 'obs-vr' })], () => 'checking').checking).toBe(true)
   })
 })

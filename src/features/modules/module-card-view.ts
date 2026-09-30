@@ -3,7 +3,7 @@ import type { ModuleCategory, ToolModuleDefinition } from '../../types/game'
 import type { ModuleUpdate } from '../../types/module-update'
 import type { ModuleVerification } from '../../types/module-verification'
 import type { CompatibilityStatus } from '../../types/compatibility'
-import { moduleDescriptionKey, moduleNameKey, type Translate } from './module-registry'
+import { isCapabilityBackedModule, moduleDescriptionKey, moduleNameKey, type Translate } from './module-registry'
 
 /**
  * What one module card shows, and what its one button does.
@@ -231,12 +231,31 @@ export interface ModuleProgress {
   checking: boolean
 }
 
-/** The hero progress bar: how much of the available set is working. */
-export function summariseModuleProgress(states: readonly ModuleCardState[]): ModuleProgress {
+/**
+ * The hero progress bar: how much of what the grid can complete is
+ * working.
+ *
+ * The denominator is the grid's *own* available modules, not every
+ * available module the game declares. The capability-backed ones
+ * (`ofxr-bridge`, `reshade`, …) are rendered by the capability section,
+ * which has its own progress of its own, and nothing the grid does can
+ * ever move them off "unknown" — so counting them made the bar
+ * unreachable: for S.T.A.L.K.E.R. 2 the total was five with only four
+ * cards behind it, and installing everything the grid owns still left
+ * the bar short. A bar that cannot reach its total is a broken promise,
+ * not a motivation.
+ */
+export function summariseModuleProgress(
+  modules: readonly ToolModuleDefinition[],
+  stateOf: (module: ToolModuleDefinition) => ModuleCardState,
+): ModuleProgress {
+  const counted = modules
+    .filter((module) => module.status === 'available' && !isCapabilityBackedModule(module))
+    .map(stateOf)
   return {
-    total: states.length,
-    active: states.filter((state) => state === 'active').length,
-    attention: states.filter((state) => state === 'attention').length,
-    checking: states.includes('checking'),
+    total: counted.length,
+    active: counted.filter((state) => state === 'active').length,
+    attention: counted.filter((state) => state === 'attention').length,
+    checking: counted.includes('checking'),
   }
 }

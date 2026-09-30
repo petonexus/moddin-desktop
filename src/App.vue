@@ -282,9 +282,8 @@ const categoryTabs = computed(() => availableModuleCategories(gameModules.value)
 
 const moduleProgress = computed(() =>
   summariseModuleProgress(
-    gameModules.value
-      .filter((module) => module.status === 'available')
-      .map((module) => moduleCardView(moduleCardInput(module)).state),
+    ownedModules.value,
+    (module) => moduleCardView(moduleCardInput(module)).state,
   ),
 )
 

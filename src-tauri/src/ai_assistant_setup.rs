@@ -343,10 +343,6 @@ fn write_codex_toml_entry(command: &str, args: &[String]) -> Result<(), String> 
     if updated == existing {
         return Ok(());
     }
-    if path.exists() {
-        let bak = backup_path(&path);
-        fs::copy(&path, &bak).map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
-    }
     write_config(&path, &updated)
 }
 
@@ -362,8 +358,6 @@ fn remove_codex_toml_entry_file() -> Result<(), String> {
     if !removed {
         return Ok(());
     }
-    let bak = backup_path(&path);
-    fs::copy(&path, &bak).map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
     write_config(&path, &updated)
 }
 
@@ -395,12 +389,55 @@ fn read_mcp_config(path: &Path) -> Result<serde_json::Value, String> {
     Ok(value)
 }
 
+/// Write `body` to `path`, putting the previous contents back if the write
+/// does not land.
+///
+/// Every config this module writes goes through here, which is what makes
+/// this the only place that holds both the bytes being replaced and the
+/// write that can destroy them. The old contents land in
+/// `<name>.moddin-bak` first — taken here rather than by each caller, so
+/// the backup is always the exact content this write is about to replace
+/// and can never be a leftover from an earlier run — and come back if
+/// `fs::write` fails. A truncated `mcp.json` stops the user's assistant
+/// from starting at all, and a backup nothing restores is not a backup.
 fn write_config(path: &Path, body: &str) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| format!("Config {} has no parent directory", path.display()))?;
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
-    fs::write(path, body).map_err(|e| format!("Could not write {}: {e}", path.display()))
+    if path.is_file() {
+        let bak = backup_path(path);
+        fs::copy(path, &bak).map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
+    }
+    match fs::write(path, body) {
+        Ok(()) => Ok(()),
+        Err(error) => match restore_from_backup(path) {
+            Ok(()) => Err(format!(
+                "Could not write {}: {error}. The previous config was restored from {}",
+                path.display(),
+                backup_path(path).display()
+            )),
+            Err(restore_error) => Err(format!(
+                "Could not write {}: {error}. The previous config could not be restored: {restore_error}",
+                path.display()
+            )),
+        },
+    }
+}
+
+/// Put `<name>.moddin-bak` back over the config it was taken from.
+///
+/// Copied rather than renamed, so the `.moddin-bak` the user can still
+/// see afterwards is the same file the rollback just used, and so there
+/// is no instant in which neither the config nor the backup exists.
+fn restore_from_backup(config_path: &Path) -> Result<(), String> {
+    let bak = backup_path(config_path);
+    if !bak.exists() {
+        return Err(format!("No backup file exists at {}", bak.display()));
+    }
+    fs::copy(&bak, config_path)
+        .map(|_| ())
+        .map_err(|e| format!("Could not restore backup: {e}"))
 }
 
 /// Backwards-compatible alias used by the older code paths.
@@ -476,13 +513,8 @@ pub fn setup_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<AiA
         }),
     );
 
-    // Back up the existing config before we touch it.
-    if config_path.exists() {
-        let bak = backup_path(&config_path);
-        fs::copy(&config_path, &bak)
-            .map_err(|e| format!("Could not back up {}: {e}", config_path.display()))?;
-    }
-
+    // `write_config` backs up the existing config and rolls it back if the
+    // write does not land, so there is nothing to do here before it.
     let serialized = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Could not serialize updated config: {e}"))?;
     atomic_write(&config_path, &serialized)?;
@@ -925,5 +957,80 @@ trust_level = 'trusted'
         assert!(removed);
         assert!(text.contains("[profile]"), "{}", text);
         assert!(!text.contains("moddin"), "{}", text);
+    }
+
+    /// The write path owns the backup, so every caller gets one — the
+    /// `atomic_write` call sites used to write a user's `mcp.json` with
+    /// no `.moddin-bak` beside it at all.
+    #[test]
+    fn write_config_backs_up_the_config_it_replaces() {
+        let dir = temp_dir("write-backup");
+        let path = dir.join("mcp.json");
+        fs::write(&path, r#"{ "before": true }"#).unwrap();
+
+        write_config(&path, r#"{ "after": true }"#).expect("write should succeed");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{ "after": true }"#);
+        let bak = backup_path(&path);
+        assert!(bak.exists(), "{} should exist", bak.display());
+        assert_eq!(fs::read_to_string(&bak).unwrap(), r#"{ "before": true }"#);
+    }
+
+    #[test]
+    fn a_first_write_leaves_no_backup_behind() {
+        let dir = temp_dir("write-first");
+        let path = dir.join("mcp.json");
+
+        write_config(&path, "{ }").expect("write should succeed");
+
+        assert!(!backup_path(&path).exists(), "nothing to back up yet");
+    }
+
+    #[test]
+    fn restore_from_backup_puts_the_previous_config_back() {
+        let dir = temp_dir("restore");
+        let path = dir.join("mcp.json");
+        fs::write(&path, r#"{ "before": true }"#).unwrap();
+        write_config(&path, r#"{ "after": true }"#).unwrap();
+        // Whatever a failed write leaves behind, this is the state the
+        // user would be looking at.
+        fs::write(&path, r#"{ "after": tr"#).unwrap();
+
+        restore_from_backup(&path).expect("restore should succeed");
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{ "before": true }"#);
+        // Copied, not renamed: the backup is still there afterwards.
+        assert!(backup_path(&path).exists());
+    }
+
+    #[test]
+    fn restore_from_backup_says_when_there_is_nothing_to_restore() {
+        let dir = temp_dir("restore-missing");
+        let path = dir.join("mcp.json");
+        fs::write(&path, "{}").unwrap();
+
+        let error = restore_from_backup(&path).expect_err("no backup was ever taken");
+
+        assert!(error.contains("No backup file exists"), "{error}");
+        // The config it was asked about is untouched.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+    }
+
+    /// A write that does not land has to leave the user with the config
+    /// they had, and has to say what happened. A directory in the
+    /// config's place is the portable way to make `fs::write` fail:
+    /// there is no previous file to copy, so this also proves the
+    /// failure path reports that the rollback had nothing to work with
+    /// instead of claiming a restore it did not perform.
+    #[test]
+    fn a_failed_write_reports_that_the_config_could_not_be_restored() {
+        let dir = temp_dir("write-fails");
+        let path = dir.join("mcp.json");
+        fs::create_dir_all(&path).unwrap();
+
+        let error = write_config(&path, "{ }").expect_err("writing over a directory must fail");
+
+        assert!(error.contains("Could not write"), "{error}");
+        assert!(error.contains("No backup file exists"), "{error}");
     }
 }

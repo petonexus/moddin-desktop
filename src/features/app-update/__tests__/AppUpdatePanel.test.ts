@@ -226,6 +226,24 @@ describe('AppUpdatePanel failure is a sentence, not a stack', () => {
     expect(document.body.textContent).toContain(copy.notConfiguredDescription)
     expect(mockedInstall).not.toHaveBeenCalled()
   })
+
+  it('says so from the build status, before the user presses Check', async () => {
+    // The build already knows its key is a placeholder and says so
+    // without any network call. Offering a Check button whose only
+    // possible outcome is a refusal the user must trigger to learn
+    // about is the failure this closes.
+    mockedStatus.mockResolvedValue({
+      configured: false,
+      currentVersion: '0.1.0',
+      channel: 'stable',
+      detail: 'This build has no update signing key, so Moddin cannot verify an update.',
+    })
+    await openPanel()
+
+    expect(document.body.textContent).toContain(copy.notConfiguredTitle)
+    expect(mockedCheck).not.toHaveBeenCalled()
+    expect(mockedInstall).not.toHaveBeenCalled()
+  })
 })
 
 describe('AppUpdatePanel remembers a refusal', () => {

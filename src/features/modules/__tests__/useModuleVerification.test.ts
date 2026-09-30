@@ -4,6 +4,7 @@ import type { ToolModuleDefinition } from '../../../types/game'
 import type { GameCatalogEntry, InstalledGame } from '../../../types/game'
 import type { ObsVrPreview } from '../../../types/obs'
 import type { OptiScalerPreview } from '../../../types/optiscaler'
+import type { UevrPreview } from '../../../types/uevr'
 import type { ModuleUpdate } from '../../../types/module-update'
 import type { DesktopShortcutPreview } from '../../desktop-shortcut/types'
 import type { ModuleRequestContext } from '../module-registry'
@@ -43,11 +44,15 @@ vi.mock('../service', () => ({
   checkModuleUpdate: vi.fn(),
 }))
 
-import { checkModuleUpdate as checkModuleUpdateCommand, previewObsVr, previewOptiScaler } from '../service'
+import { checkModuleUpdate as checkModuleUpdateCommand, previewObsVr, previewOptiScaler, previewUevr } from '../service'
 import { useModuleVerification } from '../useModuleVerification'
+import en from '../../../i18n/locales/en'
+import es from '../../../i18n/locales/es'
+import ptBR from '../../../i18n/locales/pt-BR'
 
 const mockedPreviewObsVr = vi.mocked(previewObsVr)
 const mockedPreviewOptiScaler = vi.mocked(previewOptiScaler)
+const mockedPreviewUevr = vi.mocked(previewUevr)
 const mockedCheckModuleUpdate = vi.mocked(checkModuleUpdateCommand)
 
 const installed: InstalledGame = {
@@ -95,6 +100,46 @@ function optiscalerModule(): ToolModuleDefinition {
       proxyCandidates: 'dxgi.dll,version.dll',
       updateUrl: 'https://api.github.com/repos/optiscaler/OptiScaler/releases/latest',
     },
+  }
+}
+
+function uevrModule(): ToolModuleDefinition {
+  return {
+    id: 'uevr',
+    name: 'UEVR',
+    description: 'Inject the UEVR adapter.',
+    category: 'vr',
+    status: 'available',
+    config: {
+      versionPolicy: 'latest',
+      releaseApiUrl: 'https://api.github.com/repos/praydog/UEVR-nightly/releases/latest',
+    },
+  }
+}
+
+function uevrPreview(overrides: Partial<UevrPreview> = {}): UevrPreview {
+  return {
+    canApply: true,
+    gameRunning: false,
+    uevrRunning: false,
+    executableExists: true,
+    executablePath: 'C:\\Games\\Game\\Game.exe',
+    executableDirectory: 'C:\\Games\\Game',
+    engine: 'Unreal Engine',
+    engineVersion: '5.4',
+    engineConfidence: 'high',
+    engineEvidence: [],
+    backend: 'nightly',
+    backendLabel: 'UEVR-nightly',
+    selectedVersion: 'v1.16.3',
+    installed: false,
+    installedVersion: null,
+    installedBackend: null,
+    installDirectory: '%LOCALAPPDATA%\\UEVR',
+    manualInstallDetected: false,
+    changes: [],
+    warnings: [],
+    ...overrides,
   }
 }
 
@@ -174,6 +219,7 @@ function harness(games: Record<string, ToolModuleDefinition[]> = { 'elden-ring':
 beforeEach(() => {
   mockedPreviewObsVr.mockReset()
   mockedPreviewOptiScaler.mockReset()
+  mockedPreviewUevr.mockReset()
   mockedCheckModuleUpdate.mockReset()
   // An update check asks the module's own preview for the version that is
   // actually installed, so every optiscaler check starts here.
@@ -240,13 +286,38 @@ describe('verifying one module', () => {
 })
 
 describe('verifying every module of the selected game', () => {
-  it('skips a module whose card is hidden until its engine gate passes', async () => {
-    const uevr = obsModule({ id: 'uevr', name: 'UEVR' })
+  it('verifies UEVR like any other available module', async () => {
+    // It used to be skipped here, which left it the one available card
+    // sitting on "unknown" until the player pressed Verify — with no gate
+    // hiding the card to justify it. `preview_uevr` is the one preview
+    // that can reach the network, and only for a game that passes the
+    // local Unreal preflight, but the update check on the same selection
+    // already fetches the same release endpoint, so the skip bought
+    // nothing and cost the card its answer.
+    mockedPreviewUevr.mockResolvedValue(uevrPreview())
+    const uevr = uevrModule()
     const { store } = harness({ 'elden-ring': [obsModule(), uevr] })
 
     await store.verifyAvailableModules()
 
-    expect(mockedPreviewObsVr).toHaveBeenCalledTimes(1)
+    expect(mockedPreviewUevr).toHaveBeenCalledTimes(1)
+    expect(store.verificationFor(uevr)?.status).toBe('ready')
+    expect(store.verificationFor(uevr)?.checks.map((check) => check.label)).toContain('checkUevrEngine')
+  })
+
+  it('records what UEVR actually reports rather than assuming the engine', async () => {
+    // Elden Ring declares UEVR available on a non-Unreal engine. The
+    // check is the honest answer there: the engine check fails and the
+    // card says so, instead of the card quietly staying unknown.
+    mockedPreviewUevr.mockResolvedValue(uevrPreview({ engine: null, canApply: false, selectedVersion: null }))
+    const uevr = uevrModule()
+    const { store } = harness({ 'elden-ring': [uevr] })
+
+    await store.verifyAvailableModules()
+
+    const verification = store.verificationFor(uevr)
+    expect(verification?.status).toBe('attention')
+    expect(verification?.checks.find((check) => check.label === 'checkUevrEngine')?.passed).toBe(false)
   })
 
   it('reuses an answer that is still fresh', async () => {
@@ -285,16 +356,32 @@ describe('verifying every module of the selected game', () => {
 })
 
 describe('checking for a newer version', () => {
-  it('records "unavailable" without calling the backend for a recipe with no source', async () => {
+  it('records nothing for a recipe with no source, and never calls the backend', async () => {
     const { store } = harness()
     const module = obsModule()
 
     await store.checkModuleUpdate(module)
 
     expect(mockedCheckModuleUpdate).not.toHaveBeenCalled()
-    expect(store.updateFor(module)?.status).toBe('unavailable')
-    // The card hides the update area, so the card never asks for this.
+    // `hasUpdateSource` is the same predicate `checkModuleUpdate` uses, so
+    // the card hides its whole update area. There was nothing on screen for
+    // a record to explain: writing one only put a hardcoded English
+    // sentence in a store no renderer reads, and the localized answer the
+    // card would have shown is `updateNoSource` either way.
     expect(store.hasUpdateSource(module)).toBe(false)
+    expect(store.updateFor(module)).toBeUndefined()
+    expect(store.updateSummary(module)).toBe('updateNoSource')
+  })
+
+  it('says "no update source" in every language, because that is the answer the card gives', () => {
+    // The removed hardcoded sentence duplicated this key's job. If the
+    // three locales ever drift, the one string that still has to be
+    // translated is the one the card actually renders.
+    for (const [locale, messages] of Object.entries({ en, es, 'pt-BR': ptBR })) {
+      expect(messages.updateNoSource, `${locale} must translate updateNoSource`).toBeTruthy()
+      expect(messages.updateNoSource, `${locale} must not repeat the English sentence`)
+        .not.toBe('This module recipe does not define an update source.')
+    }
   })
 
   it('compares against the version the backend reports, not the recipe', async () => {

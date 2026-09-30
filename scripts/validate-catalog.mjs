@@ -665,12 +665,21 @@ for (const game of games) {
       continue
     }
     if (!presetModules.has(moduleId) && !offeredByApp(moduleId)) {
+      // Say what the player actually sees, so the next reader is not
+      // sent looking for a button that fails. A planned module renders a
+      // disabled "Planned" card and nothing is expected to run it, so
+      // the defect is the catalogue listing an id nothing backs — not a
+      // live action with no implementation behind it.
+      const renders = asString(module?.status) === 'planned'
+        ? 'it is planned, so the grid renders a disabled "Planned" card and no action is expected to run'
+        : 'it is not planned, so the grid renders a card whose action has nothing behind it'
       find(
         'module-not-offered',
         game.file,
         `modules[${moduleId}]`,
         `nothing offers "${moduleId}": it is not in the "${asString(data.enginePreset) ?? 'no'}" preset, ` +
-          'not a capability recipe in src-tauri/capabilities/, and no backend module or command implements it',
+          'not a capability recipe in src-tauri/capabilities/, and no backend module or command implements it; ' +
+          renders,
       )
     }
 
@@ -871,7 +880,7 @@ const KNOWN_DEFECTS = [
     rule: 'module-not-offered',
     file: 'src/catalog/games/doom-2016.yaml',
     key: 'modules[kharvox-vr]',
-    why: 'No preset, recipe, module or command offers kharvox-vr. The card renders and its primary action reports that it has no action.',
+    why: 'No preset, recipe, module or command offers kharvox-vr. It is planned, so the grid renders a disabled "Planned" card rather than a button that fails; the defect is the catalogue listing an id nothing implements.',
   },
   {
     rule: 'module-not-offered',
@@ -889,13 +898,13 @@ const KNOWN_DEFECTS = [
     rule: 'module-not-offered',
     file: 'src/catalog/games/dead-island-2.yaml',
     key: 'modules[cheeky-foveated-dlss-uevr]',
-    why: 'A near-duplicate of the cheeky-foveated-dlss module the unreal5 preset already adds, under an id nothing implements.',
+    why: 'A near-duplicate of the cheeky-foveated-dlss module the unreal5 preset already adds, under an id nothing implements. It is planned, so the card renders as a disabled "Planned" card, not as a button that fails.',
   },
   {
     rule: 'module-not-offered',
     file: 'src/catalog/games/stalker-2.yaml',
     key: 'modules[cheeky-foveated-dlss-uevr]',
-    why: 'Same near-duplicate id as dead-island-2; nothing implements it.',
+    why: 'Same near-duplicate id as dead-island-2; nothing implements it. It is planned, so the card renders as a disabled "Planned" card, not as a button that fails.',
   },
 ]
 
