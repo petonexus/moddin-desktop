@@ -580,6 +580,63 @@ const es = {
   profileErrorRevealWhy: 'El perfil sigue guardado. Abre la ruta de arriba en tu explorador de archivos.',
   profileErrorGenericTitle: 'La acción de perfil no terminó',
   profileErrorGenericWhy: 'Abre el detalle técnico abajo para ver lo que informó la aplicación.',
+  // Ids del backend (UX-21) — registro de acciones, traducido en features/activity/service.ts
+  activityActionConfigureObs: 'Configurar OBS VR',
+  activityActionUninstallObs: 'Quitar OBS VR',
+  activityActionInstallOptiscaler: 'Instalar OptiScaler',
+  activityActionUninstallOptiscaler: 'Quitar OptiScaler',
+  activityActionInstallOfxr: 'Instalar OFXR',
+  activityActionUninstallOfxr: 'Quitar OFXR',
+  activityActionInstallCheeky: 'Instalar Cheeky Foveated DLSS',
+  activityActionUninstallCheeky: 'Quitar Cheeky Foveated DLSS',
+  activityActionInstallUevr: 'Instalar UEVR',
+  activityActionUninstallUevr: 'Quitar UEVR',
+  activityActionRollbackLatest: 'Deshacer el último cambio',
+  activityActionRollback: 'Deshacer este cambio',
+  activityActionLaunchVr: 'Jugar en VR',
+  activityActionCreateShortcut: 'Crear un acceso directo en el escritorio',
+  activityActionSetGameRuntime: 'Elegir el programa de VR de este juego',
+  activityActionSetSystemRuntime: 'Elegir el programa de VR de Windows',
+
+  // Ids del backend (UX-21) — diagnósticos de VR, traducidos en features/openxr/service.ts
+  openxrWarningNoActiveRuntime: 'Windows no tiene ningún programa de VR en uso ahora.',
+  openxrWarningActiveRuntimeMissing: 'El valor ActiveRuntime de Windows apunta a un archivo que ya no está.',
+  openxrWarningGameOverrideMissing: 'El programa de VR guardado para este juego apunta a un archivo que no está, así que se ignora hasta que lo cambies.',
+  openxrWarningNoRuntimes: 'No se encontró ningún programa de VR en este PC.',
+
+  // Ids del backend (UX-21) — detalles de la IA local, traducidos en features/local-ai/service.ts
+  localAiDetailNotInstalled: 'Esta herramienta de IA no está instalada en este PC.',
+  localAiDetailNoConfigDir: 'Esta herramienta de IA está instalada, pero Moddin no encontró su carpeta de ajustes.',
+  localAiDetailForeignBinary: 'La entrada MCP de Moddin apunta a otro programa: {value}',
+  localAiDetailNoCommand: 'La entrada MCP de Moddin no tiene qué programa ejecutar.',
+  localAiDetailInstalledAt: 'Instalada en {value}. Pulsa Conectar para registrar Moddin.',
+
+  // Ids del backend (UX-21) — tarjeta de mod, traducida en features/capability-modules/service.ts
+  capabilityDescriptionBepinex: 'Deja que los juegos de Unity carguen mods y plugins, y es la base que necesitan la mayoría de los demás mods de Unity.',
+  capabilityDescriptionCheekyFoveatedDlss: 'Renderizado foveado barato y estable sobre DLSS: mantiene la nitidez donde estás mirando.',
+  capabilityDescriptionOfxrBridge: 'Envía la pantalla del PC a tus gafas de VR por OpenXR, para que los juegos sin VR funcionen en VR.',
+  capabilityDescriptionOpenxrHelpers: 'Elige qué programa de VR usan tus juegos y recuerda esa elección para cada juego.',
+  capabilityDescriptionOptiscaler: 'Añade DLSS Super Resolution a juegos que traen FSR, o ningún reescalado.',
+  capabilityDescriptionReframework: 'Marco de scripts para el motor RE: deja que los mods cambien el juego mientras corre.',
+  capabilityDescriptionReshade: 'Añade posprocesado a cualquier juego de DirectX: nitidez, brillo, corrección de color y antialiasing.',
+  capabilityDescriptionUe4ss: 'Marco de scripts para el motor Unreal: deja que los mods cambien el juego mientras corre.',
+  capabilityDescriptionUevr: 'Lleva el renderizado de VR del motor Unreal a los juegos de Unreal en pantalla plana.',
+  capabilityCheckArchiveReachable: 'Descarga accesible',
+  capabilityCheckArchiveSha256: 'La suma coincide',
+  capabilityCheckDoorstopPresent: 'Proxy de Doorstop instalado',
+  capabilityCheckEngineRecognised: 'Unreal Engine reconocido',
+  capabilityCheckPerGameRuntimeSet: 'Programa de VR definido para este juego',
+  capabilityCheckPreloaderPresent: 'Preloader de BepInEx instalado',
+  capabilityCheckRegistryWritable: 'Clave del registro escribible',
+  capabilityCheckRepositoryReachable: 'Repositorio accesible',
+  capabilityCheckTrayRunning: 'Icono del programa activo',
+
+  // Accesibilidad (UX-26/27/28) — nombre por ítem de los botones repetidos
+  // y las dos frases que anuncia un campo de configuración inválido.
+  ariaActionNamed: '{action} {name}',
+  ariaRemoveNamed: 'Quitar {name}',
+  ariaUndoNamed: 'Deshacer {name}',
+  capabilityFieldRequired: 'Este campo es obligatorio.',
 } as const
 
 export default es

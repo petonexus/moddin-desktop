@@ -8,6 +8,11 @@ const ptBR = {
   clear: 'Apagar registro',
   close: 'Fechar',
   search: 'Buscar no registro…',
+  // UX-27: the two toolbar controls that decide what is on screen had a
+  // placeholder and nothing else, so a screen reader announced them as
+  // "edit, search" and "combo box". These are their names.
+  searchLabel: 'Buscar no registro de atividades',
+  levelLabel: 'Filtrar por nível',
   all: 'Todos',
   success: 'sucesso',
   error: 'erro',
@@ -39,6 +44,8 @@ const activityMessages = defineLocalizedCopy(
     clear: 'Clear log',
     close: 'Close',
     search: 'Search the log…',
+    searchLabel: 'Search the activity log',
+    levelLabel: 'Filter by level',
     all: 'All',
     success: 'success',
     error: 'error',
@@ -67,6 +74,8 @@ const activityMessages = defineLocalizedCopy(
     clear: 'Borrar registro',
     close: 'Cerrar',
     search: 'Buscar en el registro…',
+    searchLabel: 'Buscar en el registro de actividad',
+    levelLabel: 'Filtrar por nivel',
     all: 'Todos',
     success: 'éxito',
     error: 'error',

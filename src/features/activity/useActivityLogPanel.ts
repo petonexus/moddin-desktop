@@ -27,7 +27,10 @@ export function useActivityLogPanel() {
     return logs.value.filter((entry) => {
       if (level.value !== 'all' && entry.level !== level.value) return false
       if (!term) return true
-      return [entry.action, entry.gameId, entry.message, entry.transactionId]
+      // The command name is searched as well as the row's other fields, so
+      // someone who remembers `install_optiscaler` finds the row even
+      // though the row now says "Instalar o OptiScaler".
+      return [entry.action.text, entry.gameId, entry.message, entry.transactionId]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
     })

@@ -2,7 +2,8 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CapabilityModulesSection from '../CapabilityModulesSection.vue'
 import { i18n } from '../../../i18n'
-import type { CapabilitySummary, InstallResult } from '../../../types/capability'
+import ptBR from '../../../i18n/locales/pt-BR'
+import type { CapabilitySpec, CapabilitySummary, InstallResult } from '../../../types/capability'
 import type { CapabilityVerificationReport } from '../types'
 import type { TransactionRecord } from '../../../types/transaction'
 
@@ -369,5 +370,128 @@ describe('capability section loading', () => {
     const wrapper = await render()
 
     expect(wrapper.find('.callout-danger').text()).toContain('capability_list unavailable')
+  })
+})
+
+/**
+ * ROADMAP UX-21 at the component: a pt-BR user reading the mod gallery
+ * should not be reading the recipe's English to decide what to install.
+ *
+ * The `descriptionKey` on the fixture is what the real service attaches
+ * (`../service` is mocked here), so this is the same shape the app runs
+ * with — the assertion is about what the card renders, not about the
+ * table.
+ */
+describe('capability card text in pt-BR', () => {
+  it('renders the locale description, not the recipe sentence', async () => {
+    mockedList.mockResolvedValue([
+      { ...CAPABILITY, descriptionKey: 'capabilityDescriptionBepinex' },
+    ])
+    i18n.global.locale.value = 'pt-BR'
+
+    const card = (await render()).find('.module-card')
+
+    expect(card.text()).toContain(ptBR.capabilityDescriptionBepinex)
+    expect(card.text()).not.toContain(CAPABILITY.description ?? '')
+  })
+
+  it('falls back to the recipe\'s own sentence for a recipe with no key', async () => {
+    // A community or AI-authored recipe: the app has no translation and
+    // is not going to invent one for text somebody else wrote.
+    mockedList.mockResolvedValue([{ ...CAPABILITY, description: 'Loads plugins into the game.' }])
+    i18n.global.locale.value = 'pt-BR'
+
+    const card = (await render()).find('.module-card')
+
+    expect(card.text()).toContain('Loads plugins into the game.')
+  })
+})
+
+/**
+ * ROADMAP UX-26 and UX-29 on the card: the gallery is a grid of cards
+ * that each carry the same three buttons, and a card swaps its label for
+ * a spinner while it works. The attributes are the contract.
+ */
+describe('capability card accessibility', () => {
+  it('names each action for the card it acts on', async () => {
+    const installed = (await render([transaction()])).find('.module-card')
+    const labels = installed.findAll('button').map((button) => button.attributes('aria-label'))
+
+    // Installed, so the primary action is Reinstall — and the name still
+    // says which card it belongs to.
+    expect(labels).toContain('Reinstall BepInEx')
+    expect(labels).toContain('Check BepInEx')
+    expect(labels).toContain('Remove BepInEx')
+
+    const available = (await render([])).find('.module-card')
+    expect(available.findAll('button').map((button) => button.attributes('aria-label')))
+      .toContain('Install BepInEx')
+  })
+
+  it('marks the card busy while a check runs, and not while it is idle', async () => {
+    const gate = deferred<CapabilityVerificationReport>()
+    mockedVerify.mockImplementation(() => gate.promise)
+    const wrapper = await render([transaction()])
+    expect(wrapper.find('.capability-cell').attributes('aria-busy')).toBe('false')
+
+    void buttonLabelled(wrapper, 'Check')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.capability-cell').attributes('aria-busy')).toBe('true')
+  })
+})
+
+/**
+ * ROADMAP UX-28: `aria-required` says what the recipe demands, and
+ * `aria-invalid` says what the validation state actually is. They are
+ * deliberately different moments — a required field the user has not
+ * touched yet is not an error, and announcing it as one is how a form
+ * ends up reading as a wall of complaints before anyone has typed.
+ */
+describe('capability config field accessibility', () => {
+  const SPEC_WITH_FIELDS: CapabilitySpec = {
+    id: 'bepinex',
+    displayName: 'BepInEx',
+    category: 'qol',
+    status: 'available',
+    configSchema: [
+      { name: 'targetFramework', type: 'string', required: true, description: 'Which Unity build to install for.' },
+      { name: 'channel', type: 'enum', required: false, enumValues: ['stable', 'bleeding'] },
+    ],
+  }
+
+  beforeEach(() => {
+    mockedSpec.mockResolvedValue(SPEC_WITH_FIELDS)
+  })
+
+  it('marks a required field as required, and not as invalid before anything is refused', async () => {
+    const field = (await render()).find('#capability-field-bepinex-targetFramework')
+
+    expect(field.attributes('aria-required')).toBe('true')
+    expect(field.attributes('aria-invalid')).toBeUndefined()
+    expect(field.attributes('aria-describedby')).toBe('capability-field-bepinex-targetFramework-hint')
+  })
+
+  it('leaves an optional field unmarked', async () => {
+    const field = (await render()).find('#capability-field-bepinex-channel')
+
+    expect(field.attributes('aria-required')).toBeUndefined()
+    expect(field.attributes('aria-invalid')).toBeUndefined()
+  })
+
+  it('marks the field invalid once an install is refused because of it', async () => {
+    const wrapper = await render()
+
+    await buttonLabelled(wrapper, 'Install')?.trigger('click')
+    await flushPromises()
+
+    const field = wrapper.find('#capability-field-bepinex-targetFramework')
+    expect(field.attributes('aria-invalid')).toBe('true')
+    expect(field.attributes('aria-describedby'))
+      .toContain('capability-field-bepinex-targetFramework-error')
+    expect(wrapper.find('#capability-field-bepinex-targetFramework-error').text())
+      .toContain('This field is required.')
+    // The install really was refused, not merely annotated.
+    expect(mockedInstall).not.toHaveBeenCalled()
   })
 })

@@ -65,7 +65,7 @@ const isPlanned = computed(() => props.state === 'planned')
 </script>
 
 <template>
-  <article class="module-card" :class="[`is-${state}`]">
+  <article class="module-card" :class="[`is-${state}`]" :aria-busy="actionBusy || verifyBusy">
     <header class="module-card-header">
       <h4>{{ name }}</h4>
       <span class="badge" :class="stateMeta.tone">{{ stateMeta.label }}</span>
@@ -93,12 +93,21 @@ const isPlanned = computed(() => props.state === 'planned')
     </div>
 
     <footer v-if="!isPlanned" class="module-card-actions">
+      <!--
+        UX-26: the gallery renders a grid of these, so "Install",
+        "Check" and "Remove" appear once per card. Tabbing through the
+        grid read as the same three buttons over and over. Each name
+        carries the card it acts on, and keeps its own visible text so
+        the two never drift apart for voice control.
+      -->
       <button
         class="btn btn-sm"
         :class="{ 'btn-primary': actionPrimary, 'is-loading': actionBusy }"
         type="button"
         :disabled="actionDisabled"
         :title="blockedReason"
+        :aria-label="t('ariaActionNamed', { action: actionLabel, name })"
+        :aria-busy="actionBusy"
         @click="emit('action')"
       >
         {{ actionLabel }}
@@ -109,6 +118,8 @@ const isPlanned = computed(() => props.state === 'planned')
         type="button"
         :disabled="verifyBusy || actionBusy || Boolean(blockedReason)"
         :title="blockedReason"
+        :aria-label="t('ariaActionNamed', { action: verifyBusy ? t('actionChecking') : t('actionCheck'), name })"
+        :aria-busy="verifyBusy"
         @click="emit('verify')"
       >
         {{ verifyBusy ? t('actionChecking') : t('actionCheck') }}
@@ -119,6 +130,7 @@ const isPlanned = computed(() => props.state === 'planned')
         type="button"
         :disabled="actionDisabled"
         :title="blockedReason"
+        :aria-label="t('ariaRemoveNamed', { name })"
         @click="emit('remove')"
       >
         {{ removeLabel }}

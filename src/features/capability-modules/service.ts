@@ -10,12 +10,16 @@ import type {
   ResolvedConfig,
 } from '../../types/capability'
 import type { TransactionRecord } from '../../types/transaction'
+import { capabilityCheckLabel, capabilityDescriptionKey } from '../../i18n/backendIds'
 import type {
   CapabilityCompatibilityParams,
   CapabilityEvaluateParams,
   CapabilityInstallParams,
   CapabilityUninstallParams,
   CapabilityVerificationReport,
+  CapabilityCheckOutcomeView,
+  CapabilityVerificationReportView,
+  CapabilitySummaryView,
 } from './types'
 
 /**
@@ -90,7 +94,25 @@ export function listCapabilities(engine?: string | null) {
   return invoke<CapabilitySummary[]>(
     'capability_list',
     engine ? { engine } : {},
-  )
+  ).then((summaries) => summaries.map(toCapabilitySummaryView))
+}
+
+/**
+ * UX-21: the card's `description` is a sentence this project wrote in a
+ * recipe, and the recipes are English. A pt-BR user reading the mod
+ * gallery was reading English to decide whether to install something.
+ *
+ * The key is attached here, next to the original string, and the section
+ * renders the key when it is there. A recipe this table does not declare
+ * — a community mod, one the AI saved — keeps the sentence its author
+ * wrote; see the fallback note in `src/i18n/backendIds.ts`.
+ *
+ * Exported because it is the boundary itself: pure, and the one thing
+ * worth asserting on without standing up the Tauri bridge.
+ */
+export function toCapabilitySummaryView(summary: CapabilitySummary): CapabilitySummaryView {
+  const key = capabilityDescriptionKey(summary.id)
+  return key ? { ...summary, descriptionKey: key } : { ...summary }
 }
 
 /** Full recipe for one capability (config schema, safety notes, checks). */
@@ -104,7 +126,9 @@ export function getCapabilitySpec(capabilityId: string) {
  * which also downloads archives for the `archive-sha256` check.
  */
 export function getCapabilityCompatibility(params: CapabilityCompatibilityParams) {
-  return invoke<CapabilityCheckOutcome | null>('capability_compatibility', { request: params })
+  return invoke<CapabilityCheckOutcome | null>('capability_compatibility', { request: params }).then(
+    (outcome) => (outcome ? toCapabilityCheckView(outcome) : null),
+  )
 }
 
 export function installCapability(params: CapabilityInstallParams) {
@@ -116,7 +140,27 @@ export function uninstallCapability(params: CapabilityUninstallParams) {
 }
 
 export function evaluateCapability(params: CapabilityEvaluateParams) {
-  return invoke<CapabilityVerificationReport>('capability_evaluate', { request: params })
+  return invoke<CapabilityVerificationReport>('capability_evaluate', { request: params }).then(
+    (report) => ({
+      ...report,
+      checks: report.checks.map(toCapabilityCheckView),
+    }),
+  )
+}
+
+/**
+ * UX-21: a check's `label` is the recipe author's sentence, and the
+ * recipes this repository ships write it in English. The check **id** is
+ * the identifier the backend sends and the table is keyed by it, so the
+ * card can show a translated label without ever seeing the id.
+ *
+ * An id with no entry keeps the recipe's own label — that string is the
+ * author's copy, not the backend's, and a community recipe's check
+ * should read the way its author wrote it.
+ */
+export function toCapabilityCheckView(outcome: CapabilityCheckOutcome): CapabilityCheckOutcomeView {
+  const key = capabilityCheckLabel(outcome.id)
+  return key ? { ...outcome, labelKey: key } : { ...outcome }
 }
 
 export type { ResolvedConfig }

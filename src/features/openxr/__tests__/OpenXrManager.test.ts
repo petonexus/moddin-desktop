@@ -163,3 +163,64 @@ describe('OpenXrManager Windows-wide runtime confirmation', () => {
     expect(mockedSetSystem).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * ROADMAP UX-21 for `state.warnings`, and UX-26/29 for the runtime list.
+ *
+ * The warnings are the backend's own diagnosis sentences — a registry
+ * value pointing at a manifest that is gone — and they are the reason
+ * the user is looking at this dialog at all. The service attaches the
+ * locale key; here the state arrives already shaped that way, which is
+ * what the panel has to render.
+ */
+describe('OpenXrManager warnings and per-app actions', () => {
+  const WITH_WARNING: OpenXrState = {
+    ...STATE,
+    warnings: [
+      {
+        text: 'Windows does not currently define an active OpenXR runtime.',
+        key: 'openxrWarningNoActiveRuntime',
+      },
+    ],
+  }
+
+  it('renders the locale sentence for a declared warning', async () => {
+    mockedInspect.mockResolvedValue(WITH_WARNING)
+    await openManager()
+
+    const warnings = document.body.querySelectorAll('.callout-warning .note-list li')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0].textContent).toBe('Windows has no VR app set as the active one right now.')
+    expect(warnings[0].textContent).not.toContain('Windows does not currently define')
+  })
+
+  it('keeps the backend sentence for a warning nobody declared', async () => {
+    mockedInspect.mockResolvedValue({
+      ...STATE,
+      warnings: [{ text: 'A warning the backend has not written yet.' }],
+    })
+    await openManager()
+
+    // The documented fallback in `src/i18n/backendIds.ts`.
+    expect(document.body.querySelector('.callout-warning .note-list li')?.textContent)
+      .toBe('A warning the backend has not written yet.')
+  })
+
+  it('names each per-app button after the app it acts on', async () => {
+    await openManager()
+
+    const names = Array.from(document.body.querySelectorAll('.openxr-runtime-actions button'))
+      .map((button) => button.getAttribute('aria-label'))
+    // Two apps in the fixture, so two of each action, each naming its app.
+    expect(names).toContain('Make default SteamVR')
+    expect(names).toContain('Make default Oculus')
+    // The visible text is still the first thing in the name.
+    expect(names.filter((name) => name?.startsWith('Make default'))).toHaveLength(2)
+  })
+
+  it('marks a runtime row busy while it is being applied', async () => {
+    await openManager()
+    const rows = Array.from(document.body.querySelectorAll('.openxr-runtime'))
+    expect(rows.map((row) => row.getAttribute('aria-busy'))).toEqual(['false', 'false'])
+  })
+})

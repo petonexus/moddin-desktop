@@ -6,12 +6,14 @@ import BaseDialog from '../../components/ui/BaseDialog.vue'
 import ErrorCallout from '../../components/ui/ErrorCallout.vue'
 import EmptyState from '../../components/ui/EmptyState.vue'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
+import { useBackendText } from '../../composables/useBackendText'
 import { dateLocaleFor } from '../../i18n/locale'
 import { activityCopyForLocale } from './copy'
 import { useActivityLogPanel } from './useActivityLogPanel'
 
 const { locale } = useI18n()
 const copy = computed(() => activityCopyForLocale(locale.value))
+const { text } = useBackendText()
 
 const {
   open,
@@ -85,8 +87,22 @@ async function clearLogs() {
       @close="closePanel"
     >
       <div class="activity-toolbar">
-        <input v-model="search" class="input" type="search" :placeholder="copy.search" />
-        <select v-model="level" class="select">
+        <!--
+          UX-27: a placeholder is not a label, and the level `<select>` had
+          neither. These are the two controls that decide which entries
+          are on screen, and they were the two a screen-reader user could
+          not name. `.sr-only` labels, the same shape the game list uses.
+        -->
+        <label class="sr-only" for="activity-search">{{ copy.searchLabel }}</label>
+        <input
+          id="activity-search"
+          v-model="search"
+          class="input"
+          type="search"
+          :placeholder="copy.search"
+        />
+        <label class="sr-only" for="activity-level">{{ copy.levelLabel }}</label>
+        <select id="activity-level" v-model="level" class="select">
           <option value="all">{{ copy.all }}</option>
           <option value="success">{{ copy.success }}</option>
           <option value="error">{{ copy.error }}</option>
@@ -107,11 +123,11 @@ async function clearLogs() {
         :description="copy.empty"
       />
 
-      <div v-else class="activity-list">
+      <div v-else class="activity-list" :aria-busy="loading || clearing">
         <article v-for="entry in filteredLogs" :key="entry.id" class="activity-entry" :class="`level-${entry.level}`">
           <div class="activity-entry-top">
             <span class="badge" :class="levelBadge(entry.level)">{{ copy[entry.level] }}</span>
-            <strong>{{ entry.action }}</strong>
+            <strong>{{ text(entry.action) }}</strong>
             <time>{{ formatDate(entry.timestamp) }}</time>
           </div>
           <p>{{ entry.message }}</p>

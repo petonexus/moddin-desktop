@@ -171,3 +171,97 @@ describe('LocalAiPanel disconnect confirmation', () => {
     expect(mockedRemove).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * ROADMAP UX-21 for `agent.detail`, and UX-26/29 for the agent row.
+ *
+ * `detect` is mocked, so the agents arrive in the shape the real service
+ * hands over: the backend's own sentence as `text`, the locale key
+ * beside it when the table declares one.
+ */
+describe('LocalAiPanel agent detail and row actions', () => {
+  const NOT_INSTALLED = {
+    id: 'cursor' as const,
+    displayName: 'Cursor',
+    state: 'notInstalled' as const,
+    configPath: null,
+    binaryPath: null,
+    detail: {
+      text: 'AI tool is not installed on this PC.',
+      key: 'localAiDetailNotInstalled' as const,
+    },
+  }
+
+  beforeEach(() => {
+    mockedDetect.mockResolvedValue([NOT_INSTALLED])
+  })
+
+  it('renders the locale sentence for a declared detail', async () => {
+    await openPanel()
+
+    expect(document.body.querySelector('.agent-detail')?.textContent)
+      .toBe('This AI tool is not installed on this PC.')
+  })
+
+  it('carries the interpolated path through the key', async () => {
+    mockedDetect.mockResolvedValue([
+      {
+        ...NOT_INSTALLED,
+        state: 'detectedNotConfigured' as const,
+        binaryPath: 'C:\\tools\\cursor.exe',
+        detail: {
+          text: 'AI tool installed at C:\\tools\\cursor.exe. Click Connect to register Moddin.',
+          key: 'localAiDetailInstalledAt' as const,
+          params: { value: 'C:\\tools\\cursor.exe' },
+        },
+      },
+    ])
+    await openPanel()
+
+    expect(document.body.querySelector('.agent-detail')?.textContent)
+      .toBe('Installed at C:\\tools\\cursor.exe. Click Connect to register Moddin.')
+  })
+
+  it('keeps a real I/O error as the detail', async () => {
+    mockedDetect.mockResolvedValue([
+      {
+        ...NOT_INSTALLED,
+        state: 'configError' as const,
+        detail: { text: 'EACCES: permission denied (os error 5)' },
+      },
+    ])
+    await openPanel()
+
+    expect(document.body.querySelector('.agent-detail')?.textContent)
+      .toBe('EACCES: permission denied (os error 5)')
+  })
+
+  it('names the connect button after the agent, and marks the row busy', async () => {
+    mockedDetect.mockResolvedValue([{ ...NOT_INSTALLED, state: 'detectedNotConfigured' as const }])
+    await openPanel()
+
+    const card = document.body.querySelector('.agent-card') as HTMLElement
+    expect(card.getAttribute('aria-busy')).toBe('false')
+    const connect = Array.from(card.querySelectorAll('button'))
+      .find((button) => button.textContent?.trim() === copy.connect)
+    expect(connect?.getAttribute('aria-label')).toBe('Connect Cursor')
+  })
+
+  it('names the disconnect button after the agent too', async () => {
+    mockedDetect.mockResolvedValue([
+      {
+        id: 'claudeDesktop' as const,
+        displayName: 'Claude Desktop',
+        state: 'configured' as const,
+        configPath: 'C:\\Users\\marco\\.claude\\settings.json',
+        binaryPath: 'C:\\tools\\claude.exe',
+        detail: null,
+      },
+    ])
+    await openPanel()
+
+    const disconnect = Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent?.trim() === copy.disconnect)
+    expect(disconnect?.getAttribute('aria-label')).toBe('Disconnect Claude Desktop')
+  })
+})

@@ -133,3 +133,42 @@ describe('HistoryView undo confirmation', () => {
     expect(dialog()).toBeNull()
   })
 })
+
+/**
+ * ROADMAP UX-26 and UX-29 for the history list.
+ *
+ * Every row's button reads "Undo", and the list is nothing but rows, so
+ * the button was the one thing on screen that did not say which change
+ * it would reverse. The row is also the region that changes while an
+ * undo runs.
+ */
+describe('HistoryView row accessibility', () => {
+  it('names the undo button after the change it would reverse', () => {
+    const wrapper = render([
+      record(),
+      record({ id: 'tx-2', label: 'OptiScaler' }),
+    ])
+
+    expect(wrapper.findAll('.history-row button').map((button) => button.attributes('aria-label')))
+      .toEqual(['Undo OBS VR Capture', 'Undo OptiScaler'])
+  })
+
+  it('marks the list busy while it is loading and not otherwise', () => {
+    expect(render().find('.history-list').attributes('aria-busy')).toBe('false')
+
+    const loading = mount(HistoryView, {
+      props: {
+        transactions: [],
+        loading: true,
+        busyId: null,
+        gameName: () => 'Elden Ring',
+        kindLabel: () => 'Module',
+        formatDate: () => '29/09/2026',
+        blockedReason: () => undefined,
+      },
+      attachTo: document.body,
+      global: { plugins: [i18n] },
+    })
+    expect(loading.find('.history-list').attributes('aria-busy')).toBe('true')
+  })
+})

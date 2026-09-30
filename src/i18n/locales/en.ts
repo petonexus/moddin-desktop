@@ -580,6 +580,63 @@ const en = {
   profileErrorRevealWhy: 'The profile is still saved. Open the path above in your file browser.',
   profileErrorGenericTitle: 'The profile action did not finish',
   profileErrorGenericWhy: 'Open the technical detail below to see what the app reported.',
+  // Backend ids (UX-21) — action log, mapped in features/activity/service.ts
+  activityActionConfigureObs: 'Set up OBS VR',
+  activityActionUninstallObs: 'Remove OBS VR',
+  activityActionInstallOptiscaler: 'Install OptiScaler',
+  activityActionUninstallOptiscaler: 'Remove OptiScaler',
+  activityActionInstallOfxr: 'Install OFXR',
+  activityActionUninstallOfxr: 'Remove OFXR',
+  activityActionInstallCheeky: 'Install Cheeky Foveated DLSS',
+  activityActionUninstallCheeky: 'Remove Cheeky Foveated DLSS',
+  activityActionInstallUevr: 'Install UEVR',
+  activityActionUninstallUevr: 'Remove UEVR',
+  activityActionRollbackLatest: 'Undo the last change',
+  activityActionRollback: 'Undo this change',
+  activityActionLaunchVr: 'Play in VR',
+  activityActionCreateShortcut: 'Create a desktop shortcut',
+  activityActionSetGameRuntime: 'Set the VR app for this game',
+  activityActionSetSystemRuntime: 'Set the Windows VR app',
+
+  // Backend ids (UX-21) — OpenXR diagnostics, mapped in features/openxr/service.ts
+  openxrWarningNoActiveRuntime: 'Windows has no VR app set as the active one right now.',
+  openxrWarningActiveRuntimeMissing: 'The Windows ActiveRuntime value points at a manifest file that is no longer there.',
+  openxrWarningGameOverrideMissing: 'The VR app saved for this game points at a manifest file that is gone, so it is ignored until you change it.',
+  openxrWarningNoRuntimes: 'No VR app was found on this PC.',
+
+  // Backend ids (UX-21) — Local AI details, mapped in features/local-ai/service.ts
+  localAiDetailNotInstalled: 'This AI tool is not installed on this PC.',
+  localAiDetailNoConfigDir: 'This AI tool is installed, but Moddin could not find its settings folder.',
+  localAiDetailForeignBinary: 'The Moddin MCP entry points at a different program: {value}',
+  localAiDetailNoCommand: 'The Moddin MCP entry has no program to run.',
+  localAiDetailInstalledAt: 'Installed at {value}. Click Connect to register Moddin.',
+
+  // Backend ids (UX-21) — capability card, mapped in features/capability-modules/service.ts
+  capabilityDescriptionBepinex: 'Lets Unity games load mods and plugins, and is the base most other Unity mods need.',
+  capabilityDescriptionCheekyFoveatedDlss: 'Cheap, stable foveated rendering on top of DLSS — keeps sharpness where you are looking.',
+  capabilityDescriptionOfxrBridge: 'Streams the flat desktop into a VR headset through OpenXR, so non-VR games work in VR.',
+  capabilityDescriptionOpenxrHelpers: 'Chooses which OpenXR runtime your games use, and remembers that choice per game.',
+  capabilityDescriptionOptiscaler: 'Adds DLSS Super Resolution to games that ship FSR instead, or no upscaler at all.',
+  capabilityDescriptionReframework: 'Scripting framework for RE Engine — lets mods change the game while it is running.',
+  capabilityDescriptionReshade: 'Adds post-processing to any DirectX game — sharpening, bloom, colour correction and anti-aliasing.',
+  capabilityDescriptionUe4ss: 'Scripting framework for Unreal Engine — lets mods change the game while it is running.',
+  capabilityDescriptionUevr: 'Brings Unreal Engine VR rendering to flat-screen Unreal games.',
+  capabilityCheckArchiveReachable: 'Download reachable',
+  capabilityCheckArchiveSha256: 'Checksum matches',
+  capabilityCheckDoorstopPresent: 'Doorstop proxy installed',
+  capabilityCheckEngineRecognised: 'Unreal Engine detected',
+  capabilityCheckPerGameRuntimeSet: 'VR app set for this game',
+  capabilityCheckPreloaderPresent: 'BepInEx preloader installed',
+  capabilityCheckRegistryWritable: 'Registry key writable',
+  capabilityCheckRepositoryReachable: 'Repository reachable',
+  capabilityCheckTrayRunning: 'Tray app running',
+
+  // Accessibility (UX-26/27/28) — per-item names for repeated buttons,
+  // and the two sentences a config field announces when it is not valid.
+  ariaActionNamed: '{action} {name}',
+  ariaRemoveNamed: 'Remove {name}',
+  ariaUndoNamed: 'Undo {name}',
+  capabilityFieldRequired: 'This field is required.',
 } as const
 
 export default en

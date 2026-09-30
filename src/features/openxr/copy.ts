@@ -22,6 +22,10 @@ const ptBR = {
   useForGame: 'Usar só neste jogo',
   makeSystem: 'Tornar padrão',
   applying: 'Aplicando…',
+  // UX-26: one of these two buttons per VR app on the machine, so the
+  // label carries the app it acts on. `{action}` stays the visible text,
+  // which keeps the two in step for voice control.
+  actionNamed: '{action} {name}',
   noRuntimes: 'Nenhum programa de VR foi encontrado. Instale e abra o SteamVR, o app da Meta ou outro programa compatível com OpenXR.',
   gameHint: 'A escolha para um jogo só vale quando você o abre pelo Moddin. O padrão do Windows continua o mesmo.',
   systemHint: 'Mudar o padrão afeta todos os jogos de VR e o Windows vai pedir permissão de administrador.',
@@ -64,6 +68,7 @@ const openXrMessages = defineLocalizedCopy(
     useForGame: 'Use just for this game',
     makeSystem: 'Make default',
     applying: 'Applying…',
+    actionNamed: '{action} {name}',
     noRuntimes: 'No VR app was found. Install and open SteamVR, the Meta app or another OpenXR-compatible app.',
     gameHint: 'A per-game choice only applies when you open the game through Moddin. The Windows default stays the same.',
     systemHint: 'Changing the default affects every VR game, and Windows will ask for administrator permission.',
@@ -103,6 +108,7 @@ const openXrMessages = defineLocalizedCopy(
     useForGame: 'Usar solo en este juego',
     makeSystem: 'Hacer predeterminado',
     applying: 'Aplicando…',
+    actionNamed: '{action} {name}',
     noRuntimes: 'No se encontró ningún programa de VR. Instala y abre SteamVR, la app de Meta u otro programa compatible con OpenXR.',
     gameHint: 'La elección por juego solo se aplica cuando lo abres desde Moddin. El predeterminado de Windows no cambia.',
     systemHint: 'Cambiar el predeterminado afecta a todos los juegos de VR y Windows pedirá permiso de administrador.',
@@ -124,4 +130,10 @@ const openXrMessages = defineLocalizedCopy(
 
 export function openXrCopyForLocale(locale: string) {
   return localizedCopyFor(openXrMessages, locale)
+}
+
+export function formatOpenXrCopy(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) =>
+    vars[key] !== undefined ? String(vars[key]) : `{${key}}`,
+  )
 }

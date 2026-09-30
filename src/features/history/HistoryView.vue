@@ -80,7 +80,7 @@ function confirmUndo() {
       </div>
     </div>
 
-    <div class="panel history-list">
+    <div class="panel history-list" :aria-busy="loading">
       <EmptyState
         v-if="loading && !transactions.length"
         busy
@@ -120,6 +120,8 @@ function confirmUndo() {
           type="button"
           :disabled="busyId === transaction.id || Boolean(blockedReason(transaction))"
           :title="blockedReason(transaction)"
+          :aria-label="t('ariaUndoNamed', { name: transaction.label })"
+          :aria-busy="busyId === transaction.id"
           @click="askUndo(transaction)"
         >
           <AppIcon v-if="busyId !== transaction.id" name="undo" :size="14" />

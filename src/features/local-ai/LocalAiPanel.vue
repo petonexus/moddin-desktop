@@ -7,12 +7,19 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import ErrorCallout from '../../components/ui/ErrorCallout.vue'
 import EmptyState from '../../components/ui/EmptyState.vue'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
+import { useBackendText } from '../../composables/useBackendText'
 import { resolveResourceDir, detectAgents, setupAgent, removeAgent } from './service'
 import type { AiAgent } from './types'
 import { localAiCopyForLocale, formatLocalAiCopy } from './copy'
 
 const { locale } = useI18n()
 const copy = computed(() => localAiCopyForLocale(locale.value))
+const { text } = useBackendText()
+
+/** UX-26: one "Connect" per agent, so the name carries the agent. */
+function agentActionLabel(action: string, name: string): string {
+  return formatLocalAiCopy(copy.value.actionNamed, { action, name })
+}
 
 const open = ref(false)
 const loading = ref(false)
@@ -168,7 +175,12 @@ async function confirmDisconnect() {
       <ErrorCallout :error="friendlyError" />
 
       <ul class="agent-list">
-        <li v-for="agent in agents" :key="agent.id" class="agent-card">
+        <li
+          v-for="agent in agents"
+          :key="agent.id"
+          class="agent-card"
+          :aria-busy="busyAgent === agent.id"
+        >
           <header>
             <h3>{{ agent.displayName }}</h3>
             <span :class="badgeClass(agent.state)">{{ badgeLabel(agent.state) }}</span>
@@ -195,7 +207,7 @@ async function confirmDisconnect() {
             </div>
           </dl>
 
-          <p v-if="agent.detail" class="agent-detail">{{ agent.detail }}</p>
+          <p v-if="agent.detail" class="agent-detail">{{ text(agent.detail) }}</p>
 
           <footer>
             <button
@@ -204,6 +216,7 @@ async function confirmDisconnect() {
               class="btn btn-primary btn-sm"
               :class="{ 'is-loading': busyAgent === agent.id }"
               :disabled="busyAgent === agent.id"
+              :aria-label="agentActionLabel(copy.connect, agent.displayName)"
               @click="connect(agent)"
             >
               {{ copy.connect }}
@@ -213,6 +226,7 @@ async function confirmDisconnect() {
               type="button"
               class="btn btn-ghost btn-sm"
               :disabled="busyAgent === agent.id"
+              :aria-label="agentActionLabel(copy.disconnect, agent.displayName)"
               @click="disconnect(agent)"
             >
               {{ copy.disconnect }}

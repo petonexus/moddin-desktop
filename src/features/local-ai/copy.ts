@@ -31,6 +31,10 @@ const ptBR = {
   disconnectConfirmDescription: '{name} vai parar de responder ao Moddin.',
   disconnectConfirmDetail: 'O Moddin reescreve o arquivo de configuração do seu editor para apontar para o servidor do Moddin — desfazer devolve o conteúdo original.',
   disconnectCancel: 'Cancelar',
+  // UX-26: one Connect and one Disconnect per agent, so the button name
+  // carries the agent. `{action}` stays the visible text, which keeps
+  // the two in step for voice control.
+  actionNamed: '{action} {name}',
   installCursorHint: 'Você não tem o Cursor instalado. Baixe em cursor.com e clique em "Atualizar status" depois.',
 } as const
 
@@ -65,6 +69,7 @@ const enUS = {
   disconnectConfirmDescription: '{name} will stop responding to Moddin.',
   disconnectConfirmDetail: 'Moddin rewrites your editor config to point at the Moddin server — undoing restores the original content.',
   disconnectCancel: 'Cancel',
+  actionNamed: '{action} {name}',
   installCursorHint: 'You do not have Cursor installed. Download it from cursor.com then click "Refresh status".',
 } as const
 
@@ -99,6 +104,7 @@ const esES = {
   disconnectConfirmDescription: '{name} dejará de responder a Moddin.',
   disconnectConfirmDetail: 'Moddin reescribe la configuración de tu editor para apuntar al servidor de Moddin — deshacer devuelve el contenido original.',
   disconnectCancel: 'Cancelar',
+  actionNamed: '{action} {name}',
   installCursorHint: 'No tienes Cursor instalado. Descárgalo de cursor.com y haz clic en "Actualizar estado" después.',
 } as const
 

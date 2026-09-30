@@ -7,11 +7,13 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import ErrorCallout from '../../components/ui/ErrorCallout.vue'
 import EmptyState from '../../components/ui/EmptyState.vue'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
-import { openXrCopyForLocale } from './copy'
+import { useBackendText } from '../../composables/useBackendText'
+import { openXrCopyForLocale, formatOpenXrCopy } from './copy'
 import { useOpenXrManager } from './useOpenXrManager'
 
 const { locale } = useI18n()
 const copy = computed(() => openXrCopyForLocale(locale.value))
+const { text } = useBackendText()
 
 const {
   open,
@@ -30,6 +32,11 @@ const {
   setGameRuntime,
   setSystemRuntime,
 } = useOpenXrManager()
+
+/** UX-26: the per-app button name, built from the visible text plus the app. */
+function formatRuntimeAction(action: string, name: string): string {
+  return formatOpenXrCopy(copy.value.actionNamed, { action, name })
+}
 
 const errorRules = computed<FriendlyErrorRule[]>(() => {
   const c = copy.value
@@ -111,7 +118,7 @@ function effectiveSourceLabel() {
         <div v-if="state.warnings.length" class="callout callout-warning">
           <AppIcon class="callout-icon" name="alert" />
           <ul class="note-list">
-            <li v-for="warning in state.warnings" :key="warning">{{ warning }}</li>
+            <li v-for="(warning, index) in state.warnings" :key="index">{{ text(warning) }}</li>
           </ul>
         </div>
 
@@ -119,7 +126,12 @@ function effectiveSourceLabel() {
           <h3>{{ copy.runtimes }}</h3>
           <EmptyState v-if="!state.runtimes.length" :description="copy.noRuntimes" />
           <div v-else class="openxr-runtime-list">
-            <article v-for="runtime in state.runtimes" :key="runtime.manifestPath" class="openxr-runtime">
+            <article
+              v-for="runtime in state.runtimes"
+              :key="runtime.manifestPath"
+              class="openxr-runtime"
+              :aria-busy="busyAction?.endsWith(runtime.manifestPath) ?? false"
+            >
               <div class="openxr-runtime-copy">
                 <div class="openxr-runtime-title">
                   <strong>{{ runtime.name }}</strong>
@@ -132,12 +144,19 @@ function effectiveSourceLabel() {
                 <p class="path-text">{{ runtime.manifestPath }}</p>
               </div>
               <div class="openxr-runtime-actions">
+                <!--
+                  UX-26: one "Use just for this game" and one "Make
+                  default" per runtime, so tabbing through the list read
+                  as the same button six times. The name carries the
+                  runtime it acts on, and keeps the visible text in it.
+                -->
                 <button
                   v-if="selectedGameId"
                   class="btn btn-sm"
                   :class="{ 'is-loading': busyAction === `game:${runtime.manifestPath}` }"
                   type="button"
                   :disabled="!runtimeUsable(runtime) || busyAction !== null || isSelectedForGame(runtime)"
+                  :aria-label="formatRuntimeAction(busyAction === `game:${runtime.manifestPath}` ? copy.applying : copy.useForGame, runtime.name)"
                   @click="setGameRuntime(runtime.manifestPath)"
                 >
                   {{ busyAction === `game:${runtime.manifestPath}` ? copy.applying : copy.useForGame }}
@@ -147,6 +166,7 @@ function effectiveSourceLabel() {
                   :class="{ 'btn-primary': !selectedGameId, 'is-loading': busyAction === `system:${runtime.manifestPath}` }"
                   type="button"
                   :disabled="!runtimeUsable(runtime) || busyAction !== null || runtime.active"
+                  :aria-label="formatRuntimeAction(busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem, runtime.name)"
                   @click="askSetSystemRuntime(runtime)"
                 >
                   {{ busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem }}
