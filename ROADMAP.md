@@ -178,16 +178,32 @@ reasoning is what the next person needs:
       A pinned `rust-toolchain.toml` (1.98.1, the version `stable-msvc` resolved to, so the
       build is unchanged and no longer floats) and `vitest`, now at **195 tests** over the
       files where behaviour has broken before.
-- [ ] **Turn `fmt` and `clippy` into blocking gates.** — `O-07`
-      Both run in CI and report. Neither blocks, because neither is satisfiable today:
-      `fmt --check` would rewrite **3,653 lines across 34 files**, and `clippy --all-targets`
-      reports **144 diagnostics across 30 lints**, 53 of them `dead_code` from the five
-      `*_module.rs` adapters and `updater.rs` — all of which
-      [docs/BACKEND-MODULES.md](docs/BACKEND-MODULES.md) documents as unreferenced, and
-      `updater.rs` has never had a `mod` declaration in any commit, so it has never been
-      compiled. A guard nobody can satisfy is a guard people disable, so the honest order is
-      delete the dead adapters, fix the real lints, *then* turn the gates on. In flight.
-      *Done when:* CI is red on a formatting or lint regression.
+- [x] **Turn `fmt` and `clippy` into blocking gates.** — `O-07`
+      Done in the order that makes it meaningful: delete the dead adapters, fix the real
+      lints, *then* turn the gates on. The CI count of "144 / 30" was raw emissions including
+      duplicates across the lib, lib-test and example targets; deduplicated it was **81 unique
+      diagnostics, 23 lints, 34 of them `dead_code`**. The tree is now **zero** and both gates
+      block.
+      Six files went: the five `*_module.rs` adapters and `updater.rs`, each confirmed
+      unreferenced by a repo-wide search before deletion. The cascade was accounted for rather
+      than tolerated, and it found three real things — `archive.rs`'s SHA-256 layer could never
+      verify anything because `with_expected_sha256` was never called; `StepContext::spec` was
+      never read; and `ai_assistant_setup::restore_from_backup` is never called, so setup
+      writes a backup nothing restores. The third is a genuine gap in the config-write safety
+      net, left flagged rather than fixed here, because wiring it is a behaviour change.
+      `too_many_arguments` got the real fix: adjacent same-typed `&Path` parameters that
+      could be swapped silently and point the backup scope at the wrong root are one
+      `InstallScope` now. Four `#[allow]`s remain, each item-scoped and each with a `reason`;
+      no `[lints]` block was added, because the tree is clean without one and a blanket allow
+      would turn the gate into a switched-off guard.
+
+- [x] **Migrate the `ofxr-framegen` module cards.** — consequence of the deletion, new
+      Deleting `ofxr_module.rs` removed the crate's only `"ofxr-framegen"` string, which is the
+      pattern `validate-catalog.mjs` builds its module inventory from. Five catalogues were
+      advertising a card whose only backing was a file nothing dispatched to — the same dead
+      card `reshade` was. The module is now `ofxr-bridge` in all five, its dead config block
+      dropped, and it joins the capability-backed list in `App.vue`. No Rust shim was added to
+      satisfy the check; that would be creating dead code to turn a number green.
 
 ## Recipe-kind parity
 
@@ -286,12 +302,47 @@ reasoning is what the next person needs:
       raw `err.message` dumps; one `.empty-state` contract; `BaseDialog` as the only dialog
       implementation, with `useDialogLifecycle` as its only focus entry point; the five AI
       verbs collapsed into one.
-- [ ] **Tier 3 (M).** — `UX-06`, `UX-21`, `UX-25`…`UX-29`
-      Not attempted, on purpose. `UX-21`'s boundary is a four-identifier mapping across the
-      service layer with a `CapabilityCardState` dependency, and a half-applied boundary is
-      worse than none, because it leaves ids half-translated. `UX-06` collapses three install
-      paths and is not an S. `UX-25…29` is a broad mechanical sweep that wants its own pass.
-      *Done when:* a pt-BR user reads no backend-authored English in the capability section.
+- [x] **Tier 3: the localization boundary.** — `UX-21`
+      The four backend-authored identifiers now map to locale keys at the service layer, and
+      the capability-card description that was English in every locale is the thing it fixes.
+      The decision that mattered is the one about ids the table does not declare: they render
+      **the backend's own text, verbatim** — the command name, the recipe's own sentence, the
+      real I/O message. Not blank, not refused. A log row with no action is untriageable.
+
+      The enforcement is the other half: every table is checked by set equality against the
+      source the ids come from — the persistent-action list, the literal `warnings.push`
+      strings in `openxr.rs`, the `Some("…")` values in `inspect_agent`, the recipe YAMLs. So
+      the fallback is reachable only by a string the app does not know about, and a renamed
+      recipe becomes a build failure rather than a stale entry.
+
+      *What it does not cover, stated rather than implied:* a pt-BR card still shows English
+      in `safetyNotes`, `configSchema[].description`, `displayName` and each check's `detail`.
+      None is one of the four named identifiers; the config-field half is a separate item.
+      A community or AI-authored recipe keeps its own English — it is the author's copy.
+
+- [x] **Tier 3: the accessibility sweep.** — `UX-26`, `UX-27`, `UX-28`, `UX-29`
+      Per-item `aria-label`s on every repeated icon-only action, built from the visible text so
+      label-in-name holds for voice control; `.sr-only` labels on the activity-log controls;
+      `aria-required` / `aria-invalid` on config fields, wired to the real state rather than to
+      first paint, because a required field technically reads as missing before the user has
+      done anything; and `aria-busy` on six regions. The `ToastStack` was announcing every
+      message twice — a polite container plus alert children — and the container is now silent.
+
+- [-] **Tier 3: `UX-25`, closed as written.** — its subject no longer exists
+      There is no `role="menu"` anywhere in the tree. Tier 2 collapsed the five AI verbs into
+      one button and took the menu with it. Inventing a menu to give it a keyboard model would
+      be building the opposite of what Tier 2 did.
+
+- [-] **Tier 3: `UX-06`, closed as written, with a real gap found instead.** — its premise is stale
+      The three call sites do not share a spec-driven config form. The game page is the only
+      one that has one, and it is inline in the card rather than a dialog; the Community panel
+      installs with an empty config and has no form; the AI flow shows the field names
+      read-only beside a YAML editor. Extracting a shared dialog would have had one caller.
+
+      *The gap it exposed is real and is now a Later item:* the Community panel cannot install
+      a recipe that declares required config fields, because it never collects them. That is a
+      feature, not a refactor, and it needs field labels first.
+
 
 ## Organization and delivery hygiene
 
@@ -369,6 +420,15 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       one. The branch's 1,127-line session runner is deliberately not ported: the frontend
       drives the existing `community_capability_install`, so porting it would reintroduce the
       second install path this pass removed.
+- [ ] **Let the Community panel install a recipe with required config fields.** — new, found
+      while closing `UX-06`. The game page has a config form; the Community panel installs with
+      an empty config and has no way to collect one, so any recipe declaring required fields
+      cannot be installed from there at all. That is a missing feature, not a refactor, and
+      the field labels it needs are a separate item.
+- [ ] **Translate `safetyNotes`, `configSchema[].description` and `displayName`.** — new
+      The localization boundary covers the four backend-authored identifiers and the card
+      description. These four are still English in pt-BR and es. `check.detail` deliberately
+      stays as-is: it is data with an embedded version, not prose.
 - [ ] **Resolve the eight baselined catalogue defects.** — new
       `scripts/validate-catalog.mjs` found them; they are reported by name rather than
       suppressed. One is fixed (`cyberpunk-2077` offering `uevr` as `available` against a
