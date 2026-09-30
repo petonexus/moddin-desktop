@@ -34,3 +34,24 @@ tauri = { version = "2", features = [] }
 uuid = { version = "1", features = ["v4"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+# Release profile (F-13). The installer ships a 67.8 MB node.exe and a
+# staged agent runtime, so every megabyte the binary gives back is one
+# the bundle does not have to carry.
+#
+# `lto` is "thin", not `true`, on purpose: this crate declares
+# `crate-type = ["staticlib", "cdylib", "rlib"]`, and fat LTO across a
+# crate with more than one linkage is where the classic
+# "relocation R_X86_64_* against undefined symbol" failures live. Thin
+# LTO takes nearly all of the size win on a dependency graph this shape
+# and keeps the build reproducible enough to debug. `codegen-units = 1`
+# is what makes it effective.
+#
+# `strip = "symbols"` drops the symbol table and debug info from the
+# shipped .exe. The PDB stays in target/ for anyone attaching a
+# debugger locally; what stops shipping is the exe growing by several
+# megabytes to carry a symbol table nothing in the product reads.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

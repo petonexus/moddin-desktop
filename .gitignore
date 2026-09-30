@@ -98,6 +98,10 @@ moddin-runtime/moddin-mcp.mjs
 moddin-runtime/BUNDLE_OK
 moddin-runtime/stderr.txt
 moddin-runtime/*.tmp
+# Downloaded by the bundler and re-read on every run to pin the Node
+# archive. It is the checksum list for a 28 MB download, not a project
+# input, and a fresh bundle used to leave it untracked in the tree.
+moddin-runtime/SHASUMS256.txt
 
 # Generated and wrong-platform weight (roadmap O-11). None of it is read
 # at runtime or by the build — see the notes per entry.
