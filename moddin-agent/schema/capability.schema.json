@@ -23,8 +23,8 @@
     },
     "supportedEngines": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Optional hint for which engines this capability is eligible for."
+      "items": { "type": "string", "enum": ["idtech", "re-engine", "redengine", "unity", "unreal5"] },
+      "description": "Engines this capability is built for. An empty or omitted list means EVERY engine, not none: the desktop treats a recipe that declares no engines as engine-agnostic, and gates a recipe on this list only when the game declares an engine preset that the recipe does not list. The enum mirrors crate::capability::KNOWN_ENGINES and src/catalog/engines/; scripts/check-capability-kind-parity.mjs fails the build if they disagree."
     },
     "dependencies": {
       "type": "array",

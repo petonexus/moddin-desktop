@@ -45,6 +45,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Before the install on purpose. The catalogue is data with no
+      # other gate, and it is not validatable by eyeball: a game shipped
+      # declaring RE Engine while offering UEVR, OFXR and Cheeky, and
+      # nothing noticed. The check declares no dependencies, so it runs
+      # on a bare checkout, and it gets its own step so a red run names
+      # the data problem instead of a build error.
+      - name: Validate the game catalogue
+        run: npm run check:catalog
+
       - name: Frontend tests
         # ROADMAP F-12. The four ConfirmDialog prompts and the
         # unsigned-consent gate shipped with nothing asserting they
@@ -172,7 +181,12 @@ jobs:
             moddin-runtime/node.exe
             moddin-runtime/moddin-agent
             moddin-runtime/BUNDLE_OK
-          key: moddin-runtime-v1-${{ runner.os }}-${{ steps.runtime-key.outputs.hash }}
+          # v2: the bundle no longer carries node.zip, tmp/ or
+          # node_modules.old, and it installs with `npm ci` from
+          # moddin-agent/package-lock.json. A v1 cache entry holds a
+          # staged tree with a 56 MB dev node_modules.old in it, and
+          # caching it back out would keep shipping that.
+          key: moddin-runtime-v2-${{ runner.os }}-${{ steps.runtime-key.outputs.hash }}
 
       - name: Bundle moddin-runtime
         if: steps.runtime-cache.outputs.cache-hit != 'true'
@@ -194,6 +208,7 @@ jobs:
             (Join-Path $out 'node.exe'),
             (Join-Path $out 'BUNDLE_OK'),
             (Join-Path $agent 'package.json'),
+            (Join-Path $agent 'package-lock.json'),
             (Join-Path $agent 'node_modules'),
             (Join-Path $agent 'scripts\smoke-test.mjs')
           )
@@ -218,6 +233,39 @@ jobs:
             $pkg = $prod.Replace('/', '\')
             if ($null -eq $staged.dependencies.$prod) { throw "Staged manifest is missing '$prod'." }
             if (-not (Test-Path (Join-Path $agent "node_modules\$pkg"))) { throw "Staged runtime has no node_modules\$pkg." }
+          }
+
+          # The install is `npm ci` against this file, so it is the one
+          # thing deciding which versions ship (F-13 / O-06). If the
+          # staged copy is not the committed one, the install was
+          # resolved from something else and the guarantee is gone.
+          $srcLock = (Get-FileHash 'moddin-agent\package-lock.json' -Algorithm SHA256).Hash
+          $stagedLock = (Get-FileHash (Join-Path $agent 'package-lock.json') -Algorithm SHA256).Hash
+          if ($srcLock -ne $stagedLock) {
+            throw "Staged package-lock.json is not moddin-agent\package-lock.json byte for byte."
+          }
+
+          # Every shipped version is exact, because the install is
+          # `npm ci` against moddin-agent/package-lock.json (F-13 / O-06).
+          # A caret here would mean the install and the manifest had
+          # drifted apart, which is the state this replaced.
+          foreach ($prop in $staged.dependencies.PSObject.Properties) {
+            if ($prop.Value -notmatch '^\d+\.\d+\.\d+([-+].*)?$') {
+              throw "Staged manifest pins '$($prop.Name)' as '$($prop.Value)', which is a range, not a version."
+            }
+          }
+
+          # Build scratch and the previous script's staging leftover.
+          # tauri.conf.json lists the whole moddin-agent directory as a
+          # bundle resource, so anything left inside it ships. These
+          # were 28.5 MB and 56 MB respectively, and a cached bundle
+          # that grew them is how they stayed invisible.
+          foreach ($scratch in @(
+            (Join-Path $out 'node.zip'),
+            (Join-Path $out 'tmp'),
+            (Join-Path $agent 'node_modules.old')
+          )) {
+            if (Test-Path $scratch) { throw "Build scratch '$scratch' survived the bundler and would be bundled." }
           }
 
           # The bundle ships its own pinned Node; a cache that restored

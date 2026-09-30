@@ -91,7 +91,20 @@ modules:
     name: UEVR engine-aware installer
     description: Detect the game engine, resolve the newest compatible UEVR build, and keep Nightly, JoeyHodge, and AFW variants separate and reversible.
     category: vr
-    status: available
+    # Marked planned, not available, because the rest of the data already
+    # said so and this line disagreed. The redengine preset's own
+    # description states that Moddin does not bundle a UEVR-style VR
+    # injector for it, the uevr recipe declares supportedEngines
+    # [unreal5], and UEVR injects into Unreal — so the engine gate now
+    # hides this card entirely. Leaving it available advertised a
+    # one-click install that the engine gate silently removes.
+    #
+    # This is a product call, not a mechanical fix: either the recipe
+    # learns about REDengine, or the module goes away. Until one of
+    # those happens, planned is what the data means. The validator
+    # baselined the original defect by name; fix it and the baseline
+    # line goes with it.
+    status: planned
     config:
       versionPolicy: latest
       releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest

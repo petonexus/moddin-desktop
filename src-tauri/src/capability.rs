@@ -84,6 +84,14 @@ pub struct CapabilitySpec {
     pub description: Option<String>,
     pub category: String,
     pub status: String,
+    /// Engine ids this capability is built for. An **absent or empty**
+    /// list means *every* engine, not *no* engine — the field is
+    /// optional, and `moddin-agent/templates/extract-zip.yaml`
+    /// documents `supportedEngines: []` as "engine-agnostic". Reading
+    /// it the other way round would make every community and local
+    /// recipe that omits the key invisible on every game. Compare with
+    /// [`CapabilitySpec::engine_match`]; the TypeScript mirror of that
+    /// decision lives on [`EngineMatch`].
     #[serde(default)]
     pub supported_engines: Vec<String>,
     /// Ids of other capabilities that must be installed before this
@@ -117,6 +125,145 @@ pub struct CapabilitySpec {
     /// so older YAMLs keep their original provenance.
     #[serde(default, skip_deserializing)]
     pub origin: SpecOrigin,
+}
+
+/// Every engine id the shipped catalogue knows about.
+///
+/// One vocabulary, declared in four places: here, the `EngineId` union
+/// in `src/types/capability.ts`, the `supportedEngines.items.enum` in
+/// `moddin-agent/schema/capability.schema.json`, and the preset files
+/// themselves under `src/catalog/engines/`. They are compared by
+/// `scripts/check-capability-kind-parity.mjs`, because an id added to
+/// one of them and not the others is exactly how a recipe stops being
+/// offered to the game it was written for.
+///
+/// An id outside this list is never rejected. It resolves to
+/// [`EngineMatch::UnknownGameEngine`], which gates nothing — a typo in
+/// one file must not silently disable the gate everywhere.
+pub const KNOWN_ENGINES: &[&str] = &["idtech", "re-engine", "redengine", "unity", "unreal5"];
+
+/// Whether `engine` is part of the shared vocabulary.
+pub fn is_known_engine(engine: &str) -> bool {
+    KNOWN_ENGINES.contains(&engine)
+}
+
+/// The engine a `capability_list` call is scoped to, already resolved
+/// against what the registry actually knows.
+///
+/// The catalogue is two data sets that meet here — a game's
+/// `enginePreset` (frontend YAML) and a recipe's `supportedEngines`
+/// (backend YAML) — and the join can fail in three different ways. Only
+/// one of them is a real mismatch, and getting the other two wrong
+/// hides working mods, so the distinction is a type rather than a
+/// boolean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineScope<'a> {
+    /// The game declares no `enginePreset` at all. `elden-ring.yaml`
+    /// does not, and it is the app's flagship VR title: gating it on an
+    /// engine nobody declared would hide UEVR from the game people most
+    /// use UEVR with.
+    Unscoped,
+    /// A game named an engine the catalogue has no opinion about —
+    /// either the id is not in [`KNOWN_ENGINES`], or no loaded recipe
+    /// declares it (`doom-2016` is `idtech`; nothing Moddin ships
+    /// claims id Tech). There is no second side to compare against, so
+    /// nothing is gated.
+    Unopinionated(&'a str),
+    /// A real gate: a known engine that at least one recipe declares.
+    Engine(&'a str),
+}
+
+impl<'a> EngineScope<'a> {
+    /// Resolve what the caller named into a scope. `covered` answers
+    /// "does any loaded recipe declare this engine?" — a registry
+    /// fact, so the contract takes it as a parameter instead of
+    /// guessing.
+    pub fn resolve(game_engine: Option<&'a str>, covered: impl Fn(&str) -> bool) -> Self {
+        let Some(engine) = game_engine.map(str::trim).filter(|engine| !engine.is_empty())
+        else {
+            return Self::Unscoped;
+        };
+        if !is_known_engine(engine) || !covered(engine) {
+            return Self::Unopinionated(engine);
+        }
+        Self::Engine(engine)
+    }
+}
+
+/// How one capability spec relates to the engine of the game it is
+/// being offered for — the verdict F-09 needed and never had.
+/// `supportedEngines` used to be parsed and then ignored, so an Unreal
+/// 5 game was offered RE Engine capabilities and a RE Engine game was
+/// offered UEVR.
+///
+/// Serialised on the wire with a `verdict` tag so the card can render
+/// the reason instead of re-deriving the rule in TypeScript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "verdict", rename_all = "camelCase")]
+pub enum EngineMatch {
+    /// The game declares no engine. Nothing is gated.
+    NoGameEngine,
+    /// The recipe declares no `supportedEngines` (absent or empty), so
+    /// it applies to every engine.
+    EngineAgnostic,
+    /// The game named an engine no loaded recipe declares, or one
+    /// outside [`KNOWN_ENGINES`]. Nothing is gated.
+    UnknownGameEngine {
+        /// The id the game named, verbatim.
+        engine: String,
+    },
+    /// The recipe declares the game's engine.
+    Supported,
+    /// The recipe declares engines and the game's engine is not one of
+    /// them. The only verdict that gates.
+    Mismatch {
+        /// The engines the recipe does declare, for the explanation.
+        supported: Vec<String>,
+    },
+}
+
+impl EngineMatch {
+    /// Whether this capability may be offered for the game. Every
+    /// verdict except a real mismatch is eligible; the fail-open cases
+    /// are the point. A card must still be able to say *why* it is
+    /// shown, which is why the verdict travels with the summary rather
+    /// than the caller recomputing it.
+    pub fn is_eligible(&self) -> bool {
+        !matches!(self, Self::Mismatch { .. })
+    }
+}
+
+impl CapabilitySpec {
+    /// The one place the engine rule lives. The UI mirrors the verdict,
+    /// not the rule.
+    pub fn engine_match(&self, scope: EngineScope<'_>) -> EngineMatch {
+        let engine = match scope {
+            EngineScope::Unscoped => return EngineMatch::NoGameEngine,
+            EngineScope::Unopinionated(engine) => {
+                return EngineMatch::UnknownGameEngine {
+                    engine: engine.to_owned(),
+                }
+            }
+            EngineScope::Engine(engine) => engine,
+        };
+
+        let declared: Vec<&str> = self
+            .supported_engines
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|engine| !engine.is_empty())
+            .collect();
+        if declared.is_empty() {
+            return EngineMatch::EngineAgnostic;
+        }
+        if declared.contains(&engine) {
+            return EngineMatch::Supported;
+        }
+        EngineMatch::Mismatch {
+            supported: declared.into_iter().map(str::to_owned).collect(),
+        }
+    }
 }
 
 /// Game-build compatibility window declared by a capability. The
@@ -327,5 +474,141 @@ compatibility:
             ..CompatibilitySpec::default()
         };
         assert!(!without_exe.has_constraints());
+    }
+
+    // === Engine gate (ROADMAP F-09) =================================
+
+    fn spec(engines: &[&str]) -> CapabilitySpec {
+        let list = if engines.is_empty() {
+            "supportedEngines: []\n".to_owned()
+        } else {
+            let mut list = "supportedEngines:\n".to_owned();
+            for engine in engines {
+                list.push_str(&format!("  - \"{engine}\"\n"));
+            }
+            list
+        };
+        serde_yaml::from_str(&format!(
+            "id: probe\ndisplayName: Probe\ncategory: vr\nstatus: available\n{list}"
+        ))
+        .expect("probe spec parses")
+    }
+
+    /// Every engine the gate can act on. A real `capability_list` call
+    /// supplies this from the registry; the contract only needs to know
+    /// that the engine has at least one recipe behind it.
+    fn every_engine_covered(_engine: &str) -> bool {
+        true
+    }
+
+    #[test]
+    fn empty_supported_engines_means_every_engine() {
+        // The convention the whole gate rests on. `[]` and an absent
+        // key are the same thing, and both mean "engine-agnostic" —
+        // see the `supported_engines` doc comment and the parity guard,
+        // which holds the other three declarations of it in line.
+        for engines in [&[][..], &["", "  "][..]] {
+            let spec = spec(engines);
+            let scope = EngineScope::resolve(Some("unreal5"), every_engine_covered);
+            assert_eq!(
+                spec.engine_match(scope),
+                EngineMatch::EngineAgnostic,
+                "supportedEngines: {engines:?} must not gate anything"
+            );
+            assert!(spec.engine_match(scope).is_eligible());
+        }
+    }
+
+    #[test]
+    fn a_capability_is_supported_by_the_engine_it_lists() {
+        let uevr = spec(&["unreal5"]);
+        let scope = EngineScope::resolve(Some("unreal5"), every_engine_covered);
+        assert_eq!(uevr.engine_match(scope), EngineMatch::Supported);
+        assert!(uevr.engine_match(scope).is_eligible());
+    }
+
+    #[test]
+    fn an_unreal_game_is_not_offered_a_re_engine_capability() {
+        // The defect F-09 describes, in the shape the validator also
+        // catches in the data: a recipe that targets `re-engine` is a
+        // mismatch for a game on `unreal5`, and only this verdict
+        // gates.
+        let reframework = spec(&["re-engine"]);
+        let scope = EngineScope::resolve(Some("unreal5"), every_engine_covered);
+        let verdict = reframework.engine_match(scope);
+        assert_eq!(
+            verdict,
+            EngineMatch::Mismatch {
+                supported: vec!["re-engine".to_owned()]
+            }
+        );
+        assert!(!verdict.is_eligible());
+    }
+
+    #[test]
+    fn a_game_without_an_engine_preset_is_never_gated() {
+        // Elden Ring. `supportedEngines: [unreal5]` on UEVR and no
+        // `enginePreset` on the game: nothing to compare, so UEVR stays
+        // on offer. Hiding it would be a regression dressed as a
+        // feature.
+        let uevr = spec(&["unreal5"]);
+        let scope = EngineScope::resolve(None, every_engine_covered);
+        assert_eq!(uevr.engine_match(scope), EngineMatch::NoGameEngine);
+        assert!(uevr.engine_match(scope).is_eligible());
+    }
+
+    #[test]
+    fn an_engine_no_recipe_declares_is_never_gated() {
+        // DOOM's `idtech`: a real preset, but no shipped recipe claims
+        // it. There is no second side to the comparison, so the gate
+        // stays open instead of emptying the game's card list.
+        let optiscaler = spec(&["unreal5", "redengine", "unity"]);
+        let scope = EngineScope::resolve(Some("idtech"), |_| false);
+        let verdict = optiscaler.engine_match(scope);
+        assert_eq!(
+            verdict,
+            EngineMatch::UnknownGameEngine {
+                engine: "idtech".to_owned()
+            }
+        );
+        assert!(verdict.is_eligible());
+    }
+
+    #[test]
+    fn an_engine_outside_the_shared_vocabulary_is_never_gated() {
+        let optiscaler = spec(&["unreal5"]);
+        let scope = EngineScope::resolve(Some("unreal-engine-5"), every_engine_covered);
+        let verdict = optiscaler.engine_match(scope);
+        assert_eq!(
+            verdict,
+            EngineMatch::UnknownGameEngine {
+                engine: "unreal-engine-5".to_owned()
+            }
+        );
+        assert!(verdict.is_eligible());
+    }
+
+    #[test]
+    fn a_blank_engine_is_treated_as_no_engine() {
+        for blank in ["", "   "] {
+            assert_eq!(
+                EngineScope::resolve(Some(blank), every_engine_covered),
+                EngineScope::Unscoped
+            );
+        }
+    }
+
+    #[test]
+    fn engine_match_travels_as_a_tagged_verdict_the_card_can_explain() {
+        let mismatch = spec(&["unreal5"]).engine_match(EngineScope::Engine("redengine"));
+        assert_eq!(
+            serde_json::to_value(&mismatch).expect("serialise mismatch"),
+            serde_json::json!({ "verdict": "mismatch", "supported": ["unreal5"] })
+        );
+        assert_eq!(
+            serde_json::to_value(spec(&[]).engine_match(EngineScope::Engine("unity")))
+                .expect("serialise agnostic"),
+            serde_json::json!({ "verdict": "engineAgnostic" })
+        );
     }
 }

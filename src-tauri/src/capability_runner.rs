@@ -215,6 +215,18 @@ impl CapabilityRegistry {
         self.specs.get(id)
     }
 
+    /// Does at least one loaded spec declare this engine?
+    ///
+    /// The engine rule needs this and cannot compute it: a recipe's
+    /// `supportedEngines` is what makes an engine *comparable*, and a
+    /// game on an engine nothing declares (`doom-2016` on `idtech`)
+    /// must not be gated on a comparison that has only one side.
+    pub fn declares_engine(&self, engine: &str) -> bool {
+        self.specs
+            .values()
+            .any(|spec| spec.supported_engines.iter().any(|declared| declared == engine))
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.specs.keys().map(String::as_str)
     }
@@ -952,25 +964,68 @@ pub struct CapabilitySummary {
     /// Provenance — drives the UI badge ("Verified", "Local",
     /// "Community"). See [`SpecOrigin`].
     pub origin: crate::capability::SpecOrigin,
+    /// The engines this recipe declares, verbatim. Empty means
+    /// *every* engine, not none — see
+    /// [`CapabilitySpec::supported_engines`].
+    pub supported_engines: Vec<String>,
+    /// The engine verdict the backend already decided, so the card
+    /// renders the reason instead of re-deriving the rule (ROADMAP
+    /// F-09). A returned summary is always eligible; a
+    /// [`crate::capability::EngineMatch::Mismatch`] never reaches the
+    /// wire.
+    pub engine_match: crate::capability::EngineMatch,
 }
 
-#[tauri::command]
-pub fn capability_list() -> Vec<CapabilitySummary> {
-    let registry = CapabilityRegistry::load();
+impl CapabilitySummary {
+    fn from_spec(spec: &CapabilitySpec, scope: crate::capability::EngineScope<'_>) -> Self {
+        Self {
+            id: spec.id.clone(),
+            display_name: spec.display_name.clone(),
+            description: spec.description.clone(),
+            category: spec.category.clone(),
+            status: spec.status.clone(),
+            origin: spec.origin,
+            supported_engines: spec.supported_engines.clone(),
+            engine_match: spec.engine_match(scope),
+        }
+    }
+}
+
+/// Summaries for one engine scope, with the mismatch gate applied.
+///
+/// Kept separate from the `#[tauri::command]` wrapper so the rule is
+/// testable without an IPC payload, and so `capability_list` and
+/// `capability_reload` cannot grow two different definitions of "the
+/// list".
+pub fn summaries_for_engine(
+    registry: &CapabilityRegistry,
+    game_engine: Option<&str>,
+) -> Vec<CapabilitySummary> {
+    let scope = crate::capability::EngineScope::resolve(game_engine, |engine| {
+        registry.declares_engine(engine)
+    });
     registry
         .ids()
-        .map(|id| {
+        .filter_map(|id| {
             let spec = registry.get(id).expect("registry invariant");
-            CapabilitySummary {
-                id: spec.id.clone(),
-                display_name: spec.display_name.clone(),
-                description: spec.description.clone(),
-                category: spec.category.clone(),
-                status: spec.status.clone(),
-                origin: spec.origin,
-            }
+            let summary = CapabilitySummary::from_spec(spec, scope);
+            summary.engine_match.is_eligible().then_some(summary)
         })
         .collect()
+}
+
+/// Every capability the registry holds, with the engine verdict
+/// attached.
+///
+/// `engine` is the selected game's `enginePreset`. It is optional on
+/// purpose: a caller that does not know the game's engine gets the
+/// whole list with `noGameEngine`, which is what an unscoped list means.
+/// (Tauri passes `None` for a missing key rather than erroring, so the
+/// existing no-argument callers keep working unchanged.)
+#[tauri::command]
+pub fn capability_list(engine: Option<String>) -> Vec<CapabilitySummary> {
+    let registry = CapabilityRegistry::load();
+    summaries_for_engine(&registry, engine.as_deref())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1014,20 +1069,10 @@ pub fn capability_reload(
         .or_else(local_capabilities_dir)
         .ok_or_else(|| "LOCALAPPDATA not set".to_owned())?;
     registry.reload_local(&dir);
-    Ok(registry
-        .ids()
-        .map(|id| {
-            let spec = registry.get(id).expect("registry invariant");
-            CapabilitySummary {
-                id: spec.id.clone(),
-                display_name: spec.display_name.clone(),
-                description: spec.description.clone(),
-                category: spec.category.clone(),
-                status: spec.status.clone(),
-                origin: spec.origin,
-            }
-        })
-        .collect())
+    // No engine argument: a reload is a catalogue refresh, not a
+    // game-scoped query, so the list is unscoped and the gate stays
+    // open. Same summaries as `capability_list` with no engine.
+    Ok(summaries_for_engine(&registry, None))
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1172,7 +1217,7 @@ pub async fn community_capability_install(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::{CheckSpec, SpecOrigin};
+    use crate::capability::{CheckSpec, EngineMatch, SpecOrigin};
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::fs;
@@ -1350,6 +1395,150 @@ install:
         assert!(registry.get("ofxr-bridge").is_some());
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    // === Engine gate over the real registry (ROADMAP F-09) =========
+
+    /// Built-ins only, so a developer's `%LOCALAPPDATA%` recipes cannot
+    /// change what these assertions see.
+    fn built_in_registry() -> CapabilityRegistry {
+        let registry = CapabilityRegistry::load_with_local_dir(temp_root("engine-gate"));
+        assert!(registry.len() > 1, "expected the built-in recipes");
+        registry
+    }
+
+    fn listed_ids(registry: &CapabilityRegistry, engine: Option<&str>) -> Vec<String> {
+        let mut ids: Vec<String> = summaries_for_engine(&registry, engine)
+            .into_iter()
+            .map(|summary| summary.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn every_built_in_id(registry: &CapabilityRegistry) -> Vec<String> {
+        let mut ids: Vec<String> = registry.ids().map(str::to_owned).collect();
+        ids.sort();
+        ids
+    }
+
+    /// The `enginePreset` a shipped catalogue file declares, read from
+    /// the file rather than hard-coded so the Elden Ring test keeps
+    /// testing what actually ships.
+    fn shipped_engine_preset(game_file: &str) -> Option<String> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("src")
+            .join("catalog")
+            .join("games")
+            .join(game_file);
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        // Some catalogue files ship a UTF-8 BOM.
+        let raw = raw.trim_start_matches('\u{feff}');
+        let parsed: serde_yaml::Value = serde_yaml::from_str(raw)
+            .unwrap_or_else(|error| panic!("could not parse {}: {error}", path.display()));
+        parsed
+            .get("enginePreset")
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn a_re_engine_game_is_not_offered_uevr() {
+        // The `dead-island-2` shape, one layer down: the recipe the
+        // engine does not support must not reach the card list.
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, Some("re-engine"));
+        assert!(!listed.iter().any(|id| id == "uevr"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "ue4ss"), "{listed:?}");
+        // ...while the recipes that do target it still are.
+        assert!(listed.iter().any(|id| id == "reframework"), "{listed:?}");
+    }
+
+    #[test]
+    fn an_unreal_game_is_not_offered_a_re_engine_or_unity_recipe() {
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, Some("unreal5"));
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
+        assert!(listed.iter().any(|id| id == "ue4ss"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "reframework"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "bepinex"), "{listed:?}");
+    }
+
+    #[test]
+    fn every_returned_summary_carries_the_verdict_that_kept_it() {
+        let registry = built_in_registry();
+        for engine in ["unreal5", "redengine", "re-engine", "unity", "idtech"] {
+            for summary in summaries_for_engine(&registry, Some(engine)) {
+                assert!(
+                    summary.engine_match.is_eligible(),
+                    "{} was gated out and must not be listed",
+                    summary.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unscoped_list_returns_every_recipe() {
+        // What the three existing no-argument callers get: the whole
+        // registry, nothing gated, because no engine was named.
+        let registry = built_in_registry();
+        let summaries = summaries_for_engine(&registry, None);
+        assert_eq!(listed_ids(&registry, None), every_built_in_id(&registry));
+        assert!(summaries
+            .iter()
+            .all(|summary| summary.engine_match == EngineMatch::NoGameEngine));
+    }
+
+    #[test]
+    fn an_engine_no_recipe_declares_keeps_every_card() {
+        // `idtech` is a real preset (`doom-2016` uses it) and nothing
+        // Moddin ships claims id Tech. Gating on a comparison with only
+        // one side would empty the game's card list.
+        let registry = built_in_registry();
+        assert!(!registry.declares_engine("idtech"));
+        let listed = listed_ids(&registry, Some("idtech"));
+        assert_eq!(listed, every_built_in_id(&registry));
+        assert!(summaries_for_engine(&registry, Some("idtech"))
+            .iter()
+            .all(|summary| matches!(
+                summary.engine_match,
+                EngineMatch::UnknownGameEngine { .. }
+            )));
+    }
+
+    #[test]
+    fn elden_ring_declares_no_engine_preset_so_nothing_is_gated() {
+        // Elden Ring ships no `enginePreset` and it is the app's
+        // flagship VR title. Its UEVR card — the one combination the
+        // project is known for — must survive the gate, and the
+        // catalogue file itself is what decides that, so it is read
+        // from disk rather than asserted here.
+        assert_eq!(
+            shipped_engine_preset("elden-ring.yaml"),
+            None,
+            "elden-ring.yaml started declaring an engine; this test's premise changed"
+        );
+        let registry = built_in_registry();
+        let engine = shipped_engine_preset("elden-ring.yaml");
+        let listed = listed_ids(&registry, engine.as_deref());
+        assert_eq!(listed, every_built_in_id(&registry));
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
+    }
+
+    #[test]
+    fn a_shipped_game_with_an_engine_preset_gets_that_engines_cards() {
+        // The other half of the Elden Ring case, read from the
+        // catalogue: `dead-island-2` declares `unreal5`, so the RE
+        // Engine-only recipe must not reach its list.
+        let engine = shipped_engine_preset("dead-island-2.yaml");
+        assert_eq!(engine.as_deref(), Some("unreal5"));
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, engine.as_deref());
+        assert!(!listed.iter().any(|id| id == "reframework"), "{listed:?}");
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
     }
 
     // === Dependency graph + compatibility gate ======================

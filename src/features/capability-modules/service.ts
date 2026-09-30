@@ -71,8 +71,26 @@ export async function resolveInstallTarget(
   }
 }
 
-export function listCapabilities() {
-  return invoke<CapabilitySummary[]>('capability_list')
+/**
+ * Summaries of every capability known to the runner.
+ *
+ * `engine` is the selected game's `enginePreset`, or null when the game
+ * declares none — Elden Ring is the case that matters. The backend
+ * decides what to do with it: a game with no engine gets everything, a
+ * game whose engine no recipe names gets everything, and only a recipe
+ * that names engines and not the game's is held back. That rule lives
+ * in `CapabilitySpec::engine_match` because it is the only layer that
+ * has the spec while the list is being built.
+ *
+ * Omitted rather than sent as null, so the argument shape stays
+ * optional on the Tauri side and the callers that pass nothing still
+ * typecheck.
+ */
+export function listCapabilities(engine?: string | null) {
+  return invoke<CapabilitySummary[]>(
+    'capability_list',
+    engine ? { engine } : {},
+  )
 }
 
 /** Full recipe for one capability (config schema, safety notes, checks). */

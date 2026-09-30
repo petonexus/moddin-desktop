@@ -32,11 +32,31 @@
 //
 // This check makes that drift a red build instead of a surprise.
 //
+// ## Engines (ROADMAP F-09)
+//
+// `supportedEngines` was a fourth list of the same kind: a vocabulary
+// ("unreal5", "redengine", …) that four places had to agree on, with
+// none of them checking. The backend now gates a capability on it, so
+// an id added to one place and not the others is not a cosmetic
+// difference — it decides which cards a player is offered. Two things
+// are compared here:
+//
+//   * the engine ids: src/catalog/engines/ (the data),
+//     capability.rs (KNOWN_ENGINES), capability.ts (EngineId), and the
+//     agent JSON schema (supportedEngines.items.enum);
+//   * the verdicts of the engine gate: capability.rs (EngineMatch) and
+//     capability.ts (EngineMatch), so the card cannot render a verdict
+//     the backend never sends.
+//
+// The community repo's `validate_capability.py` is the known un-guarded
+// source: it does not look at `supportedEngines` at all today. Adding
+// the enum there is a change in that repository, not this one.
+//
 // Zero dependencies on purpose, like check-frontend-architecture.mjs:
 // it has to run in CI before `npm ci` has necessarily succeeded, and
 // parsing four small source files is not worth a dependency.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -194,6 +214,127 @@ function rustKnownParamNames() {
   return names
 }
 
+/**
+ * `id:` of every preset file under `src/catalog/engines/`. This is the
+ * data the other engine lists are checked against: a vocabulary the
+ * engine presets do not contain describes engines the app cannot offer.
+ */
+function enginePresetIds() {
+  const dir = join(root, 'src/catalog/engines')
+  if (!existsSync(dir)) {
+    fail('could not find src/catalog/engines/')
+    return []
+  }
+  const ids = []
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.yaml')).sort()) {
+    const source = readFileSync(join(dir, file), 'utf8')
+    const match = source.match(/^id:[ \t]*"?([A-Za-z0-9_-]+)"?[ \t]*$/m)
+    if (!match) {
+      fail(`could not read an id from src/catalog/engines/${file}`)
+      continue
+    }
+    ids.push(match[1])
+  }
+  return ids
+}
+
+/**
+ * String literals inside a Rust `const NAME: &[&str] = &[...]`.
+ *
+ * The search for the literal's `[` starts after the `=`, because the
+ * type annotation's own `&[&str]` contains a pair of brackets and would
+ * otherwise be mistaken for an empty array.
+ */
+function rustConstList(relative, constName) {
+  const source = read(relative)
+  const name = source.indexOf(constName)
+  if (name < 0) {
+    fail(`could not find ${constName} in ${relative}`)
+    return []
+  }
+  const assign = source.indexOf('=', name)
+  const open = source.indexOf('[', assign)
+  const close = source.indexOf(']', open)
+  if (assign < 0 || open < 0 || close < 0) {
+    fail(`could not read the value of ${constName} in ${relative}`)
+    return []
+  }
+  return [...source.slice(open, close).matchAll(/"([^"]+)"/g)].map((match) => match[1])
+}
+
+/**
+ * Variant names of a Rust `enum Name { ... }`, in the form they travel
+ * on the wire.
+ *
+ * `EngineMatch` is `#[serde(rename_all = "camelCase")]`, and the
+ * TypeScript mirror has to match the wire name, not the Rust
+ * identifier — so the first character is lowercased here rather than
+ * comparing `Mismatch` with `mismatch` and failing forever. Braces of
+ * struct variants are ignored, so `Mismatch { supported: ... }`
+ * contributes one name.
+ */
+function rustEnumVariants(relative, enumName) {
+  const source = read(relative)
+  const start = source.indexOf(`enum ${enumName}`)
+  if (start < 0) {
+    fail(`could not find enum ${enumName} in ${relative}`)
+    return []
+  }
+  const open = source.indexOf('{', start)
+  const close = source.indexOf('\n}', open)
+  if (open < 0 || close < 0) {
+    fail(`could not read enum ${enumName} in ${relative}`)
+    return []
+  }
+  return [...source.slice(open, close).matchAll(/^ {4}([A-Z][A-Za-z0-9]*)/gm)].map(
+    (match) => match[1][0].toLowerCase() + match[1].slice(1),
+  )
+}
+
+/** The `verdict: '...'` discriminators of the TypeScript `EngineMatch`. */
+function tsVerdicts(relative, typeName) {
+  const source = read(relative)
+  const start = source.indexOf(`export type ${typeName} =`)
+  if (start < 0) {
+    fail(`could not find the ${typeName} union in ${relative}`)
+    return []
+  }
+  const end = source.indexOf('\nexport', start)
+  const body = source.slice(start, end < 0 ? undefined : end)
+  return [...body.matchAll(/verdict: '([^']+)'/g)].map((match) => match[1])
+}
+
+/** Parse a JSON file, failing the run rather than throwing a stack. */
+function readJson(relative) {
+  let value
+  try {
+    value = JSON.parse(read(relative))
+  } catch (error) {
+    fail(`could not parse ${relative}: ${error.message}`)
+    return null
+  }
+  return value
+}
+
+/**
+ * The `enum` of a JSON Schema property's nested schema, e.g. the engine
+ * ids under `properties.supportedEngines.items`.
+ */
+function jsonSchemaPropertyEnum(relative, property) {
+  const schema = readJson(relative)
+  const values = schema?.properties?.[property]?.items?.enum
+  if (!Array.isArray(values)) {
+    fail(`could not find properties.${property}.items.enum in ${relative}`)
+    return []
+  }
+  return values
+}
+
+/** A JSON Schema property's `description`. */
+function jsonSchemaPropertyDescription(relative, property) {
+  return readJson(relative)?.properties?.[property]?.description ?? ''
+}
+
 function compare(label, lists) {
   const [[referenceName, reference], ...rest] = lists
   const expected = [...reference].sort()
@@ -214,7 +355,7 @@ function compare(label, lists) {
   }
 
   if (!failed) {
-    console.log(`  ${label}: ${reference.length} kinds agree across all sources`)
+    console.log(`  ${label}: ${reference.length} entries agree across all sources`)
   }
 }
 
@@ -257,6 +398,46 @@ compare('check kinds', [
   ['validate_capability.py', pythonSet(communityValidator, 'KNOWN_CHECK_KINDS')],
 ])
 
+compare('engine ids', [
+  ['src/catalog/engines/', enginePresetIds()],
+  ['capability.rs', rustConstList('src-tauri/src/capability.rs', 'KNOWN_ENGINES')],
+  ['capability.ts', tsUnion('src/types/capability.ts', 'EngineId')],
+  ['capability.schema.json', jsonSchemaPropertyEnum(agentSchema, 'supportedEngines')],
+  // The community validator refuses an engine id the runner has never
+  // heard of, because a recipe naming an unknown engine can never match
+  // a game and is invisible on all of them. That makes the vocabulary
+  // load-bearing there, not just descriptive — and it makes this the
+  // fifth place the list lives, which is the shape that already drifted
+  // once for step kinds.
+  [
+    'validate_capability.py',
+    pythonSet(communityValidator, 'KNOWN_ENGINES'),
+  ],
+])
+
+compare('engine match verdicts', [
+  ['capability.rs', rustEnumVariants('src-tauri/src/capability.rs', 'EngineMatch')],
+  ['capability.ts', tsVerdicts('src/types/capability.ts', 'EngineMatch')],
+])
+
+// The vocabulary above says which engines exist; it cannot say what an
+// empty list means, and that is the convention the gate rests on (an
+// empty list is every engine, not none). It is prose in every source,
+// so this can only check that the prose is still there — and it was
+// worth a check once: the schema's description used to be "Optional
+// hint for which engines this capability is eligible for.", which told
+// an agent author nothing about how the desktop uses the field.
+if (!process.exitCode) {
+  const description = jsonSchemaPropertyDescription(agentSchema, 'supportedEngines')
+  if (!/every/i.test(description)) {
+    fail(
+      `${agentSchema} properties.supportedEngines.description no longer says what an ` +
+        'empty list means. The backend reads an empty list as EVERY engine, and this ' +
+        'description is what an agent author sees when writing a recipe.',
+    )
+  }
+}
+
 // Kind parity is necessary but not sufficient. mcp-server.mjs also tells
 // the agent which param names each step accepts, and a wrong name there
 // produces a recipe that passes every kind check and then fails at
@@ -282,9 +463,12 @@ if (!process.exitCode) {
 
 if (process.exitCode) {
   console.error(
-    '\nA step or check kind exists in one place and not another. Update all of:',
+    '\nA step kind, a check kind, an engine id or an engine-gate verdict exists in ' +
+      'one place and not another. Update all of:',
   )
   console.error('  src-tauri/src/builtin_steps.rs / builtin_checks.rs')
+  console.error('  src-tauri/src/capability.rs (KNOWN_ENGINES, enum EngineMatch)')
+  console.error('  src/catalog/engines/*.yaml')
   console.error('  src/types/capability.ts')
   console.error(`  ${agentSchema}`)
   console.error(`  ${agentServer} (STEP_KINDS / CHECK_KINDS, and the ` +

@@ -2,6 +2,33 @@ export type CapabilityCategory = 'vr' | 'graphics' | 'qol' | 'system'
 export type CapabilityStatus = 'available' | 'planned'
 export type CheckCategory = 'global' | 'category' | 'modulespecific'
 export type CheckSeverity = 'info' | 'warning' | 'blocker'
+
+/**
+ * Engine ids the shipped catalogue knows about — the ones under
+ * `src/catalog/engines/`.
+ *
+ * Mirrors `crate::capability::KNOWN_ENGINES`; the two, plus the
+ * `supportedEngines.items.enum` in the agent JSON schema, are compared
+ * by `scripts/check-capability-kind-parity.mjs`. An id outside this
+ * list is never rejected by the backend — it resolves to
+ * `unknownGameEngine`, which gates nothing.
+ */
+export type EngineId = 'idtech' | 're-engine' | 'redengine' | 'unity' | 'unreal5'
+
+/**
+ * Why a capability is (or is not) offered for a game, decided once in
+ * the backend and rendered here. Mirrors
+ * `crate::capability::EngineMatch`; the card renders this instead of
+ * re-deriving the rule, which is how `supportedEngines` was parsed and
+ * then ignored for a release.
+ */
+export type EngineMatch =
+  | { verdict: 'noGameEngine' }
+  | { verdict: 'engineAgnostic' }
+  | { verdict: 'unknownGameEngine'; engine: string }
+  | { verdict: 'supported' }
+  | { verdict: 'mismatch'; supported: EngineId[] }
+
 /**
  * Step kinds the runner can execute.
  *
@@ -96,7 +123,13 @@ export interface CapabilitySpec {
   description?: string
   category: CapabilityCategory
   status: CapabilityStatus
-  supportedEngines?: string[]
+  /**
+   * Engines this recipe is built for. Absent or empty means **every**
+   * engine, not none — the backend gate treats a recipe that declares
+   * nothing as engine-agnostic, and `scripts/check-capability-kind-parity.mjs`
+   * holds the other three declarations of that rule in line.
+   */
+  supportedEngines?: readonly EngineId[]
   /** Ids of capabilities that must be installed before this one. */
   dependencies?: string[]
   compatibility?: CapabilityCompatibility
@@ -120,6 +153,21 @@ export interface CapabilitySummary {
   category: CapabilityCategory
   status: CapabilityStatus
   origin: CapabilityOrigin
+  /**
+   * Engines the recipe declares. Empty means every engine. Read-only
+   * because it mirrors a wire struct the UI never mutates, and it
+   * accepts the `as const` fixtures the tests build without weakening
+   * anything a caller does.
+   *
+   * `capability_list` and `capability_reload` always send both engine
+   * fields, so they are required on the wire. They are optional in the
+   * mirror only so a summary literal does not have to name a verdict it
+   * does not care about. A missing `engineMatch` means "no gate was
+   * decided", not "every engine".
+   */
+  supportedEngines?: readonly EngineId[]
+  /** The engine verdict the backend decided. See {@link EngineMatch}. */
+  engineMatch?: EngineMatch
 }
 
 export interface ResolvedConfig {

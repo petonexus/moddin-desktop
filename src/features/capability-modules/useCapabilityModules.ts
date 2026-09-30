@@ -44,10 +44,17 @@ export function hasCompatibilityConstraint(spec: CapabilitySpec | null | undefin
  * dedicated installer for them. Everything else the registry knows,
  * including `builtIn` specs like BepInEx, surfaces as a card.
  *
- * v1 deliberately does NOT engine-gate the list: `capability_list` returns
- * summaries only (no `supportedEngines`), and inventing a filter without
- * data would hide cards randomly. Once a per-spec engine gate is wanted,
- * the cached `capability_get` specs below already carry `supportedEngines`.
+ * Engine gating happens in the backend, not here. It used not to happen
+ * at all, because `capability_list` returned summaries with no
+ * `supportedEngines` and a filter invented on this side would have
+ * hidden cards at random. The summaries now carry an `engineMatch`
+ * verdict the runner computed while it already had the spec in hand, and
+ * the gate is `CapabilitySpec::engine_match` in Rust: a recipe that
+ * names engines and does not name the game's is held back; a recipe
+ * that names none, or a game that declares no engine, is shown. The
+ * reason matters here, because it is why `engine()` is passed instead
+ * of filtered afterwards — the "no engine means everything" case is a
+ * decision about the user's data, not a detail of the filter.
  */
 export function useCapabilityModules(options: UseCapabilityModulesOptions) {
   const capabilities = ref<CapabilitySummary[]>([])
@@ -152,7 +159,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     loading.value = true
     loadPromise = (async () => {
       try {
-        capabilities.value = await listCapabilities()
+        capabilities.value = await listCapabilities(options.engine())
         loadError.value = null
         loaded.value = true
         // Prefetch full specs so the per-card config forms are ready when
