@@ -56,13 +56,9 @@ modules:
         - Dead Island 2 uses Unreal Engine; local engine detection enables the workflow but does not replace testing a compatible UEVR profile.
         - Close Dead Island 2 and UEVRInjector.exe before installing or switching a variant.
         - Do not run Epic Games Launcher, UEVR, or the game as administrator.
-  - id: cheeky-foveated-dlss-uevr
-    name: Cheeky Foveated DLSS for UEVR
-    description: Install the Cheeky UEVR profile plugin and its DLSS path after the game-specific transaction flow is implemented in Moddin.
-    category: graphics
-    status: planned
-    # O jogo base oferece FSR2, não DLSS: o scanner do Cheeky só marca
-    # EXPERIMENTAL_READY com UEVR + OptiScaler + nvngx_dlss.dll.
-    dependencies:
-      - uevr
-      - optiscaler
+# `cheeky-foveated-dlss-uevr` was listed here and removed. It is a
+# near-duplicate of the `cheeky-foveated-dlss` module the unreal5 preset
+# already adds, filed under an id nothing implements. As a `planned` entry
+# it rendered as a disabled card, not a broken button — but the catalogue
+# was advertising an id the app cannot act on. It comes back when the
+# game-specific transaction flow it describes actually exists.

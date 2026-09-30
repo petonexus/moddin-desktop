@@ -856,57 +856,39 @@ for (const fileName of registeredRecipes) {
  *
  * A stale entry (the problem was fixed) fails the run, so the baseline
  * cannot outlive the bug it excuses. A new problem is never excused.
+ *
+ * **Empty, and that is the point.** All eight entries were fixed in one
+ * pass and deleted together, which is what "a baseline is a sixth place a
+ * defect can be named" is supposed to produce. They are recorded here
+ * because an empty list reads as "nothing was ever wrong", and the next
+ * person to add a `planned` module with nothing behind it should be able
+ * to see that this exact mistake was already made and unmade:
+ *
+ *   - `cyberpunk-2077` → `modules[uevr]`, twice: once as
+ *     `recipe-engine-mismatch` (the recipe declares `supportedEngines:
+ *     [unreal5]`, the game is `enginePreset: redengine`) and once as
+ *     `preset-denies-module` (the redengine preset says in its own
+ *     description that Moddin does not bundle a UEVR-style injector for
+ *     it). One decision closed both, and the decision was to drop the
+ *     module: UEVR injects Unreal Engine, and teaching it about
+ *     REDengine is a feature question this repository cannot answer, not a
+ *     data fix.
+ *   - `doom-2016` → `modules[kharvox-vr]`, twice, as
+ *     `preset-denies-module` and `module-not-offered`.
+ *   - `dawnwalker` → `modules[graphics-profile]` and
+ *     `modules[vortex-migration]`, both `module-not-offered`: declared
+ *     intention with nothing behind it, and no ROADMAP item either.
+ *   - `dead-island-2` and `stalker-2` →
+ *     `modules[cheeky-foveated-dlss-uevr]`, both `module-not-offered`: a
+ *     near-duplicate of `cheeky-foveated-dlss` under an id nothing
+ *     implements.
+ *
+ * All of them rendered as disabled "Planned" cards rather than buttons
+ * that fail, which is why they survived as long as they did: nothing
+ * crashed, so nothing looked wrong. The catalogue was advertising ids the
+ * app cannot act on, and that is the defect this list existed to excuse.
  */
-const KNOWN_DEFECTS = [
-  {
-    rule: 'recipe-engine-mismatch',
-    file: 'src/catalog/games/cyberpunk-2077.yaml',
-    key: 'modules[uevr]',
-    why: 'UEVR injects Unreal Engine only; the uevr recipe declares supportedEngines: [unreal5] and its own safetyNotes say it is only eligible for Unreal games, while this game declares enginePreset: redengine. Needs a product call: drop the module or extend the recipe.',
-  },
-  {
-    rule: 'preset-denies-module',
-    file: 'src/catalog/games/cyberpunk-2077.yaml',
-    key: 'modules[uevr]',
-    why: 'The redengine preset description states Moddin does not bundle UEVR-style VR injection for it, and this game offers UEVR. One decision closes both this and the recipe-engine-mismatch entry below: drop the module, or teach the recipe about REDengine.',
-  },
-  {
-    rule: 'preset-denies-module',
-    file: 'src/catalog/games/doom-2016.yaml',
-    key: 'modules[kharvox-vr]',
-    why: 'The idtech preset says the desktop shortcut is the only reusable mod that ships today and that KHARVOX-style launchers stay outside the app; the game lists a kharvox-vr card that nothing implements.',
-  },
-  {
-    rule: 'module-not-offered',
-    file: 'src/catalog/games/doom-2016.yaml',
-    key: 'modules[kharvox-vr]',
-    why: 'No preset, recipe, module or command offers kharvox-vr. It is planned, so the grid renders a disabled "Planned" card rather than a button that fails; the defect is the catalogue listing an id nothing implements.',
-  },
-  {
-    rule: 'module-not-offered',
-    file: 'src/catalog/games/dawnwalker.yaml',
-    key: 'modules[graphics-profile]',
-    why: 'A declared intention with nothing behind it: no preset, recipe, module or command. ROADMAP has no item for it.',
-  },
-  {
-    rule: 'module-not-offered',
-    file: 'src/catalog/games/dawnwalker.yaml',
-    key: 'modules[vortex-migration]',
-    why: 'A declared intention with nothing behind it: no preset, recipe, module or command. ROADMAP has no item for it.',
-  },
-  {
-    rule: 'module-not-offered',
-    file: 'src/catalog/games/dead-island-2.yaml',
-    key: 'modules[cheeky-foveated-dlss-uevr]',
-    why: 'A near-duplicate of the cheeky-foveated-dlss module the unreal5 preset already adds, under an id nothing implements. It is planned, so the card renders as a disabled "Planned" card, not as a button that fails.',
-  },
-  {
-    rule: 'module-not-offered',
-    file: 'src/catalog/games/stalker-2.yaml',
-    key: 'modules[cheeky-foveated-dlss-uevr]',
-    why: 'Same near-duplicate id as dead-island-2; nothing implements it. It is planned, so the card renders as a disabled "Planned" card, not as a button that fails.',
-  },
-]
+const KNOWN_DEFECTS = [];
 
 const knownKeys = new Set(KNOWN_DEFECTS.map((defect) => `${defect.rule}|${defect.file}|${defect.key}`))
 const reproduced = new Set()
