@@ -9,7 +9,7 @@ name: Release
 # evidence of anything. Every installer in this release's history was
 # built outside CI.
 #
-# The body comes from `.release-notes-<tag>.md` at the repo root; its
+# The body comes from `docs/release-notes/.release-notes-<tag>.md`; its
 # first line (a Markdown H1) becomes the release title. Tags with a
 # pre-release suffix (e.g. v0.1.0-beta.2) publish as pre-releases.
 
@@ -46,10 +46,13 @@ jobs:
           npm run check:architecture
           npm run build
 
-      - name: Setup Rust stable MSVC
+      - name: Setup Rust toolchain
         shell: pwsh
+        # Same override ci.yml uses: rust-toolchain.toml at the repo root
+        # pins the release, so a tagged build cannot be produced by a
+        # different compiler than the one CI verified.
         run: |
-          rustup default stable-msvc
+          rustup show
           rustc --version
           cargo --version
 
@@ -112,7 +115,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           SHA256: ${{ needs.build.outputs.sha256 }}
         run: |
-          notes=".release-notes-${TAG}.md"
+          notes="docs/release-notes/.release-notes-${TAG}.md"
           if [ ! -f "$notes" ]; then
             echo "::error::Missing $notes. Commit the release notes before pushing the tag."
             exit 1
