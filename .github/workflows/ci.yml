@@ -42,10 +42,21 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The `tauri` dependency needs its `custom-protocol` Cargo feature, and
+      # without it the release build still compiles, still bundles and still
+      # installs — the window just loads http://127.0.0.1:1420 and renders
+      # nothing. Nothing in `cargo check`, `cargo test` or the installer build
+      # can see it; the symptom is a blank app on a user's machine, so the
+      # manifest is all a cheap gate can check. Zero dependencies, and run
+      # through `node` directly so it really does execute before the install
+      # below, on a bare checkout, with nothing able to fail first.
+      - name: Check bundled-build features
+        run: node scripts/check-bundle-features.mjs
+
       - name: Install frontend dependencies
         run: npm ci
 
-      # Before the install on purpose. The catalogue is data with no
+      # Before the build on purpose. The catalogue is data with no
       # other gate, and it is not validatable by eyeball: a game shipped
       # declaring RE Engine while offering UEVR, OFXR and Cheeky, and
       # nothing noticed. The check declares no dependencies, so it runs

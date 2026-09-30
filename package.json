@@ -20,6 +20,7 @@
     "check:catalog": "node scripts/validate-catalog.mjs",
     "check:architecture": "node scripts/check-frontend-architecture.mjs",
     "check:capability-kinds": "node scripts/check-capability-kind-parity.mjs",
+    "check:bundle-features": "node scripts/check-bundle-features.mjs",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

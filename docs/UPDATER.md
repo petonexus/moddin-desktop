@@ -178,9 +178,38 @@ message stating that nothing was installed.
 
 ### Dry run
 
+**Before the tag, check the artifact carries the frontend.** This is one
+command's worth of work and it is the only step here that can fail silently:
+
+```powershell
+Get-ChildItem src-tauri\target\release\build\moddin-desktop-*\output |
+  Select-String 'cargo:rustc-cfg=dev'      # must match nothing
+Get-ChildItem src-tauri\target\release\build\moddin-desktop-*\out\tauri-codegen-assets |
+  Measure-Object                            # must be non-zero
+```
+
+If either line is wrong, the binary has no frontend embedded in it: the
+`custom-protocol` Cargo feature is what makes `tauri` embed `frontendDist`
+rather than serve `devUrl`, and without it every window loads
+`http://127.0.0.1:1420` and renders a blank page. Nothing about that shows up
+in the build log, in `cargo check`, in `cargo test`, or in the installer's own
+output — the installer completes, the app launches, and the first thing on
+screen is white. `scripts/check-bundle-features.mjs` gates the manifest so the
+feature cannot be dropped by accident, but a manifest is not an artifact: cargo
+does not re-run a dependency's build script when a feature flips, so a stale
+target directory can still hold a binary built the other way. *If the feature
+was just added, run `cargo clean -p moddin-desktop` first or the check will
+read the old build and pass it.*
+
+Only then is a tag worth anything.
+
 Nothing here can be exercised end to end without a key. The first tag after
 substituting one is the test: build it, install it on a spare machine, and
 watch the panel offer it, then interrupt the install once and confirm the old
 version still launches. A dry-run tag also has to be a **non-prerelease**
 tag, or the updater will not see it at all — which is the channel rule
 working, not a bug.
+
+And on that spare machine, the first thing to do is confirm **the window
+renders the app** — not that it opens, that it renders. An installer that
+launches a blank window reports success at every step of its own checklist.
