@@ -498,6 +498,25 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       for injected-DLL frameworks. A step-level `include`/`exclude` over archive members is the
       honest fix. *Deliberately not worked around*, because a workaround that installs the
       wrong subset is worse than a refusal.
+- [ ] **Environment-variable expansion in `render_template` / `resolve_path`.** — new
+      Two shipped recipes declare `type: path` fields that resolve under `%LOCALAPPDATA%`, and
+      no step can reach them: `render_template` substitutes only a literal `{name}` and
+      `resolve_path` treats anything non-absolute as game-executable-relative. A committed
+      catalogue value would have to be a fabricated `C:\Users\<someone>\…` that breaks for every
+      other user, or an exe-relative path that drops a tray and an OpenXR layer manifest inside
+      the game folder. Four `ofxr-bridge` fields are stuck on this, which is why a collection
+      naming it refuses with `needsConfig` rather than installing something wrong. This is the
+      same gap that keeps `openxr-helpers` open: the preference document it would need to write
+      is a JSON file at a `%LOCALAPPDATA%` path, and rendering a Windows path into JSON also
+      needs string escaping, or `read_game_preference` returns `None` and the override silently
+      does nothing. **Two open items, one missing capability.**
+- [ ] **The default proxy rename collides.** — new, found while fixing `extract-zip`
+      With no `payload` declared, every archive member basenamed `reshade64.dll` or `dxgi.dll`
+      is renamed onto the same single proxy path, and the **last one wins silently**. A recipe
+      that declares `payload` is immune. The honest fix is to refuse the collision rather than
+      pick a winner: two members claiming one destination is an authoring error, and a
+      deterministic refusal beats a coin flip. Not fixed in the same commit that found it,
+      because the fix is a behaviour change to a shipped rule and deserves its own diff.
 - [ ] **Per-game flat profiles.** No `flat` key exists anywhere in the catalogue yet. · M
 - [ ] **Nexus integration** where permitted. Still genuinely open — no code, no URL.
 - [x] **Collections need content.** Two shipped collections with real members, and a test that
@@ -543,13 +562,20 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       work. *Note the correction:* an earlier revision of this file claimed the storage layer
       "already exists" and implied only a dialog was missing. The layer exists and has **zero
       callers**.
-- [ ] **Resolve the eight baselined catalogue defects.** — new
-      `scripts/validate-catalog.mjs` found them; they are reported by name rather than
-      suppressed. One is fixed (`cyberpunk-2077` offering `uevr` as `available` against a
-      preset that says the opposite). The rest are declared intent — `planned` modules that
-      render as planned — or product calls: `dawnwalker` offering a REDengine `uevr` recipe,
-      and `doom-2016` offering `kharvox-vr` that the idtech preset explicitly excludes.
-      *A baseline is a sixth place a defect can be named. Read every line in it as a bug.*
+- [x] **Resolve the eight baselined catalogue defects.** — new
+      `scripts/validate-catalog.mjs` found them; they were reported by name rather than
+      suppressed, and all eight are now fixed. The validator reports **zero** open data defects
+      and `KNOWN_DEFECTS` is an empty list — with the record of the eight kept in the file above
+      the array, because an empty baseline otherwise reads as "nothing was ever wrong".
+
+      They were one mistake in five costumes: the catalogue listing a module id nothing
+      implements. All eight were `status: planned`, so each rendered as a disabled "Planned"
+      card — nothing crashed, which is exactly why they survived. The `cyberpunk-2077` `uevr`
+      pair was the only real product call: the comment there had framed it as "teach the recipe
+      about REDengine, or drop the module" and left it open, and it is the second one, because
+      UEVR injects Unreal Engine and Cyberpunk 2077 is REDengine. Each removal leaves a comment
+      saying what would bring it back. *A baseline is a sixth place a defect can be named. Read
+      every line in it as a bug.*
 - [ ] **OpenXR per-game runtime binding** — new, and deliberately not faked
       The `openxr-helpers` recipe was `available` and wrote
       `HKCU\...\OpenXR\1\per-game\{gameExecutable}\ActiveRuntime`, described as binding a runtime
