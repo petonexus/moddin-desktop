@@ -1181,6 +1181,7 @@ mod tests {
     use super::*;
     use crate::capability::{CheckSpec, EngineMatch, SpecOrigin};
     use serde_json::json;
+    use std::collections::BTreeSet;
     use std::fs;
 
     /// Build a resolved config from key/value pairs, matching how the
@@ -2436,5 +2437,227 @@ install:
         assert!(!outside.exists(), "nothing was written outside the root");
 
         let _ = fs::remove_dir_all(&work);
+    }
+
+    // ---- Recipe-wide invariants -------------------------------------
+    //
+    // These used to live in `builtin_steps` as a pair of tests scoped to
+    // one hand-picked recipe (`openxr-helpers`). A guard is only as good
+    // as its inventory of sources, so they are stated over every built-in
+    // recipe instead: adding a tenth YAML file is covered automatically,
+    // with no test to remember to extend.
+
+    /// Every built-in recipe, parsed, as `BUILT_IN_YAML` declares it.
+    fn every_built_in_spec() -> Vec<CapabilitySpec> {
+        BUILT_IN_YAML
+            .iter()
+            .map(|raw| {
+                serde_yaml::from_str::<CapabilitySpec>(raw)
+                    .unwrap_or_else(|error| panic!("a built-in recipe does not parse: {error}"))
+            })
+            .collect()
+    }
+
+    /// A step may only reference a config field its own recipe declares.
+    ///
+    /// A `{placeholder}` naming a field that was never declared renders to
+    /// nothing, so whatever the step was building is written with the
+    /// placeholder still in it. This is the bug `openxr-helpers` shipped:
+    /// `gameId` was declared, but the step referenced a `<gameId>` literal
+    /// the renderer did not understand, and the literal became a registry
+    /// key of its own.
+    ///
+    /// The narrower sibling of a rule this file deliberately does **not**
+    /// assert. "Every declared field is consumed" cannot be checked from
+    /// here, because `configSchema` is the union of three consumers that
+    /// live in three different languages:
+    ///
+    ///   * the declarative chain — steps and checks, what this module runs;
+    ///   * the typed module path — `src/features/modules/module-registry.ts`
+    ///     maps the same fields into `OptiScalerRequest` / `CheekyRequest`
+    ///     for the dedicated Rust commands, which is how `proxyCandidates`
+    ///     and `addonFile` are read;
+    ///   * `build_metadata` above, which records `version` on the
+    ///     transaction so the install reports what it pinned.
+    ///
+    /// A first attempt asserted the union of the first two only and named
+    /// all six available recipes as declaring fields nothing reads. Every
+    /// one of those reports was a false positive. A guard that cries wolf
+    /// on the whole catalogue teaches everyone to ignore it, so the rule
+    /// that can be stated honestly is the one that stays.
+    #[test]
+    fn no_step_references_a_config_field_its_recipe_does_not_declare() {
+        for spec in every_built_in_spec() {
+            let declared: BTreeSet<&str> = spec
+                .config_schema
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect();
+            for name in crate::builtin_steps::tests::config_fields_a_step_reads(&spec) {
+                assert!(
+                    declared.contains(name.as_str()),
+                    "'{}' has a step referencing '{{{name}}}', which it does not declare",
+                    spec.id
+                );
+            }
+        }
+    }
+
+    /// What a recipe's install/uninstall chain can produce: the paths a
+    /// step names outright, and whether it unpacks an archive.
+    ///
+    /// A registry write lands under `registry:<key>`, which no check kind
+    /// can address: the check runner looks at processes, at paths inside
+    /// the game folder and at archive URLs, and that is the whole
+    /// vocabulary it has.
+    ///
+    /// `extracts` matters because an extracted archive is the one artifact
+    /// whose full tree is the product: `bepinex` checks
+    /// `BepInEx/core/BepInEx.Preloader.dll`, a path no step declares and
+    /// no step can, because it is the layout inside the release zip. A
+    /// check there is verifying the download, which is legitimate.
+    fn chain_artifacts(spec: &CapabilitySpec) -> (BTreeSet<String>, bool) {
+        let mut written = BTreeSet::new();
+        let mut extracts = false;
+        for step in spec.install.iter().chain(spec.uninstall.iter()) {
+            match step.kind.as_str() {
+                "write-text-file" | "write-binary-file" => {
+                    for param in ["pathField", "path"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("{param}:{value}"));
+                        }
+                    }
+                }
+                "move-file" => {
+                    for param in ["fromField", "from", "toField", "to"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("{param}:{value}"));
+                        }
+                    }
+                }
+                "extract-zip" => {
+                    extracts = true;
+                    for param in ["target", "targetSubdir"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("path:{value}"));
+                        }
+                    }
+                }
+                "git-checkout" => {
+                    for param in ["targetField", "target"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("pathField:{value}"));
+                        }
+                    }
+                }
+                "build-project" => {
+                    // The build's declared outputs are what it must produce,
+                    // so they are artifacts of the chain like any other.
+                    for output in step
+                        .params
+                        .get("outputs")
+                        .and_then(|v| v.as_array())
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(path) = output.as_str() {
+                            written.insert(if path.starts_with('{') {
+                                format!("pathField:{}", path.trim_matches(|c| c == '{' || c == '}'))
+                            } else {
+                                format!("path:{path}")
+                            });
+                        }
+                    }
+                }
+                "registry-write" | "registry-delete" => {
+                    if let Some(key) = step.params.get("key").and_then(|v| v.as_str()) {
+                        written.insert(format!("registry:{key}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (written, extracts)
+    }
+
+    /// A check may only inspect something its own recipe's chain writes,
+    /// and may never name an absolute path.
+    ///
+    /// A check resolving an absolute path is a check that inspects the
+    /// developer's machine rather than the game folder the install just
+    /// populated, so it passes for one user and fails for the next.
+    ///
+    /// "Writes" includes unpacking an archive, because the tree inside a
+    /// release zip is the artifact and no step can name its paths. What is
+    /// still refused is a check pointing at something the chain never had
+    /// any way to produce — a file in a directory no step extracts into,
+    /// or a path outside the game folder.
+    ///
+    /// Scoped to `available` because `chain_artifacts` reads step params,
+    /// and a `planned` recipe's chain is a statement of intent: `uevr`
+    /// declares a `file-exists` check on `Binaries/Win64` that no step in
+    /// its chain names, and that check cannot run while the recipe refuses
+    /// to install. A guard that cannot tell intent from code should not
+    /// pretend to.
+    #[test]
+    fn a_check_only_looks_at_what_its_own_recipe_writes() {
+        for spec in every_built_in_spec() {
+            if spec.status != "available" {
+                continue;
+            }
+            let (written, extracts) = chain_artifacts(&spec);
+            for check in spec.checks.iter().chain(spec.verify.iter()) {
+                for (param, value) in &check.params {
+                    if let Some(text) = value.as_str() {
+                        // The community validator rejects a placeholder in
+                        // a check param: the check runner holds no resolved
+                        // config, so `{name}` would be compared literally.
+                        assert!(
+                            !text.contains('{'),
+                            "'{}' check '{}' param '{param}' holds a placeholder: {text}",
+                            spec.id,
+                            check.id
+                        );
+                    }
+                }
+                if !matches!(
+                    check.kind.as_str(),
+                    "file-exists" | "file-absent" | "exe-version"
+                ) {
+                    continue;
+                }
+                let target = check
+                    .params
+                    .get("pathField")
+                    .and_then(|v| v.as_str())
+                    .map(|field| format!("pathField:{field}"))
+                    .or_else(|| {
+                        check
+                            .params
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .map(|path| format!("path:{path}"))
+                    });
+                let Some(target) = target else {
+                    continue;
+                };
+                let literal = target.strip_prefix("path:").expect("a literal path target");
+                assert!(
+                    !Path::new(literal).is_absolute(),
+                    "'{}' check '{}' names the absolute path '{literal}'; a check resolves relative \
+                     to the game folder",
+                    spec.id,
+                    check.id
+                );
+                assert!(
+                    written.contains(&target) || extracts,
+                    "'{}' check '{}' inspects '{literal}', which nothing in its chain produces. \
+                     The chain writes: {written:?}, and it unpacks no archive, so the path has \
+                     to be one a step names",
+                    spec.id,
+                    check.id
+                );
+            }
+        }
     }
 }
