@@ -6,6 +6,13 @@ import type { ModuleVerification } from '../../types/module-verification'
 
 export type ModuleCardState = 'active' | 'available' | 'attention' | 'unknown' | 'checking' | 'planned'
 
+/**
+ * The card renders the check list and nothing else from a verification
+ * report, so callers may hand it whatever shape their backend produces
+ * (the capability runner's report has no `checkedAt`).
+ */
+export type ModuleCardVerification = Pick<ModuleVerification, 'checks'>
+
 export interface ModuleCardUpdate {
   hasSource: boolean
   available: boolean
@@ -24,7 +31,7 @@ const props = defineProps<{
   actionBusy: boolean
   actionDisabled: boolean
   blockedReason?: string
-  verification?: ModuleVerification
+  verification?: ModuleCardVerification | null
   checkedAtLabel?: string
   verifyBusy: boolean
   removeLabel?: string | null
@@ -100,7 +107,7 @@ const isPlanned = computed(() => props.state === 'planned')
         class="btn btn-ghost btn-sm"
         :class="{ 'is-loading': verifyBusy }"
         type="button"
-        :disabled="verifyBusy || Boolean(blockedReason)"
+        :disabled="verifyBusy || actionBusy || Boolean(blockedReason)"
         :title="blockedReason"
         @click="emit('verify')"
       >

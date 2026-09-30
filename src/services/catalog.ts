@@ -223,5 +223,13 @@ export function getMissingDependenciesForModule(
   const declared = new Map(game.modules.map((module) => [module.id, module]))
   const root = declared.get(moduleId)
   if (!root) return []
-  return collectMissing(declared, [root], new Set(installedModuleIds))
+  // `collectMissing` reports every node it visits, and the node it was
+  // called with is one of them. Here the root is the module the caller
+  // already asked about, so its own id is dropped: the question is what
+  // has to be installed *first*, and answering "this module" sends
+  // `configureModule` back to the prerequisite dialog instead of
+  // forward to the install flow.
+  return collectMissing(declared, [root], new Set(installedModuleIds)).filter(
+    (id) => id !== moduleId,
+  )
 }
