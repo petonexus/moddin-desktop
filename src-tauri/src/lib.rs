@@ -7,28 +7,23 @@ mod builtin_steps;
 mod capability;
 mod capability_authoring;
 mod capability_runner;
-mod community_catalog;
-mod path_guard;
 mod cheeky;
+mod community_catalog;
 mod desktop_shortcut;
 mod gog;
 mod inspection;
 mod module;
-mod pcgw_cache;
 mod obs;
-mod obs_module;
 mod ofxr;
-mod ofxr_module;
 mod openxr;
-mod openxr_module;
 mod optiscaler;
-mod optiscaler_module;
+mod path_guard;
+mod pcgw_cache;
 mod process;
 mod profile_files;
 mod steam;
 mod transaction;
 mod uevr;
-mod uevr_module;
 mod updates;
 mod vr_launch;
 
@@ -90,8 +85,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 /// specific and github.com-only).
 #[tauri::command]
 fn open_web_url(url: String) -> Result<(), String> {
-    let url = reqwest::Url::parse(url.trim())
-        .map_err(|_| "Link is not a valid URL.".to_owned())?;
+    let url = reqwest::Url::parse(url.trim()).map_err(|_| "Link is not a valid URL.".to_owned())?;
     if url.scheme() != "https" {
         return Err("Only HTTPS links can be opened.".to_owned());
     }
@@ -216,10 +210,10 @@ mod tests {
             "http://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4"
         )
         .is_err());
-        assert!(validate_external_release_url(
-            "https://github.com@evil.example/releases/tag/v1"
-        )
-        .is_err());
+        assert!(
+            validate_external_release_url("https://github.com@evil.example/releases/tag/v1")
+                .is_err()
+        );
         assert!(validate_external_release_url(
             "https://user:pass@github.com/owner/repo/releases/tag/v1"
         )

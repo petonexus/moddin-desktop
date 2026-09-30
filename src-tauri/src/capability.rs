@@ -42,9 +42,14 @@ use std::collections::BTreeMap;
 ///
 /// Adding a new variant requires updating the TypeScript mirror in
 /// `src/types/capability.ts`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// `BuiltIn` is the default: a spec with no explicit `origin` is one of
+/// the recipes compiled into the binary, and a local or community
+/// override must say so.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SpecOrigin {
+    #[default]
     BuiltIn,
     Local,
     Community,
@@ -57,12 +62,6 @@ impl SpecOrigin {
             SpecOrigin::Local => "local",
             SpecOrigin::Community => "community",
         }
-    }
-}
-
-impl Default for SpecOrigin {
-    fn default() -> Self {
-        SpecOrigin::BuiltIn
     }
 }
 
@@ -179,7 +178,9 @@ impl<'a> EngineScope<'a> {
     /// fact, so the contract takes it as a parameter instead of
     /// guessing.
     pub fn resolve(game_engine: Option<&'a str>, covered: impl Fn(&str) -> bool) -> Self {
-        let Some(engine) = game_engine.map(str::trim).filter(|engine| !engine.is_empty())
+        let Some(engine) = game_engine
+            .map(str::trim)
+            .filter(|engine| !engine.is_empty())
         else {
             return Self::Unscoped;
         };
@@ -371,13 +372,15 @@ impl ResolvedConfig {
     }
 
     pub fn get_string(&self, name: &str) -> Option<String> {
-        self.get(name).and_then(|value| value.as_str().map(str::to_owned))
+        self.get(name)
+            .and_then(|value| value.as_str().map(str::to_owned))
     }
 
-    pub fn get_u64(&self, name: &str) -> Option<u64> {
-        self.get(name).and_then(|value| value.as_u64())
-    }
-
+    /// Typed bool accessor. No step kind reads one off the resolved
+    /// config today, so this is compiled for the test suite only; it is
+    /// kept because the test below is what pins the `values` map's
+    /// key-addressed shape.
+    #[cfg(test)]
     pub fn get_bool(&self, name: &str) -> Option<bool> {
         self.get(name).and_then(|value| value.as_bool())
     }
@@ -385,7 +388,12 @@ impl ResolvedConfig {
 
 /// Severity strings the capability schema reuses from the catalog.
 pub mod severity {
+    /// Test-only today: the capability YAMLs that ship use `blocker`,
+    /// and the UI renders any other severity through the same enum.
+    #[cfg(test)]
     pub const INFO: &str = "info";
+    /// Test-only today — see [`INFO`].
+    #[cfg(test)]
     pub const WARNING: &str = "warning";
     pub const BLOCKER: &str = "blocker";
 }
@@ -399,7 +407,10 @@ mod tests {
     fn resolves_string_and_bool_from_config() {
         let config = ResolvedConfig {
             values: BTreeMap::from([
-                ("downloadUrl".to_owned(), json!("https://example.com/foo.zip")),
+                (
+                    "downloadUrl".to_owned(),
+                    json!("https://example.com/foo.zip"),
+                ),
                 ("forceReinstall".to_owned(), json!(true)),
             ]),
         };

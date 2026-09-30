@@ -317,19 +317,13 @@ fn app_id_from_manifest_name(file_name: &str) -> Option<&str> {
 
 fn valid_install_dir_name(value: &str) -> bool {
     let value = value.trim();
-    if value.is_empty()
-        || value.starts_with('/')
-        || value.starts_with('\\')
-        || value.contains('\0')
+    if value.is_empty() || value.starts_with('/') || value.starts_with('\\') || value.contains('\0')
     {
         return false;
     }
 
     value.split(['/', '\\']).all(|segment| {
-        !segment.is_empty()
-            && segment != "."
-            && segment != ".."
-            && !segment.contains(':')
+        !segment.is_empty() && segment != "." && segment != ".." && !segment.contains(':')
     })
 }
 
@@ -361,7 +355,7 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 
 fn normalized_path_key(path: &Path) -> String {
     path_to_string(path)
-        .trim_end_matches(|c| c == '\\' || c == '/')
+        .trim_end_matches(['\\', '/'])
         .to_lowercase()
 }
 
@@ -422,7 +416,10 @@ HKEY_CURRENT_USER\Software\Valve\Steam
 
     #[test]
     fn validates_manifest_file_app_ids() {
-        assert_eq!(app_id_from_manifest_name("appmanifest_1245620.acf"), Some("1245620"));
+        assert_eq!(
+            app_id_from_manifest_name("appmanifest_1245620.acf"),
+            Some("1245620")
+        );
         assert_eq!(app_id_from_manifest_name("appmanifest_abc.acf"), None);
         assert_eq!(app_id_from_manifest_name("appmanifest_1245620.txt"), None);
     }
@@ -467,6 +464,9 @@ HKEY_CURRENT_USER\Software\Valve\Steam
             is_incomplete_install: None,
         };
 
-        assert_eq!(epic_manifest_app_id(&manifest).as_deref(), Some("catalog-id"));
+        assert_eq!(
+            epic_manifest_app_id(&manifest).as_deref(),
+            Some("catalog-id")
+        );
     }
 }

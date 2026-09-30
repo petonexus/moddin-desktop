@@ -1,4 +1,4 @@
-﻿use crate::process::HideConsole;
+use crate::process::HideConsole;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -58,7 +58,9 @@ fn is_valid_transaction_id(id: &str) -> bool {
     };
 
     !timestamp.is_empty()
-        && timestamp.chars().all(|character| character.is_ascii_digit())
+        && timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
         && nonce.len() == 32
         && nonce.chars().all(|character| character.is_ascii_hexdigit())
 }
@@ -84,7 +86,10 @@ fn validate_record(record: &TransactionRecord, expected_id: &str) -> Result<(), 
             "Transaction manifest identity mismatch for '{expected_id}'."
         ));
     }
-    if !matches!(record.status.as_str(), "prepared" | "applied" | "rolled_back") {
+    if !matches!(
+        record.status.as_str(),
+        "prepared" | "applied" | "rolled_back"
+    ) {
         return Err(format!(
             "Transaction '{}' has an invalid status '{}'.",
             record.id, record.status
@@ -144,8 +149,9 @@ fn write_record(record: &TransactionRecord) -> Result<(), String> {
         drop(file);
 
         if manifest.is_file() {
-            fs::copy(&manifest, &backup)
-                .map_err(|error| format!("Could not preserve previous transaction manifest: {error}"))?;
+            fs::copy(&manifest, &backup).map_err(|error| {
+                format!("Could not preserve previous transaction manifest: {error}")
+            })?;
             fs::remove_file(&manifest)
                 .map_err(|error| format!("Could not replace transaction manifest: {error}"))?;
         }
@@ -393,7 +399,12 @@ pub fn begin_file_set_transaction(
 
     let mut files = Vec::with_capacity(unique_targets.len());
     for (index, target) in unique_targets.iter().enumerate() {
-        files.push(snapshot_target(&backup_directory, index, target_root, target)?);
+        files.push(snapshot_target(
+            &backup_directory,
+            index,
+            target_root,
+            target,
+        )?);
     }
 
     let directories = collect_created_directories(target_root, &unique_targets);
@@ -439,7 +450,11 @@ pub fn add_files_to_transaction(
 
     let mut fresh: Vec<PathBuf> = Vec::new();
     for target in extra_targets {
-        if record.files.iter().any(|file| Path::new(&file.target_path) == target) {
+        if record
+            .files
+            .iter()
+            .any(|file| Path::new(&file.target_path) == target)
+        {
             continue;
         }
         if fresh.contains(target) {
@@ -454,9 +469,12 @@ pub fn add_files_to_transaction(
     let backup_directory = PathBuf::from(&record.backup_path);
     let index_offset = record.files.len();
     for (offset, target) in fresh.iter().enumerate() {
-        record
-            .files
-            .push(snapshot_target(&backup_directory, index_offset + offset, target_root, target)?);
+        record.files.push(snapshot_target(
+            &backup_directory,
+            index_offset + offset,
+            target_root,
+            target,
+        )?);
     }
 
     let mut directories = record.created_directories.clone();
@@ -563,7 +581,7 @@ pub fn list_transactions_sync() -> Result<Vec<TransactionRecord>, String> {
         }
     }
 
-    records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    records.sort_by_key(|record| std::cmp::Reverse(record.created_at));
     Ok(records)
 }
 
@@ -753,8 +771,9 @@ mod tests {
         };
 
         assert!(validate_record(&record, id).is_ok());
-        assert!(validate_record(&record, "1757720000001-0123456789abcdef0123456789abcdef")
-            .is_err());
+        assert!(
+            validate_record(&record, "1757720000001-0123456789abcdef0123456789abcdef").is_err()
+        );
 
         record.status = "mystery".to_owned();
         assert!(validate_record(&record, id).is_err());
@@ -885,14 +904,18 @@ pub fn list_snapshots() -> Result<Vec<Snapshot>, String> {
         if !path.is_file() {
             continue;
         }
-        let Some(id) = path.file_stem().and_then(|value| value.to_str()).map(str::to_owned) else {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+        else {
             continue;
         };
         if let Ok(snapshot) = read_snapshot(&id) {
             snapshots.push(snapshot);
         }
     }
-    snapshots.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at));
     Ok(snapshots)
 }
 
@@ -918,8 +941,7 @@ pub fn rollback_snapshot(id: String) -> Result<Vec<TransactionRecord>, String> {
 pub fn delete_snapshot(id: String) -> Result<(), String> {
     let path = snapshot_path(&id)?;
     if path.is_file() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("Could not delete snapshot: {error}"))?;
+        fs::remove_file(&path).map_err(|error| format!("Could not delete snapshot: {error}"))?;
     }
     Ok(())
 }

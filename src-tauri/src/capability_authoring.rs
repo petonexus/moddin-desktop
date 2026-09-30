@@ -19,8 +19,9 @@ use std::path::Path;
 
 const VALID_CATEGORIES: &[&str] = &["vr", "graphics", "qol", "system"];
 const VALID_STATUSES: &[&str] = &["available", "planned"];
-const VALID_CONFIG_TYPES: &[&str] =
-    &["string", "number", "boolean", "url", "sha256", "path", "enum"];
+const VALID_CONFIG_TYPES: &[&str] = &[
+    "string", "number", "boolean", "url", "sha256", "path", "enum",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,7 +248,11 @@ fn render_plan(spec: &CapabilitySpec) -> String {
             .config_schema
             .iter()
             .map(|field| {
-                let required = if field.required { "required" } else { "optional" };
+                let required = if field.required {
+                    "required"
+                } else {
+                    "optional"
+                };
                 format!("{} ({}, {})", field.name, field.field_type, required)
             })
             .collect::<Vec<_>>()
@@ -461,11 +466,12 @@ struct RecommendationsFile {
 /// against the live registry so the AI cannot invent mods; collections
 /// have no local registry yet and are only shape-checked.
 #[tauri::command]
-pub fn validate_recommendations_yaml(request: AuthorYamlRequest) -> RecommendationsValidationResult {
+pub fn validate_recommendations_yaml(
+    request: AuthorYamlRequest,
+) -> RecommendationsValidationResult {
     let parsed: Result<Vec<Recommendation>, _> = serde_yaml::from_str(&request.yaml);
     let recommendations = parsed.or_else(|_| {
-        serde_yaml::from_str::<RecommendationsFile>(&request.yaml)
-            .map(|file| file.recommendations)
+        serde_yaml::from_str::<RecommendationsFile>(&request.yaml).map(|file| file.recommendations)
     });
 
     let recommendations = match recommendations {
@@ -579,7 +585,11 @@ install:
         assert!(joined.contains("id \"Bad Id!\""), "{}", joined);
         assert!(joined.contains("category \"fun\""), "{}", joined);
         assert!(joined.contains("status \"beta\""), "{}", joined);
-        assert!(joined.contains("unknown kind \"summon-cthulhu\""), "{}", joined);
+        assert!(
+            joined.contains("unknown kind \"summon-cthulhu\""),
+            "{}",
+            joined
+        );
         assert!(result.spec.is_none());
     }
 
@@ -625,17 +635,31 @@ checks:
             yaml: MINIMAL_OK.to_owned(),
         });
         assert!(result.ok);
-        assert!(result.plan.contains("Test Mod (test-mod)"), "{}", result.plan);
-        assert!(result.plan.contains("1. Write a marker file."), "{}", result.plan);
-        assert!(result.plan.contains("rolls back the recorded install"), "{}", result.plan);
-        assert!(result.plan.contains("Moddin will ask for: marker"), "{}", result.plan);
+        assert!(
+            result.plan.contains("Test Mod (test-mod)"),
+            "{}",
+            result.plan
+        );
+        assert!(
+            result.plan.contains("1. Write a marker file."),
+            "{}",
+            result.plan
+        );
+        assert!(
+            result.plan.contains("rolls back the recorded install"),
+            "{}",
+            result.plan
+        );
+        assert!(
+            result.plan.contains("Moddin will ask for: marker"),
+            "{}",
+            result.plan
+        );
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "moddin-authoring-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("moddin-authoring-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
@@ -667,7 +691,11 @@ install:
 "#;
         let result = save_capability_to_dir(&dir, yaml, true);
         assert!(!result.ok);
-        assert!(result.errors[0].contains("built into Moddin"), "{}", result.errors[0]);
+        assert!(
+            result.errors[0].contains("built into Moddin"),
+            "{}",
+            result.errors[0]
+        );
         assert!(!dir.join("ofxr-bridge.yaml").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -683,17 +711,28 @@ install:
 
         let refused = save_capability_to_dir(&dir, &replaced, false);
         assert!(!refused.ok);
-        assert!(refused.exists, "refusal must flag exists: {:?}", refused.errors);
+        assert!(
+            refused.exists,
+            "refusal must flag exists: {:?}",
+            refused.errors
+        );
 
         let second = save_capability_to_dir(&dir, &replaced, true);
         assert!(second.ok, "errors: {:?}", second.errors);
         assert!(second.overwrote);
 
         let backup = std::fs::read_to_string(dir.join("test-mod.yaml.bak")).expect("backup");
-        assert!(backup.contains("Test Mod\n") || backup.contains("Test Mod"), "{}", backup);
+        assert!(
+            backup.contains("Test Mod\n") || backup.contains("Test Mod"),
+            "{}",
+            backup
+        );
         let current = std::fs::read_to_string(dir.join("test-mod.yaml")).expect("current");
         assert!(current.contains("Test Mod v2"));
-        assert!(!dir.join("test-mod.yaml.tmp").exists(), "no tmp left behind");
+        assert!(
+            !dir.join("test-mod.yaml.tmp").exists(),
+            "no tmp left behind"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -703,7 +742,9 @@ install:
         let dir = temp_dir("save-invalid");
         let result = save_capability_to_dir(&dir, "id: [broken", false);
         assert!(!result.ok);
-        assert!(std::fs::read_dir(&dir).map(|mut e| e.next().is_none()).unwrap_or(true));
+        assert!(std::fs::read_dir(&dir)
+            .map(|mut e| e.next().is_none())
+            .unwrap_or(true));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

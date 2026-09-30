@@ -24,7 +24,11 @@ pub enum AgentKind {
 
 impl AgentKind {
     pub fn all() -> [AgentKind; 3] {
-        [AgentKind::Codex, AgentKind::ClaudeCode, AgentKind::CursorAgent]
+        [
+            AgentKind::Codex,
+            AgentKind::ClaudeCode,
+            AgentKind::CursorAgent,
+        ]
     }
 
     pub fn id(self) -> &'static str {
@@ -118,7 +122,11 @@ fn find_codex_cli() -> Option<PathBuf> {
         .join("OpenAI")
         .join("Codex")
         .join("bin");
-    let newest = std::fs::read_dir(&base).ok().into_iter().flatten().flatten()
+    let newest = std::fs::read_dir(&base)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
         .map(|entry| entry.path().join("codex.exe"))
         .filter(|path| path.is_file())
         .max_by_key(|path| path.metadata().and_then(|m| m.modified()).ok());
@@ -206,12 +214,7 @@ const CODEX_EXTRA_ARGS: &[&str] = &[
 
 /// Build the argv for one headless run. Extracted from the spawn call so
 /// the per-agent flag shapes are unit-testable.
-fn build_argv(
-    agent: AgentKind,
-    prompt: &str,
-    scratch: &Path,
-    last_message: &Path,
-) -> Vec<String> {
+fn build_argv(agent: AgentKind, prompt: &str, scratch: &Path, last_message: &Path) -> Vec<String> {
     match agent {
         AgentKind::Codex => {
             // `exec` first: it is the documented non-interactive entry
@@ -294,9 +297,7 @@ fn extract_yaml_fence(input: &str) -> Option<String> {
     let mut rest = input;
     while let Some(start) = rest.find("```") {
         let after_ticks = &rest[start + 3..];
-        let lang_end = after_ticks
-            .find(|c: char| c == '\n' || c == '\r')
-            .unwrap_or(after_ticks.len());
+        let lang_end = after_ticks.find(['\n', '\r']).unwrap_or(after_ticks.len());
         let lang = after_ticks[..lang_end].trim().to_ascii_lowercase();
         let body_start = start + 3 + lang_end;
         let search_from = &rest[body_start..];
@@ -306,7 +307,9 @@ fn extract_yaml_fence(input: &str) -> Option<String> {
         }
         rest = &search_from[body_end + 3..];
     }
-    last.map(str::trim).map(str::to_owned).filter(|s| !s.is_empty())
+    last.map(str::trim)
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -433,15 +436,14 @@ async fn run_inner(request: &AgentRunRequest) -> Result<AgentRunResult, String> 
 
     // Prefer the CLI's own "last message" capture; it is exactly the
     // final answer without progress noise. Fall back to stdout.
-    let raw_output = std::fs::read_to_string(&last_message)
-        .unwrap_or_else(|_| stdout.clone());
-    let output = truncate_chars(&strip_ansi(&raw_output).trim().to_owned(), 20_000);
+    let raw_output = std::fs::read_to_string(&last_message).unwrap_or_else(|_| stdout.clone());
+    let output = truncate_chars(strip_ansi(&raw_output).trim(), 20_000);
 
     if !status.success() {
         let detail = if stderr.trim().is_empty() {
             output.clone()
         } else {
-            truncate_chars(&strip_ansi(&stderr).trim().to_owned(), 2_000)
+            truncate_chars(strip_ansi(&stderr).trim(), 2_000)
         };
         return Ok(AgentRunResult {
             agent: request.agent,
@@ -528,7 +530,12 @@ mod tests {
         // user sees the raw CLI error in the AI panel.
         assert_eq!(argv.first().map(String::as_str), Some("exec"), "{}", joined);
         let exec_index = argv.iter().position(|arg| arg == "exec").expect("exec");
-        for flag in ["--skip-git-repo-check", "--ephemeral", "--color", "--approve-for-me"] {
+        for flag in [
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--color",
+            "--approve-for-me",
+        ] {
             let index = argv
                 .iter()
                 .position(|arg| arg == flag)
@@ -537,18 +544,33 @@ mod tests {
                 index > exec_index,
                 "{flag} must come after `exec`, not before it: {joined}"
             );
-        }        assert!(joined.contains("--output-last-message S/last.txt"), "{}", joined);
+        }
+        assert!(
+            joined.contains("--output-last-message S/last.txt"),
+            "{}",
+            joined
+        );
         assert!(argv.last().is_some_and(|a| a == "PROMPT"));
     }
 
     #[test]
     fn claude_and_cursor_argv_carry_the_prompt() {
-        let argv = build_argv(AgentKind::ClaudeCode, "PROMPT", Path::new("S"), Path::new("L"));
+        let argv = build_argv(
+            AgentKind::ClaudeCode,
+            "PROMPT",
+            Path::new("S"),
+            Path::new("L"),
+        );
         assert!(argv.contains(&"-p".to_owned()));
         assert!(argv.contains(&"PROMPT".to_owned()));
         assert!(argv.contains(&"--dangerously-skip-permissions".to_owned()));
 
-        let argv = build_argv(AgentKind::CursorAgent, "PROMPT", Path::new("S"), Path::new("L"));
+        let argv = build_argv(
+            AgentKind::CursorAgent,
+            "PROMPT",
+            Path::new("S"),
+            Path::new("L"),
+        );
         assert!(argv.contains(&"--force".to_owned()));
         assert!(argv.last().is_some_and(|a| a == "PROMPT"));
     }

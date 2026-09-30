@@ -10,14 +10,12 @@
 //! [`crate::transaction::TransactionRecord`] the user can later undo.
 
 use crate::{
-    capability::{CapabilitySpec, ResolvedConfig, StepSpec},
+    capability::{ResolvedConfig, StepSpec},
     path_guard::sanitize_archive_member,
-    transaction,
 };
-use serde_json::{json, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
     fs::{self, File},
     io::{Cursor, Read, Write as IoWrite},
     path::{Path, PathBuf},
@@ -64,8 +62,11 @@ pub struct StepResult {
 }
 
 /// Context the runner passes to each step.
+///
+/// Deliberately does *not* carry the owning `CapabilitySpec`: no step kind
+/// reads it, and threading it in only invited steps to reach around the
+/// resolved `config` and `install_directory` they are given.
 pub struct StepContext<'a> {
-    pub spec: &'a CapabilitySpec,
     pub config: &'a ResolvedConfig,
     pub install_directory: &'a Path,
     pub executable_directory: &'a Path,
@@ -73,10 +74,7 @@ pub struct StepContext<'a> {
 
 /// Execute a single step. Returns the structured result or an error
 /// string the UI surfaces verbatim.
-pub fn execute_step(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+pub fn execute_step(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     match step.kind.as_str() {
         "download-file" => run_download_file(step, context),
         "extract-zip" => run_extract_zip(step, context),
@@ -130,7 +128,7 @@ fn check_host_allowlist(
             "objects.githubusercontent.com".to_owned(),
         ],
     };
-    if !allowed.iter().any(|candidate| host == *candidate) {
+    if !allowed.contains(&host) {
         return Err(format!(
             "{label}: host '{host}' of '{original}' is not in the allow-list ({}).",
             allowed.join(", ")
@@ -139,10 +137,7 @@ fn check_host_allowlist(
     Ok(())
 }
 
-fn run_download_file(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_download_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     // The download half of a "fetch a release, then extract it" recipe.
     // Until this kind existed, `extract-zip` could only read a path from
     // config, so every recipe that pointed that field at a URL failed
@@ -204,11 +199,19 @@ fn run_download_file(
 
     let destination = resolve_download_path(context.executable_directory, &target);
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("download-file: could not create '{}': {error}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "download-file: could not create '{}': {error}",
+                parent.display()
+            )
+        })?;
     }
-    fs::write(&destination, &bytes)
-        .map_err(|error| format!("download-file: could not write '{}': {error}", destination.display()))?;
+    fs::write(&destination, &bytes).map_err(|error| {
+        format!(
+            "download-file: could not write '{}': {error}",
+            destination.display()
+        )
+    })?;
 
     // The downloaded file is a build artifact in the Moddin cache, not
     // something the install touched in the game folder, so it is
@@ -221,10 +224,7 @@ fn run_download_file(
     })
 }
 
-fn run_extract_zip(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     // Two layouts supported:
     //   1. archiveBytesField — bytes come from a previously downloaded
     //      buffer held on the spec (not implemented; see below).
@@ -245,12 +245,12 @@ fn run_extract_zip(
         .and_then(|field| context.config.get_string(field))
         .or_else(|| param_string(step, "archivePath").map(str::to_owned))
     {
-        fs::read(resolve_download_path(context.executable_directory, &path)).map_err(|error| {
-            format!("extract-zip: could not read archive '{path}': {error}")
-        })?
+        fs::read(resolve_download_path(context.executable_directory, &path))
+            .map_err(|error| format!("extract-zip: could not read archive '{path}': {error}"))?
     } else {
         return Err(
-            "extract-zip: step needs archiveBytesField, archivePathField or archivePath.".to_owned(),
+            "extract-zip: step needs archiveBytesField, archivePathField or archivePath."
+                .to_owned(),
         );
     };
 
@@ -259,8 +259,7 @@ fn run_extract_zip(
 
     let root = extract_target_root(step, context)?;
 
-    let proxy = param_string(step, "proxyField")
-        .and_then(|field| context.config.get_string(field));
+    let proxy = param_string(step, "proxyField").and_then(|field| context.config.get_string(field));
 
     let mut affected = Vec::new();
     for index in 0..archive.len() {
@@ -282,9 +281,8 @@ fn run_extract_zip(
         });
 
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("extract-zip: could not create parent dir: {error}")
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("extract-zip: could not create parent dir: {error}"))?;
         }
         let mut buffer = Vec::new();
         entry
@@ -321,10 +319,7 @@ fn staging_prefix(step: &StepSpec, config: &ResolvedConfig) -> Option<String> {
 
 /// Directory an `extract-zip` step writes into. No side effects, so
 /// [`plan_step_targets`] can predict the same paths before the step runs.
-fn resolve_staging_root(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<PathBuf, String> {
+fn resolve_staging_root(step: &StepSpec, context: &StepContext<'_>) -> Result<PathBuf, String> {
     let Some(subdir) = staging_prefix(step, context.config) else {
         // No subdirectory declared: the pre-existing behaviour, straight
         // into the executable directory.
@@ -415,13 +410,17 @@ fn classify_pinned_ref(reference: &str) -> Result<PinnedRef, String> {
 
     let name = trimmed.strip_prefix("refs/tags/").unwrap_or(trimmed);
     if name.is_empty() || name.starts_with('-') || name.ends_with('/') || name.ends_with(".lock") {
-        return Err(format!("git-checkout: ref '{trimmed}' is not a valid tag name."));
+        return Err(format!(
+            "git-checkout: ref '{trimmed}' is not a valid tag name."
+        ));
     }
     let forbidden = name.contains("..")
         || name.contains("@{")
         || name.chars().any(|character| {
-            matches!(character, '~' | '^' | ':' | '?' | '*' | '[' | '\\' | ' ' | '\t')
-                || character.is_control()
+            matches!(
+                character,
+                '~' | '^' | ':' | '?' | '*' | '[' | '\\' | ' ' | '\t'
+            ) || character.is_control()
         });
     if forbidden {
         return Err(format!(
@@ -432,10 +431,7 @@ fn classify_pinned_ref(reference: &str) -> Result<PinnedRef, String> {
     Ok(PinnedRef::Tag(name.to_owned()))
 }
 
-fn run_git_checkout(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_git_checkout(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     // The step a recipe reaches for when its payload is a git tag rather
     // than a release archive: there is no zip for `download-file` to
     // fetch and nothing for `extract-zip` to open, so the recipe checks
@@ -457,9 +453,8 @@ fn run_git_checkout(
     // for the same reasons: a recipe must not be able to turn an
     // install into a plaintext download, a credential prompt, or a
     // request to a server the recipe never named.
-    let parsed = reqwest::Url::parse(&repository).map_err(|error| {
-        format!("git-checkout: invalid repository URL '{repository}': {error}")
-    })?;
+    let parsed = reqwest::Url::parse(&repository)
+        .map_err(|error| format!("git-checkout: invalid repository URL '{repository}': {error}"))?;
     if parsed.scheme() != "https" {
         return Err("git-checkout: only HTTPS is allowed.".to_owned());
     }
@@ -500,19 +495,19 @@ fn run_git_checkout(
     )?;
     run_git(
         &[
-            "-C",
-            &staged,
-            "fetch",
-            "--quiet",
-            "--depth",
-            "1",
-            "origin",
-            &fetch_ref,
+            "-C", &staged, "fetch", "--quiet", "--depth", "1", "origin", &fetch_ref,
         ],
         &root,
     )?;
     run_git(
-        &["-C", &staged, "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+        &[
+            "-C",
+            &staged,
+            "checkout",
+            "--quiet",
+            "--detach",
+            "FETCH_HEAD",
+        ],
         &root,
     )?;
 
@@ -537,10 +532,7 @@ fn run_git_checkout(
     })
 }
 
-fn run_build_project(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_build_project(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     // The per-backend half of a `git-checkout`: a project that publishes
     // a source tag and no prebuilt archive has to be compiled here, and
     // the recipe says which variant it wants and what that variant
@@ -562,13 +554,7 @@ fn run_build_project(
         })
         .unwrap_or_default();
     let argument_refs: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    run_command(
-        "build-project",
-        &program,
-        &argument_refs,
-        &directory,
-        &[],
-    )?;
+    run_command("build-project", &program, &argument_refs, &directory, &[])?;
 
     // A build that exits 0 but writes nothing the recipe declared has
     // not succeeded, and saying so here is the difference between a
@@ -596,10 +582,7 @@ fn run_build_project(
 
 /// Directory a `build-project` step runs in: the tree a previous
 /// `git-checkout` step created, named by the recipe rather than guessed.
-fn build_working_directory(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<PathBuf, String> {
+fn build_working_directory(step: &StepSpec, context: &StepContext<'_>) -> Result<PathBuf, String> {
     let declared = path_param(step, context.config, "directoryField", "directory")?;
     let directory = resolve_write_target(step, context.install_directory, &declared)?;
     if !directory.is_dir() {
@@ -711,7 +694,13 @@ fn checkout_origin(directory: &Path) -> Option<String> {
     let mut command = std::process::Command::new("git");
     crate::process::HideConsole::hide_console(&mut command);
     let output = command
-        .args(["-C", staged.as_str(), "config", "--get", "remote.origin.url"])
+        .args([
+            "-C",
+            staged.as_str(),
+            "config",
+            "--get",
+            "remote.origin.url",
+        ])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -791,10 +780,7 @@ fn spawn_detached(
         .map_err(|error| format!("{label}: could not start '{}': {error}", program.display()))
 }
 
-fn run_verify_hash(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_verify_hash(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let path_field = param_string(step, "pathField")
         .ok_or_else(|| "verify-hash: pathField is required.".to_owned())?;
     let path = context
@@ -869,10 +855,7 @@ fn path_param(
     Ok(render_template(&raw, config))
 }
 
-fn run_file_delete(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_file_delete(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let path = path_param(step, context.config, "pathField", "path")?;
     let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if !resolved.is_file() {
@@ -888,16 +871,12 @@ fn run_file_delete(
     })
 }
 
-fn run_write_text_file(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_write_text_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let path = path_param(step, context.config, "pathField", "path")?;
     let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if let Some(parent) = resolved.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!("write-text-file: could not create parent dir: {error}")
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("write-text-file: could not create parent dir: {error}"))?;
     }
     let template = param(step, "template")
         .and_then(|value| value.as_str())
@@ -913,10 +892,7 @@ fn run_write_text_file(
     })
 }
 
-fn run_spawn_process(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_spawn_process(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let executable = path_param(step, context.config, "executableField", "executable")?;
     let resolved = resolve_path(context.executable_directory, &executable);
     if !resolved.is_file() {
@@ -942,19 +918,15 @@ fn run_spawn_process(
     })
 }
 
-fn run_write_binary_file(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_write_binary_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let path = path_param(step, context.config, "pathField", "path")?;
     let resolved = resolve_write_target(step, context.executable_directory, &path)?;
     if let Some(parent) = resolved.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!("write-binary-file: could not create parent dir: {error}")
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("write-binary-file: could not create parent dir: {error}"))?;
     }
     let bytes = param_string(step, "base64")
-        .and_then(|value| base64_decode(value))
+        .and_then(base64_decode)
         .ok_or_else(|| "write-binary-file: base64 param with required hex.".to_owned())?;
     fs::write(&resolved, &bytes)
         .map_err(|error| format!("write-binary-file: could not write '{path}': {error}"))?;
@@ -966,10 +938,7 @@ fn run_write_binary_file(
     })
 }
 
-fn run_move_file(
-    step: &StepSpec,
-    context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_move_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let from_path = path_param(step, context.config, "fromField", "from")?;
     let to_path = path_param(step, context.config, "toField", "to")?;
     let from = resolve_write_target(step, context.executable_directory, &from_path)?;
@@ -996,12 +965,12 @@ fn run_move_file(
         // across two, so the staged tree is never half-copied.
     }
     if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!("move-file: could not create destination parent: {error}")
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("move-file: could not create destination parent: {error}"))?;
     }
-    fs::rename(&from, &to)
-        .map_err(|error| format!("move-file: could not move '{from_path}' -> '{to_path}': {error}"))?;
+    fs::rename(&from, &to).map_err(|error| {
+        format!("move-file: could not move '{from_path}' -> '{to_path}': {error}")
+    })?;
     Ok(StepResult {
         kind: step.kind.clone(),
         description: step.description.clone(),
@@ -1013,10 +982,7 @@ fn run_move_file(
     })
 }
 
-fn run_kill_process(
-    step: &StepSpec,
-    _context: &StepContext<'_>,
-) -> Result<StepResult, String> {
+fn run_kill_process(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
     let process_name = param_string(step, "processName")
         .or_else(|| param_string(step, "processNameField"))
         .ok_or_else(|| "kill-process: processName or processNameField is required.".to_owned())?;
@@ -1036,9 +1002,7 @@ fn run_kill_process(
     if code != 0 && code != 128 {
         // 128 == ERROR_NOT_FOUND, which is fine for an idempotent kill.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "kill-process: taskkill exited {code}: {stderr}"
-        ));
+        return Err(format!("kill-process: taskkill exited {code}: {stderr}"));
     }
     Ok(StepResult {
         kind: step.kind.clone(),
@@ -1048,16 +1012,12 @@ fn run_kill_process(
     })
 }
 
-fn run_registry_write(
-    step: &StepSpec,
-    _context: &StepContext<'_>,
-) -> Result<StepResult, String> {
-    let key = param_string(step, "key")
-        .ok_or_else(|| "registry-write: key is required.".to_owned())?;
+fn run_registry_write(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
+    let key =
+        param_string(step, "key").ok_or_else(|| "registry-write: key is required.".to_owned())?;
     let value = param_string(step, "value")
         .ok_or_else(|| "registry-write: value is required.".to_owned())?;
-    let value_kind = param_string(step, "type")
-        .unwrap_or("REG_SZ");
+    let value_kind = param_string(step, "type").unwrap_or("REG_SZ");
     let force = param(step, "force")
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
@@ -1068,7 +1028,13 @@ fn run_registry_write(
     if value_kind == "REG_SZ" || value_kind == "REG_EXPAND_SZ" || value_kind == "REG_DWORD" {
         command.arg("/v").arg(value).arg("/t").arg(value_kind);
     } else if value_kind == "REG_BINARY" || value_kind == "REG_MULTI_SZ" {
-        command.arg("/v").arg(value).arg("/t").arg(value_kind).arg("/d").arg("");
+        command
+            .arg("/v")
+            .arg(value)
+            .arg("/t")
+            .arg(value_kind)
+            .arg("/d")
+            .arg("");
     } else {
         return Err(format!(
             "registry-write: unsupported value type '{value_kind}'."
@@ -1095,12 +1061,9 @@ fn run_registry_write(
     })
 }
 
-fn run_registry_delete(
-    step: &StepSpec,
-    _context: &StepContext<'_>,
-) -> Result<StepResult, String> {
-    let key = param_string(step, "key")
-        .ok_or_else(|| "registry-delete: key is required.".to_owned())?;
+fn run_registry_delete(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
+    let key =
+        param_string(step, "key").ok_or_else(|| "registry-delete: key is required.".to_owned())?;
     let value = param_string(step, "value");
     let force = param(step, "force")
         .and_then(|value| value.as_bool())
@@ -1138,8 +1101,7 @@ fn base64_decode(value: &str) -> Option<Vec<u8>> {
     // for the write-binary-file step. Returns None on any malformed
     // character so the step fails loudly. Accepts both padded and
     // unpadded inputs.
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut cleaned: Vec<u8> = value
         .bytes()
         .filter(|byte| !byte.is_ascii_whitespace())
@@ -1193,9 +1155,11 @@ fn render_template(template: &str, config: &ResolvedConfig) -> String {
             if let Some(value) = config.get(&name).and_then(|v| -> Option<String> {
                 match v {
                     JsonValue::String(string) => Some(string.clone()),
-                    JsonValue::Bool(boolean) => {
-                        Some(if *boolean { "1".to_string() } else { "0".to_string() })
-                    }
+                    JsonValue::Bool(boolean) => Some(if *boolean {
+                        "1".to_string()
+                    } else {
+                        "0".to_string()
+                    }),
                     JsonValue::Number(number) => number.as_u64().map(|v| v.to_string()),
                     _ => None,
                 }
@@ -1256,11 +1220,7 @@ fn archive_member_target(safe_name: &str, proxy: Option<&str>) -> String {
 /// transaction store separately refuses to *back up* anything outside
 /// the install root, and the runner reports those paths as not covered
 /// by Undo.
-fn resolve_write_target(
-    step: &StepSpec,
-    base: &Path,
-    candidate: &str,
-) -> Result<PathBuf, String> {
+fn resolve_write_target(step: &StepSpec, base: &Path, candidate: &str) -> Result<PathBuf, String> {
     let path = Path::new(candidate);
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -1353,8 +1313,8 @@ pub fn plan_step_targets(
             })?;
             let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
                 .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
-            let proxy = param_string(step, "proxyField")
-                .and_then(|field| context.config.get_string(field));
+            let proxy =
+                param_string(step, "proxyField").and_then(|field| context.config.get_string(field));
             for index in 0..archive.len() {
                 let entry = archive
                     .by_index(index)
@@ -1443,32 +1403,11 @@ fn resolve_download_path(base: &Path, candidate: &str) -> PathBuf {
     }
 }
 
-/// Convenience helper used by tests and by external callers that
-/// want to record the install transaction without re-implementing the
-/// orchestration loop.
-pub fn record_install_transaction(
-    spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    install_directory: &Path,
-    affected: &[String],
-    metadata: BTreeMap<String, String>,
-) -> Result<transaction::TransactionRecord, String> {
-    let targets: Vec<PathBuf> = affected.iter().map(PathBuf::from).collect();
-    let record = transaction::begin_file_set_transaction(
-        install_directory,
-        &targets,
-        &spec.id,
-        &format!("Install {} for {}", spec.display_name, game_name),
-        game_id,
-        metadata,
-    )?;
-    transaction::mark_applied(record)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn known_kinds_include_the_core_set() {
@@ -1499,12 +1438,20 @@ mod tests {
     #[test]
     fn template_renders_known_placeholders() {
         let mut config = ResolvedConfig::default();
-        config.values.insert("backend".to_owned(), json!("fidelityfx"));
+        config
+            .values
+            .insert("backend".to_owned(), json!("fidelityfx"));
         config
             .values
             .insert("nvidia_preset".to_owned(), json!("medium"));
-        let rendered = render_template("[tray]\nbackend={backend}\nnvidia_preset={nvidia_preset}\n", &config);
-        assert_eq!(rendered, "[tray]\nbackend=fidelityfx\nnvidia_preset=medium\n");
+        let rendered = render_template(
+            "[tray]\nbackend={backend}\nnvidia_preset={nvidia_preset}\n",
+            &config,
+        );
+        assert_eq!(
+            rendered,
+            "[tray]\nbackend=fidelityfx\nnvidia_preset=medium\n"
+        );
     }
 
     #[test]
@@ -1528,28 +1475,11 @@ mod tests {
         }
     }
 
-    /// A `StepContext` whose only meaningful field is the config. Steps
-    /// under test never read the spec.
+    /// A `StepContext` carrying the config and a scratch root. `StepContext`
+    /// no longer takes a `CapabilitySpec`, so the steps under test no longer
+    /// need one synthesised.
     fn download_context<'a>(config: &'a ResolvedConfig, root: &'a Path) -> StepContext<'a> {
-        let spec: &'a CapabilitySpec = Box::leak(Box::new(CapabilitySpec {
-            id: "probe".to_owned(),
-            display_name: "Probe".to_owned(),
-            description: None,
-            category: "qol".to_owned(),
-            status: "available".to_owned(),
-            supported_engines: Vec::new(),
-            dependencies: Vec::new(),
-            compatibility: None,
-            checks: Vec::new(),
-            install: Vec::new(),
-            uninstall: Vec::new(),
-            verify: Vec::new(),
-            safety_notes: Vec::new(),
-            config_schema: Vec::new(),
-            origin: crate::capability::SpecOrigin::BuiltIn,
-        }));
         StepContext {
-            spec,
             config,
             install_directory: root,
             executable_directory: root,
@@ -1566,7 +1496,10 @@ mod tests {
             &download_context(&config, &root),
         )
         .expect_err("no url is rejected");
-        assert!(missing_url.contains("urlField or url is required"), "{missing_url}");
+        assert!(
+            missing_url.contains("urlField or url is required"),
+            "{missing_url}"
+        );
 
         let missing_target = execute_step(
             &download_step(&[("url", json!("https://github.com/a/b.zip"))]),
@@ -1632,13 +1565,18 @@ mod tests {
     fn download_reads_its_url_and_target_from_config_fields() {
         let root = std::env::temp_dir();
         let mut config = ResolvedConfig::default();
-        config.values.insert("downloadUrl".to_owned(), json!("http://example.com/x"));
+        config
+            .values
+            .insert("downloadUrl".to_owned(), json!("http://example.com/x"));
         config.values.insert("sha256".to_owned(), json!("deadbeef"));
 
         // The URL comes from config, so the scheme check must still run:
         // a recipe cannot smuggle plain HTTP in through a field.
         let error = execute_step(
-            &download_step(&[("urlField", json!("downloadUrl")), ("target", json!("out.zip"))]),
+            &download_step(&[
+                ("urlField", json!("downloadUrl")),
+                ("target", json!("out.zip")),
+            ]),
             &download_context(&config, &root),
         )
         .expect_err("config-sourced URLs are validated too");
@@ -1646,7 +1584,10 @@ mod tests {
 
         // A missing field is a clear error, not a silent default.
         let error = execute_step(
-            &download_step(&[("urlField", json!("absentField")), ("target", json!("out.zip"))]),
+            &download_step(&[
+                ("urlField", json!("absentField")),
+                ("target", json!("out.zip")),
+            ]),
             &download_context(&config, &root),
         )
         .expect_err("a missing config field is an error");
@@ -1830,22 +1771,29 @@ mod tests {
         let tree = TempTree::new("move-directory");
         let root = tree.0.clone();
         fs::create_dir_all(root.join("staging").join("ofxr")).expect("staged tree");
-        fs::write(root.join("staging").join("ofxr").join("layer.dll"), b"dll").expect("staged file");
+        fs::write(root.join("staging").join("ofxr").join("layer.dll"), b"dll")
+            .expect("staged file");
 
         let spec = step_of(
             "move-file",
-            &[
-                ("from", json!("staging")),
-                ("to", json!("ApiLayers")),
-            ],
+            &[("from", json!("staging")), ("to", json!("ApiLayers"))],
         );
         let config = ResolvedConfig::default();
 
         let result = execute_step(&spec, &download_context(&config, &root))
             .expect("the tree moves as one rename");
         assert!(!root.join("staging").exists(), "the source is gone");
-        assert!(root.join("ApiLayers").join("ofxr").join("layer.dll").is_file());
-        assert_eq!(result.affected_paths.len(), 2, "{:?}", result.affected_paths);
+        assert!(root
+            .join("ApiLayers")
+            .join("ofxr")
+            .join("layer.dll")
+            .is_file());
+        assert_eq!(
+            result.affected_paths.len(),
+            2,
+            "{:?}",
+            result.affected_paths
+        );
     }
 
     #[test]
@@ -1864,18 +1812,21 @@ mod tests {
 
         let spec = step_of(
             "move-file",
-            &[
-                ("from", json!("staging")),
-                ("to", json!("ApiLayers")),
-            ],
+            &[("from", json!("staging")), ("to", json!("ApiLayers"))],
         );
         let config = ResolvedConfig::default();
 
         let error = execute_step(&spec, &download_context(&config, &root))
             .expect_err("an occupied destination is refused");
         assert!(error.contains("already exists"), "{error}");
-        assert!(root.join("staging").is_dir(), "the staged tree is untouched");
-        assert!(destination.join("owned.json").is_file(), "the destination is untouched");
+        assert!(
+            root.join("staging").is_dir(),
+            "the staged tree is untouched"
+        );
+        assert!(
+            destination.join("owned.json").is_file(),
+            "the destination is untouched"
+        );
     }
 
     #[test]
@@ -1884,10 +1835,7 @@ mod tests {
         let root = tree.0.clone();
         let spec = step_of(
             "move-file",
-            &[
-                ("from", json!("same.txt")),
-                ("to", json!("same.txt")),
-            ],
+            &[("from", json!("same.txt")), ("to", json!("same.txt"))],
         );
         let config = ResolvedConfig::default();
 
@@ -1920,7 +1868,10 @@ mod tests {
         let config = ResolvedConfig::default();
 
         let error = execute_step(
-            &step_of("git-checkout", &[("ref", json!("v1.8")), ("target", json!("src"))]),
+            &step_of(
+                "git-checkout",
+                &[("ref", json!("v1.8")), ("target", json!("src"))],
+            ),
             &download_context(&config, &root),
         )
         .expect_err("no repository is rejected");
@@ -1950,7 +1901,10 @@ mod tests {
             &download_context(&config, &root),
         )
         .expect_err("no target is rejected");
-        assert!(error.contains("targetField or target is required"), "{error}");
+        assert!(
+            error.contains("targetField or target is required"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2005,7 +1959,10 @@ mod tests {
         let error = execute_step(&spec, &download_context(&config, &root))
             .expect_err("an unlisted host is refused");
         assert!(error.contains("not in the allow-list"), "{error}");
-        assert!(error.contains("github.com"), "the error lists what is allowed: {error}");
+        assert!(
+            error.contains("github.com"),
+            "the error lists what is allowed: {error}"
+        );
     }
 
     #[test]
@@ -2023,9 +1980,11 @@ mod tests {
                     ("target", json!("uevr-src")),
                 ],
             );
-            let error = execute_step(&spec, &download_context(&config, &root))
-                .unwrap_err();
-            assert!(!error.contains("could not run"), "{branch} was not rejected: {error}");
+            let error = execute_step(&spec, &download_context(&config, &root)).unwrap_err();
+            assert!(
+                !error.contains("could not run"),
+                "{branch} was not rejected: {error}"
+            );
         }
 
         let error = execute_step(
@@ -2151,7 +2110,11 @@ mod tests {
             .expect("the build runs and produces its declared output");
         assert_eq!(
             result.affected_paths,
-            vec![root.join("src").join("artifact.bin").to_string_lossy().into_owned()],
+            vec![root
+                .join("src")
+                .join("artifact.bin")
+                .to_string_lossy()
+                .into_owned()],
             "the transaction is told what the build produced"
         );
         assert!(
@@ -2181,7 +2144,9 @@ mod tests {
         let root = tree.0.clone();
         fs::create_dir_all(root.join("src")).expect("checkout");
         let mut config = ResolvedConfig::default();
-        config.values.insert("buildCommand".to_owned(), json!("cmd"));
+        config
+            .values
+            .insert("buildCommand".to_owned(), json!("cmd"));
 
         let spec = step_of(
             "build-project",
@@ -2192,7 +2157,10 @@ mod tests {
                 ("outputs", json!(["artifact.bin"])),
             ],
         );
-        config.values.insert("sourceDir".to_owned(), json!(root.join("src").to_string_lossy()));
+        config.values.insert(
+            "sourceDir".to_owned(),
+            json!(root.join("src").to_string_lossy()),
+        );
 
         execute_step(&spec, &download_context(&config, &root))
             .expect("the command comes from the config field the recipe named");

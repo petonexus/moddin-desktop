@@ -100,36 +100,30 @@ jobs:
           cargo clippy --version
 
       # ------------------------------------------------------------------
-      # ROADMAP O-07 — reported, NOT blocking. Both gates run and their
-      # output lands in the job log and the step summary, but neither
-      # fails the build yet. Turning them on is a one-line change per
-      # step, and the scale below is why they are off.
+      # Both gates are blocking. They were added reported-only while the
+      # backlog stood at 3,653 `cargo fmt` diff lines across 34 files and
+      # 144 clippy diagnostics across 30 lints (53 of them `dead_code`
+      # from the nine unwired module implementations in docs/
+      # BACKEND-MODULES.md). That backlog is now cleared, so there is
+      # nothing left to report and nothing left to justify `continue-on-error`.
       #
-      # cargo fmt --check: 3,653 diff lines across 34 files in
-      #   src-tauri/src. Every one of those files is owned by another
-      #   in-flight change, so running `cargo fmt` here would rewrite
-      #   their work, not ours. The cleanup is real; it is just not ours
-      #   to do inside this change.
-      - name: Format check (reported)
-        continue-on-error: true
+      # `cargo fmt --check` needs no flags to block: it exits non-zero on
+      # any diff. `cargo clippy` does — without `-- -D warnings` it exits
+      # 0 and only prints its findings, which is precisely why the step
+      # looked green while the lints were outstanding.
+      #
+      # Deliberately no `[lints]` allow-list in src-tauri/Cargo.toml: the
+      # tree is clean without one, and a blanket allow would turn the gate
+      # into a guard that has been switched off. The only suppressions
+      # left are three item-scoped `#[allow(dead_code, reason = ...)]` on
+      # the un-adopted `Module` contract in src-tauri/src/module.rs, each
+      # stating why the code exists and why it is not compiled into the
+      # shipped binary.
+      - name: Format check
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
-      # cargo clippy --all-targets: 144 diagnostics across 30 lints, of
-      #   which 53 are `dead_code` — the nine documented-but-unwired
-      #   module implementations from ROADMAP F-14 / O-09, which are
-      #   meant to be dark until their launch surface lands. The rest
-      #   are style lints (unused_imports, too_many_arguments,
-      #   needless_update, manual_contains, ...) spread over the same
-      #   34 files. Making this blocking means a tree-wide lint cleanup
-      #   in someone else's change; the allow-list that would make it
-      #   green belongs in [lints] in src-tauri/Cargo.toml, which is not
-      #   this change's to edit.
-      #
-      # To make it blocking once the backlog is cleared: drop
-      # `continue-on-error` and add `-> -D warnings` after `--`.
-      - name: Clippy (reported)
-        continue-on-error: true
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # ------------------------------------------------------------------
       # tauri.conf.json bundles ../moddin-runtime/{node.exe,moddin-agent},

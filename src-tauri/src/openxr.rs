@@ -9,8 +9,7 @@ use std::{
 };
 
 const OPENXR_REGISTRY_KEY: &str = r"HKLM\SOFTWARE\Khronos\OpenXR\1";
-const OPENXR_AVAILABLE_REGISTRY_KEY: &str =
-    r"HKLM\SOFTWARE\Khronos\OpenXR\1\AvailableRuntimes";
+const OPENXR_AVAILABLE_REGISTRY_KEY: &str = r"HKLM\SOFTWARE\Khronos\OpenXR\1\AvailableRuntimes";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,7 +85,7 @@ fn parse_available_runtime_output(output: &str) -> Vec<(String, bool)> {
             if path.is_empty() {
                 return None;
             }
-            let raw_value = raw_value.trim().split_whitespace().next().unwrap_or_default();
+            let raw_value = raw_value.split_whitespace().next().unwrap_or_default();
             let enabled = matches!(raw_value, "0x0" | "0");
             Some((path.to_owned(), enabled))
         })
@@ -144,7 +143,11 @@ fn known_runtime_candidates() -> Vec<PathBuf> {
     }
 
     if let Some(system_root) = env::var_os("SystemRoot") {
-        candidates.push(PathBuf::from(system_root).join("System32").join("MixedRealityRuntime.json"));
+        candidates.push(
+            PathBuf::from(system_root)
+                .join("System32")
+                .join("MixedRealityRuntime.json"),
+        );
     }
 
     candidates
@@ -185,10 +188,7 @@ fn runtime_manifest(path: &Path, enabled: bool, active: bool) -> OpenXrRuntimeIn
 
     let name = manifest_json
         .as_ref()
-        .and_then(|json| {
-            json.pointer("/runtime/name")
-                .or_else(|| json.get("name"))
-        })
+        .and_then(|json| json.pointer("/runtime/name").or_else(|| json.get("name")))
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned)
@@ -263,10 +263,11 @@ fn discover_runtimes(active_runtime: Option<&str>) -> Vec<OpenXrRuntimeInfo> {
         .collect::<Vec<_>>();
 
     runtimes.sort_by(|left, right| {
-        right
-            .active
-            .cmp(&left.active)
-            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+        right.active.cmp(&left.active).then_with(|| {
+            left.name
+                .to_ascii_lowercase()
+                .cmp(&right.name.to_ascii_lowercase())
+        })
     });
     runtimes
 }
@@ -301,14 +302,18 @@ fn inspect_state(game_id: Option<&str>) -> Result<OpenXrState, String> {
     let active_runtime = system_active_runtime();
     let runtimes = discover_runtimes(active_runtime.as_deref());
     let stored_override = game_id.and_then(read_game_preference);
-    let game_override = stored_override.as_ref().map(|value| value.manifest_path.clone());
+    let game_override = stored_override
+        .as_ref()
+        .map(|value| value.manifest_path.clone());
     let valid_game_override = game_override
         .as_deref()
         .filter(|path| Path::new(path).is_file())
         .map(str::to_owned);
-    let effective_runtime = valid_game_override
-        .clone()
-        .or_else(|| active_runtime.clone().filter(|path| Path::new(path).is_file()));
+    let effective_runtime = valid_game_override.clone().or_else(|| {
+        active_runtime
+            .clone()
+            .filter(|path| Path::new(path).is_file())
+    });
     let effective_source = if valid_game_override.is_some() {
         "game".to_owned()
     } else if effective_runtime.is_some() {
@@ -324,7 +329,10 @@ fn inspect_state(game_id: Option<&str>) -> Result<OpenXrState, String> {
         .as_deref()
         .is_some_and(|path| !Path::new(path).is_file())
     {
-        warnings.push("The Windows ActiveRuntime registry value points to a missing manifest file.".to_owned());
+        warnings.push(
+            "The Windows ActiveRuntime registry value points to a missing manifest file."
+                .to_owned(),
+        );
     }
     if game_override.is_some() && valid_game_override.is_none() {
         warnings.push(
@@ -418,9 +426,17 @@ fn set_system_runtime_elevated(manifest_path: &Path) -> Result<(), String> {
 
     let status = Command::new("powershell.exe")
         .hide_console()
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
         .status()
-        .map_err(|error| format!("Could not request administrator permission for OpenXR: {error}"))?;
+        .map_err(|error| {
+            format!("Could not request administrator permission for OpenXR: {error}")
+        })?;
 
     if !status.success() {
         return Err(
@@ -433,7 +449,10 @@ fn set_system_runtime_elevated(manifest_path: &Path) -> Result<(), String> {
         "Windows did not report an active OpenXR runtime after the registry update.".to_owned()
     })?;
     if normalize_path(&active) != normalize_path(&manifest) {
-        return Err("Windows OpenXR ActiveRuntime did not match the selected runtime after the update.".to_owned());
+        return Err(
+            "Windows OpenXR ActiveRuntime did not match the selected runtime after the update."
+                .to_owned(),
+        );
     }
     Ok(())
 }

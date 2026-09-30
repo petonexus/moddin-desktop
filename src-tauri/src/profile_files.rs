@@ -138,16 +138,12 @@ fn read_profile_at(path: &Path) -> Result<ProfileFileContents, String> {
 }
 
 #[tauri::command]
-pub fn write_profile_file(
-    request: WriteProfileFileRequest,
-) -> Result<ProfileFileResult, String> {
+pub fn write_profile_file(request: WriteProfileFileRequest) -> Result<ProfileFileResult, String> {
     write_export_to_dir(&exports_dir(), &request.file_name, &request.contents)
 }
 
 #[tauri::command]
-pub fn read_profile_file(
-    request: ReadProfileFileRequest,
-) -> Result<ProfileFileContents, String> {
+pub fn read_profile_file(request: ReadProfileFileRequest) -> Result<ProfileFileContents, String> {
     read_profile_at(Path::new(request.path.trim()))
 }
 
@@ -209,10 +205,19 @@ mod tests {
 
     #[test]
     fn export_names_are_bare_json_files() {
-        assert_eq!(sanitize_export_name("elden-ring.json").unwrap(), "elden-ring.json");
-        assert_eq!(sanitize_export_name("  elden-ring.json  ").unwrap(), "elden-ring.json");
+        assert_eq!(
+            sanitize_export_name("elden-ring.json").unwrap(),
+            "elden-ring.json"
+        );
+        assert_eq!(
+            sanitize_export_name("  elden-ring.json  ").unwrap(),
+            "elden-ring.json"
+        );
         // Case is left alone; only the extension is matched case-insensitively.
-        assert_eq!(sanitize_export_name("Profile.JSON").unwrap(), "Profile.JSON");
+        assert_eq!(
+            sanitize_export_name("Profile.JSON").unwrap(),
+            "Profile.JSON"
+        );
     }
 
     #[test]
@@ -266,7 +271,9 @@ mod tests {
         let dir = temp_dir("read-refusals");
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert!(read_profile_at(Path::new("profile.json")).unwrap_err().contains("absolute"));
+        assert!(read_profile_at(Path::new("profile.json"))
+            .unwrap_err()
+            .contains("absolute"));
         assert!(read_profile_at(&dir.join("missing.json")).is_err());
         assert!(read_profile_at(&dir).unwrap_err().contains("folder"));
 

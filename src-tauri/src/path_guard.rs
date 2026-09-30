@@ -16,8 +16,14 @@ use std::{
 };
 
 /// Returns `true` when the id contains only ASCII alphanumerics,
-/// `-`, or `_`. Used by the per-game transaction store, ReShade
-/// marker file naming, per-game OpenXR preference files, etc.
+/// `-`, or `_`.
+///
+/// No production call site left as of the F-14 cleanup that removed the
+/// bespoke per-game installers this was extracted for, so it is compiled
+/// for the test suite only. Kept because it is a security predicate: the
+/// tests below are the only thing asserting that `../escape` and
+/// `with/slash` are rejected.
+#[cfg(test)]
 pub fn is_valid_game_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -27,8 +33,8 @@ pub fn is_valid_game_id(id: &str) -> bool {
 
 /// Joins `relative` to `root` only when `relative` does not contain a
 /// parent-directory, root, or path-prefix component. The original
-/// implementation lived in `ofxr.rs`, `cheeky.rs`, `obs.rs`, and now
-/// `reshade.rs` — this is the canonical helper.
+/// implementation lived in `ofxr.rs`, `cheeky.rs`, `obs.rs`; this is the
+/// canonical helper.
 pub fn safe_join_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let relative_path = Path::new(relative);
     if relative_path.as_os_str().is_empty() {
@@ -38,9 +44,7 @@ pub fn safe_join_relative(root: &Path, relative: &str) -> Result<PathBuf, String
         match component {
             Component::Normal(_) | Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(format!(
-                    "Path escapes the allowed root: {relative}"
-                ));
+                return Err(format!("Path escapes the allowed root: {relative}"));
             }
         }
     }
@@ -68,22 +72,6 @@ pub fn sanitize_archive_member(relative: &str) -> Option<String> {
     } else {
         Some(clean_segments.join("/"))
     }
-}
-
-/// Returns the executable name (`file_name`) of the path resulting
-/// from `safe_join_relative(root, executable)`. Used by every module
-/// that needs to call `crate::process::is_process_running` with a
-/// process image name.
-pub fn executable_process_name(
-    root: &Path,
-    executable: &str,
-) -> Result<String, String> {
-    let executable_path = safe_join_relative(root, executable)?;
-    let name = executable_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Could not resolve the game executable name.".to_owned())?;
-    Ok(name.to_owned())
 }
 
 #[cfg(test)]
@@ -120,7 +108,10 @@ mod tests {
 
     #[test]
     fn sanitize_archive_member_strips_traversal() {
-        assert_eq!(sanitize_archive_member("ReShade64.dll").as_deref(), Some("ReShade64.dll"));
+        assert_eq!(
+            sanitize_archive_member("ReShade64.dll").as_deref(),
+            Some("ReShade64.dll")
+        );
         assert_eq!(
             sanitize_archive_member("./ReShade/ReShade64.dll").as_deref(),
             Some("ReShade/ReShade64.dll")

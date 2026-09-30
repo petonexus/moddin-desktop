@@ -12,11 +12,9 @@ use crate::{
     process::HideConsole,
 };
 use reqwest::Client;
-use serde_json::Value as JsonValue;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
-    fs,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -61,8 +59,7 @@ fn param_config<'a>(
     name: &str,
     config: &'a ResolvedConfig,
 ) -> Option<String> {
-    param_string(check, name)
-        .and_then(|field| config.get_string(field))
+    param_string(check, name).and_then(|field| config.get_string(field))
 }
 
 /// Evaluate a single check and return the live outcome.
@@ -74,8 +71,18 @@ pub async fn evaluate_check(
 ) -> Result<CheckOutcome, String> {
     match check.kind.as_str() {
         "process-running" => Ok(evaluate_process_running(check, config)),
-        "file-exists" => Ok(evaluate_file_exists(check, config, executable_directory, true)),
-        "file-absent" => Ok(evaluate_file_exists(check, config, executable_directory, false)),
+        "file-exists" => Ok(evaluate_file_exists(
+            check,
+            config,
+            executable_directory,
+            true,
+        )),
+        "file-absent" => Ok(evaluate_file_exists(
+            check,
+            config,
+            executable_directory,
+            false,
+        )),
         "archive-reachable" => evaluate_archive_reachable(check, config).await,
         "archive-sha256" => evaluate_archive_sha256(check, config).await,
         "exe-version" => Ok(evaluate_exe_version(
@@ -88,10 +95,7 @@ pub async fn evaluate_check(
     }
 }
 
-fn evaluate_process_running(
-    check: &CheckSpec,
-    config: &ResolvedConfig,
-) -> CheckOutcome {
+fn evaluate_process_running(check: &CheckSpec, config: &ResolvedConfig) -> CheckOutcome {
     let process_name = param_config(check, "processNameField", config)
         .or_else(|| param_string(check, "processName").map(str::to_owned));
     let Some(name) = process_name else {
@@ -122,8 +126,7 @@ fn evaluate_file_exists(
         .or_else(|| check.params.get("path").and_then(|value| value.as_str()));
     let resolved = match path_field {
         Some(field) => match config.get_string(field) {
-            Some(path) => path_guard::safe_join_relative(executable_directory, &path)
-                .map_err(|error| error),
+            Some(path) => path_guard::safe_join_relative(executable_directory, &path),
             None => Err(format!(
                 "file-{}: config field '{field}' is missing.",
                 if expect_exists { "exists" } else { "absent" }
@@ -163,10 +166,7 @@ async fn evaluate_archive_reachable(
     let url = param_config(check, "urlField", config)
         .or_else(|| param_string(check, "url").map(str::to_owned));
     let Some(url) = url else {
-        return Ok(unknown_check(
-            check,
-            "urlField or url is required.",
-        ));
+        return Ok(unknown_check(check, "urlField or url is required."));
     };
     let parsed = reqwest::Url::parse(&url)
         .map_err(|error| format!("archive-reachable: invalid URL '{url}': {error}"))?;
@@ -220,8 +220,10 @@ async fn evaluate_archive_sha256(
     };
     let parsed = reqwest::Url::parse(&url)
         .map_err(|error| format!("archive-sha256: invalid URL '{url}': {error}"))?;
-    let archive = crate::archive::RemoteArchive::new(parsed.to_string())
-        .with_host_allowlist(vec!["github.com".to_owned(), "objects.githubusercontent.com".to_owned()]);
+    let archive = crate::archive::RemoteArchive::new(parsed.to_string()).with_host_allowlist(vec![
+        "github.com".to_owned(),
+        "objects.githubusercontent.com".to_owned(),
+    ]);
 
     // A preflight pass runs while the UI is rendering a module card. If
     // the archive is large, downloading it to answer "is the button
@@ -256,7 +258,9 @@ async fn evaluate_archive_sha256(
         detail: if passed {
             Some(format!("SHA-256 verified: {computed}"))
         } else {
-            Some(format!("SHA-256 mismatch (expected {expected}, got {computed})."))
+            Some(format!(
+                "SHA-256 mismatch (expected {expected}, got {computed})."
+            ))
         },
     })
 }
@@ -344,7 +348,12 @@ fn evaluate_exe_version_with_probe(
         }
     };
 
-    exe_version_outcome(check, &path, detected.as_deref(), &exe_version_constraints(check))
+    exe_version_outcome(
+        check,
+        &path,
+        detected.as_deref(),
+        &exe_version_constraints(check),
+    )
 }
 
 /// Pure decision core of `exe-version`, split from the probe so it is
@@ -376,7 +385,9 @@ fn exe_version_outcome(
     let mut problems: Vec<String> = Vec::new();
     if let Some(min) = constraints.min.as_deref() {
         match crate::updates::parse_version(min) {
-            Some(minimum) if crate::updates::compare_versions(&actual, &minimum) == Ordering::Less => {
+            Some(minimum)
+                if crate::updates::compare_versions(&actual, &minimum) == Ordering::Less =>
+            {
                 problems.push(format!("below the minimum {min}"))
             }
             Some(_) => {}
@@ -385,7 +396,9 @@ fn exe_version_outcome(
     }
     if let Some(max) = constraints.max.as_deref() {
         match crate::updates::parse_version(max) {
-            Some(maximum) if crate::updates::compare_versions(&actual, &maximum) == Ordering::Greater => {
+            Some(maximum)
+                if crate::updates::compare_versions(&actual, &maximum) == Ordering::Greater =>
+            {
                 problems.push(format!("above the maximum {max}"))
             }
             Some(_) => {}
@@ -453,8 +466,7 @@ fn base_outcome(check: &CheckSpec) -> CheckOutcome {
 /// resource, PowerShell unavailable).
 fn probe_exe_file_version(path: &Path) -> Option<String> {
     let path_text = path.to_string_lossy().replace('\'', "''");
-    let command =
-        format!("(Get-Item -LiteralPath '{path_text}').VersionInfo.FileVersion");
+    let command = format!("(Get-Item -LiteralPath '{path_text}').VersionInfo.FileVersion");
     let output = std::process::Command::new("powershell.exe")
         .hide_console()
         .args(["-NoProfile", "-Command", &command])
@@ -511,19 +523,10 @@ fn error_check(check: &CheckSpec, detail: String) -> CheckOutcome {
     }
 }
 
-#[allow(dead_code)]
-fn _typecheck_reserved_imports(
-    _b: BTreeMap<String, JsonValue>,
-    _p: &Path,
-) -> std::io::Result<()> {
-    let _ = fs::metadata(_p);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value as JsonValue};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     fn exe_version_check(params: BTreeMap<String, JsonValue>) -> CheckSpec {
@@ -538,10 +541,7 @@ mod tests {
         }
     }
 
-    fn outcome_with_version(
-        check: &CheckSpec,
-        detected: Option<&str>,
-    ) -> CheckOutcome {
+    fn outcome_with_version(check: &CheckSpec, detected: Option<&str>) -> CheckOutcome {
         exe_version_outcome(
             check,
             Path::new("C:/Games/Example/Game.exe"),
@@ -615,10 +615,16 @@ mod tests {
         ]));
         let missing = outcome_with_version(&check, None);
         assert!(!missing.passed);
-        assert!(missing.detail.expect("detail").contains("could not determine"));
+        assert!(missing
+            .detail
+            .expect("detail")
+            .contains("could not determine"));
         let unparsable = outcome_with_version(&check, Some("not-a-version"));
         assert!(!unparsable.passed);
-        assert!(unparsable.detail.expect("detail").contains("not a parseable version"));
+        assert!(unparsable
+            .detail
+            .expect("detail")
+            .contains("not a parseable version"));
     }
 
     #[test]
@@ -668,10 +674,7 @@ mod tests {
             Path::new("C:/Games/Example"),
             &mut ExeVersionCache::new(),
             &|path| {
-                assert_eq!(
-                    path,
-                    Path::new("C:/Games/Example/Binaries/Game.exe")
-                );
+                assert_eq!(path, Path::new("C:/Games/Example/Binaries/Game.exe"));
                 Some("1.4.0".to_owned())
             },
         );

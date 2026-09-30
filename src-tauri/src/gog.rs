@@ -157,10 +157,7 @@ HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\GOG.com\\Games\\1242989820
 ";
         let mut keys = parse_subkeys_from_reg_output(stdout);
         keys.sort();
-        assert_eq!(
-            keys,
-            vec!["1207658930".to_owned(), "1242989820".to_owned()]
-        );
+        assert_eq!(keys, vec!["1207658930".to_owned(), "1242989820".to_owned()]);
     }
 
     #[test]

@@ -42,7 +42,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     env, fs,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -103,10 +102,10 @@ fn cache_root() -> PathBuf {
 fn is_valid_slug(slug: &str) -> bool {
     !slug.is_empty()
         && slug.len() <= 256
-        && slug
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric()
-                || matches!(character, '-' | '_' | '.' | '(' | ')' | ' ' | ':' | ','))
+        && slug.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | '(' | ')' | ' ' | ':' | ',')
+        })
 }
 
 fn slug_to_filename(slug: &str) -> String {
@@ -162,10 +161,12 @@ struct ParseResponse {
     error: Option<ParseError>,
 }
 
+/// Subset of the MediaWiki `action=parse` body Moddin reads. `pageid` is
+/// deliberately absent: the API returns it, but nothing keys the cache on
+/// it, and serde ignores unlisted fields.
 #[derive(Debug, Deserialize)]
 struct ParseBody {
     title: Option<String>,
-    pageid: Option<u64>,
     wikitext: Option<ParseWikitext>,
 }
 
@@ -244,9 +245,7 @@ async fn fetch_wikitext(slug: &str) -> Result<(String, Option<u64>, Option<Strin
         .title
         .ok_or_else(|| "PCGamingWiki response was missing a page title.".to_owned())?;
     let revision_id = parse.wikitext.as_ref().and_then(|value| value.revid);
-    let content_model = parse
-        .wikitext
-        .and_then(|value| value.contentmodel);
+    let content_model = parse.wikitext.and_then(|value| value.contentmodel);
     let raw = serde_json::to_string(&text)
         .map_err(|error| format!("Could not decode PCGamingWiki body: {error}"))?;
     let raw = raw.trim_matches('"').to_owned();
@@ -316,7 +315,7 @@ fn strip_wikilinks(value: &str) -> String {
                 }
                 inner.push(next);
             }
-            let display = inner.split('|').last().unwrap_or(&inner);
+            let display = inner.split('|').next_back().unwrap_or(&inner);
             output.push_str(display);
             continue;
         }
@@ -343,10 +342,9 @@ fn extract_issue_lines(wikitext: &str) -> Vec<String> {
     // non-empty bullet lines as plain text. This is intentionally crude —
     // we only need enough text for the UI to decide whether a fuller
     // fetch is warranted.
-    let mut lines = wikitext.lines();
     let mut in_issues = false;
     let mut collected = Vec::new();
-    while let Some(line) = lines.next() {
+    for line in wikitext.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("==") {
             let lower = trimmed.to_ascii_lowercase();
@@ -377,11 +375,7 @@ fn extract_issue_lines(wikitext: &str) -> Vec<String> {
     collected
 }
 
-fn build_summary(
-    slug: &str,
-    wikitext: &str,
-    revision_id: Option<u64>,
-) -> PcgwSummary {
+fn build_summary(slug: &str, wikitext: &str, revision_id: Option<u64>) -> PcgwSummary {
     let engine = extract_game_data_field(wikitext, "Engine");
     let executable_name = extract_game_data_field(wikitext, "Executable name")
         .or_else(|| extract_game_data_field(wikitext, "Executable"));
@@ -390,10 +384,7 @@ fn build_summary(
     let categories = extract_categories(wikitext);
     let issue_lines = extract_issue_lines(wikitext);
     let raw_excerpt = first_lines(wikitext, 24);
-    let page_url = format!(
-        "https://www.pcgamingwiki.com/wiki/{}",
-        url_encode(slug)
-    );
+    let page_url = format!("https://www.pcgamingwiki.com/wiki/{}", url_encode(slug));
 
     PcgwSummary {
         slug: slug.to_owned(),
@@ -436,19 +427,15 @@ fn url_encode(value: &str) -> String {
 /// fresh and falls back to a network fetch on miss. The caller can pass
 /// `force_refresh = true` to bypass the cache.
 #[tauri::command]
-pub async fn lookup_pcgw_summary(
-    request: PcgwLookupRequest,
-) -> Result<PcgwLookupResult, String> {
+pub async fn lookup_pcgw_summary(request: PcgwLookupRequest) -> Result<PcgwLookupResult, String> {
     if !is_valid_slug(&request.slug) {
         return Err("PCGW slug must be a non-empty string of safe characters.".to_owned());
     }
     let cached = read_cache(&request.slug);
     if !request.force_refresh {
         if let Some(cached) = cached.clone() {
-            let age_hours = now_millis()
-                .saturating_sub(cached.fetched_at_millis)
-                as f64
-                / 3_600_000.0;
+            let age_hours =
+                now_millis().saturating_sub(cached.fetched_at_millis) as f64 / 3_600_000.0;
             return Ok(PcgwLookupResult {
                 summary: cached,
                 staleness_hours: Some(age_hours),
@@ -486,8 +473,7 @@ pub fn clear_pcgw_cache(slug: String) -> Result<(), String> {
         return Err("PCGW slug must be a non-empty string of safe characters.".to_owned());
     };
     if path.is_file() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("Could not clear PCGW cache: {error}"))?;
+        fs::remove_file(&path).map_err(|error| format!("Could not clear PCGW cache: {error}"))?;
     }
     Ok(())
 }
@@ -567,7 +553,11 @@ mod tests {
 ";
         assert_eq!(
             extract_categories(wikitext),
-            vec!["Action".to_owned(), "Singleplayer".to_owned(), "VR mods".to_owned()]
+            vec![
+                "Action".to_owned(),
+                "Singleplayer".to_owned(),
+                "VR mods".to_owned()
+            ]
         );
     }
 
@@ -604,7 +594,10 @@ Game is available on Steam.
     #[test]
     fn url_encode_handles_unsafe_characters() {
         assert_eq!(url_encode("Elden Ring"), "Elden%20Ring");
-        assert_eq!(url_encode("Sid Meier's Civilization VI"), "Sid%20Meier%27s%20Civilization%20VI");
+        assert_eq!(
+            url_encode("Sid Meier's Civilization VI"),
+            "Sid%20Meier%27s%20Civilization%20VI"
+        );
     }
 
     #[test]
@@ -624,9 +617,15 @@ Game is available on Steam.
         let summary = build_summary("Cyberpunk 2077", wikitext, Some(42));
         assert_eq!(summary.slug, "Cyberpunk 2077");
         assert_eq!(summary.engine.as_deref(), Some("REDengine"));
-        assert_eq!(summary.executable_name.as_deref(), Some("Cyberpunk2077.exe"));
+        assert_eq!(
+            summary.executable_name.as_deref(),
+            Some("Cyberpunk2077.exe")
+        );
         assert_eq!(summary.source_revision_id, Some(42));
-        assert_eq!(summary.categories, vec!["Open world".to_owned(), "VR mods".to_owned()]);
+        assert_eq!(
+            summary.categories,
+            vec!["Open world".to_owned(), "VR mods".to_owned()]
+        );
         assert_eq!(summary.issue_lines.len(), 1);
         assert!(summary.page_url.contains("Cyberpunk%202077"));
     }

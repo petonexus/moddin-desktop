@@ -1,22 +1,23 @@
 # Backend modules — which file is authoritative
 
-`src-tauri/src/` contains several `X.rs` / `X_module.rs` pairs with overlapping
+`src-tauri/src/` contained several `X.rs` / `X_module.rs` pairs with overlapping
 names. Nothing in the repo said which one a maintainer should edit, so this
 document does. Every claim below is traceable to a `path:line`.
 
-Nothing here has been changed. This is a map plus a recommendation; no Rust
-file was deleted or edited to produce it.
+**The recommendations in this document have been carried out.** The five
+`*_module.rs` adapters and `updater.rs` were deleted, along with their `mod`
+declarations in `lib.rs`. What follows is the map that justified it, kept so
+the reasoning survives the files it describes. The authoritative `X.rs`
+files are unchanged and still the ones to edit.
 
 ## How to read a verdict
 
 * **Authoritative** — the file the live `#[tauri::command]` functions live in,
   the file `generate_handler!` registers, and the file the frontend's
   `invoke(...)` calls land on.
-* **Unreferenced** — the file is declared in `lib.rs` and therefore compiled,
-  but nothing in the crate names it. It is not a fallback and not a legacy
-  path; it has no caller at all.
-* **Not compiled** — the file exists on disk but has no `mod` declaration, so
-  rustc never sees it. Deleting it changes no behaviour and loses no coverage.
+* **Deleted** — the file has been removed. It was verified unreferenced
+  (or, for `updater.rs`, never compiled) at the time of deletion; the
+  evidence is preserved below.
 
 Reachability was established from the frontend, not from the Rust side. A
 `#[tauri::command]` that is registered but never `invoke`d is not live.
@@ -25,47 +26,49 @@ Where a command is cited by line, the line is the `#[tauri::command]`
 attribute; the `fn` is on the next line.
 
 Line numbers reflect the worktree as of writing, which had the F-14 cleanup
-applied (see the overlap section). Frontend call sites were re-verified
-after it landed.
+applied (see the overlap section), plus this document's own deletions.
+Frontend call sites were re-verified after F-14 landed; the `X.rs` line
+numbers below were correct at that point and the deletions that followed did
+not touch those files, so they are still accurate.
 
 ## Summary
 
 | Concern | Authoritative | Other file | Other file's state |
 | --- | --- | --- | --- |
-| OBS VR | `obs.rs` | `obs_module.rs` | Unreferenced |
-| OFXR FrameGen | `ofxr.rs` | `ofxr_module.rs` | Unreferenced |
-| OpenXR runtimes | `openxr.rs` | `openxr_module.rs` | Unreferenced |
-| OptiScaler | `optiscaler.rs` | `optiscaler_module.rs` | Unreferenced |
+| OBS VR | `obs.rs` | `obs_module.rs` | Deleted |
+| OFXR FrameGen | `ofxr.rs` | `ofxr_module.rs` | Deleted |
+| OpenXR runtimes | `openxr.rs` | `openxr_module.rs` | Deleted |
+| OptiScaler | `optiscaler.rs` | `optiscaler_module.rs` | Deleted |
 | ReShade host | `capabilities/reshade.yaml` | *(Rust pair deleted — see below)* | Resolved |
-| UEVR | `uevr.rs` | `uevr_module.rs` | Unreferenced |
-| Module version check | `updates.rs` | `updater.rs` | Not compiled |
+| UEVR | `uevr.rs` | `uevr_module.rs` | Deleted |
+| Module version check | `updates.rs` | `updater.rs` | Deleted |
 | Cheeky Foveated DLSS | `cheeky.rs` + `capabilities/cheeky-foveated-dlss.yaml` | — | Both live, different shape |
 
 The short version: **in every surviving `X` / `X_module` pair the `X.rs` file is
-the one to edit.** `X_module.rs` is a `Module` trait adapter layer that was
-scaffolded in September 2026 and never wired to anything. The ReShade pair has
-already been resolved by deletion.
+the one to edit.** `X_module.rs` was a `Module` trait adapter layer that was
+scaffolded in September 2026 and never wired to anything. All five are now gone.
+The ReShade pair was already resolved by deletion.
 
 ## The two registration gates
 
-`src-tauri/src/lib.rs:107-168` is the only place a `#[tauri::command]` becomes
+`src-tauri/src/lib.rs` is the only place a `#[tauri::command]` becomes
 reachable from the UI. It registers the plain names — `obs::`, `ofxr::`,
 `openxr::`, `optiscaler::`, `uevr::`, `cheeky::`,
-`updates::check_module_update` — and **no** `*_module::` entry anywhere. The
-five surviving adapters are declared at `lib.rs:19,21,23,25,30` and named
-nowhere else:
+`updates::check_module_update` — and **no** `*_module::` entry ever existed.
+The five adapters were declared at `lib.rs:19,21,23,25,30` and named nowhere
+else:
 
 ```
 git grep -n "obs_module|ofxr_module|openxr_module|optiscaler_module|uevr_module" -- src-tauri/
 ```
 
-returns only the `mod` declarations in `lib.rs`, the adapters' own
+returned only the `mod` declarations in `lib.rs`, the adapters' own
 `//!` doc-links, and their own unit-test names. No registry, no dispatch
-table, no `dyn Module`.
+table, no `dyn Module`. Those five `mod` lines are now gone too.
 
 `crate::module::Module` itself has no production implementor. The only
-`impl Module` in the crate outside the adapters is `DummyModule` at
-`src-tauri/src/module.rs:377`, used by that file's own tests.
+`impl Module` in the crate was `DummyModule` in `src-tauri/src/module.rs`,
+used by that file's own tests.
 
 ## Per pair
 
@@ -87,9 +90,9 @@ a hard `Err` with the message *"…requires a fully-built ObsVrRequest; the
 catalog config plumbing is pending."* `remove` (`obs_module.rs:80`) is the one
 method that really does work, because it only calls the transaction store.
 
-**Recommendation: delete `obs_module.rs` and its `mod` line.** It cannot
-install anything, and its own doc comment (`obs_module.rs:5-11`) says the
-forwarding is waiting on a refactor that the capability layer later made moot.
+**Done: `obs_module.rs` and its `mod` line are deleted.** It could not
+install anything, and its own doc comment (`obs_module.rs:5-11`) said the
+forwarding was waiting on a refactor that the capability layer later made moot.
 
 ### OFXR — `ofxr.rs` authoritative, `ofxr_module.rs` unreferenced
 
@@ -105,10 +108,26 @@ really does translate `ModuleContext.config` into an `OfxrRequest`
 (`ofxr_module.rs:30`) and delegate. It is still unreachable: no dispatcher
 constructs it.
 
-**Recommendation: delete `ofxr_module.rs` and its `mod` line.** The
-`ModuleContext.config` plumbing it was waiting on has not been built, and the
+**Done: `ofxr_module.rs` and its `mod` line are deleted.** The
+`ModuleContext.config` plumbing it was waiting on was never built, and the
 YAML capability path (`capabilities/ofxr-bridge.yaml`) covers the declarative
 case instead.
+
+> **Cross-file consequence, still open.** `ofxr_module.rs` held the crate's
+> only `fn id(&self) -> &'static str { "ofxr-framegen" }`.
+> `scripts/validate-catalog.mjs` builds its `backendModuleIds` set by scanning
+> every `src-tauri/src/*.rs` for exactly that shape
+> (`validate-catalog.mjs:291-300`), so deleting the file removed
+> `ofxr-framegen` from the set of ids the app "offers". `check:catalog` now
+> fails on `src/catalog/games/cyberpunk-2077.yaml` and
+> `src/catalog/games/elden-ring.yaml`, which both list a
+> `modules[ofxr-framegen]` card.
+>
+> This is the validator doing its job: the card was only "backed" by a dead
+> file whose string happened to match. Nothing ever dispatched to
+> `OfxrModule`, so the card's action did nothing. The fix belongs to whoever
+> owns `src/catalog/**` — either drop the card, or repoint it at the live
+> `ofxr-bridge` capability recipe.
 
 ### OpenXR — `openxr.rs` authoritative, `openxr_module.rs` unreferenced
 
@@ -127,7 +146,7 @@ header (`openxr_module.rs:5-9`) states that *"the existing
 `openxr::inspect_openxr` / … Tauri commands remain the supported entry
 points."*
 
-**Recommendation: delete `openxr_module.rs` and its `mod` line.**
+**Done: `openxr_module.rs` and its `mod` line are deleted.**
 
 ### OptiScaler — `optiscaler.rs` authoritative, `optiscaler_module.rs` unreferenced
 
@@ -143,7 +162,7 @@ Frontend callers in `src/App.vue`: `preview_optiscaler` at `:948`, `:1055`,
 its header (`optiscaler_module.rs:5-8`) says the Tauri commands *"keep their
 bespoke request structs until the catalog config plumbing lands."*
 
-**Recommendation: delete `optiscaler_module.rs` and its `mod` line.**
+**Done: `optiscaler_module.rs` and its `mod` line are deleted.**
 
 ### ReShade — resolved by deletion; the YAML recipe is the live path
 
@@ -195,12 +214,12 @@ Frontend callers in `src/App.vue`: `preview_uevr` at `:972`, `:1508`;
 (`uevr_module.rs:5-8`) says the Tauri commands *"keep their bespoke request
 structs until the catalog config plumbing lands."*
 
-**Recommendation: delete `uevr_module.rs` and its `mod` line.**
+**Done: `uevr_module.rs` and its `mod` line are deleted.**
 
 > Correction to existing docs: `docs/AUDIT-2026-09-29.md:156` says the library
 > grid installs *"through the working `ofxr.rs` / `uevr_module.rs` modules."*
 > The second half is wrong — the grid calls `uevr::preview_uevr` and friends
-> in `uevr.rs`. `uevr_module.rs` has no caller.
+> in `uevr.rs`. `uevr_module.rs` had no caller, and now does not exist.
 
 ### Version checking — `updates.rs` authoritative, `updater.rs` not compiled
 
@@ -236,7 +255,7 @@ It has never been compiled, so its two unit tests have never run. Its
 doc comment already names `crate::updates::check_module_update` as the thing it
 adapts (`updater.rs:55-57`).
 
-**Recommendation: delete `updater.rs`.** If the `Updater` abstraction is wanted
+**Done: `updater.rs` is deleted.** If the `Updater` abstraction is wanted
 later, the live `updates.rs` is the place to lift it from.
 
 ## `cheeky.rs` — the seventh case, and a different shape
@@ -291,69 +310,59 @@ remaining half of the same cleanup.
 
 ## Recommendations in one place
 
-| File | Recommendation |
-| --- | --- |
-| `obs_module.rs` | Delete, plus `lib.rs:19` |
-| `ofxr_module.rs` | Delete, plus `lib.rs:21` |
-| `openxr_module.rs` | Delete, plus `lib.rs:23` |
-| `optiscaler_module.rs` | Delete, plus `lib.rs:25` |
-| `uevr_module.rs` | Delete, plus `lib.rs:30` |
-| `updater.rs` | Delete — no `mod` line to remove |
-| `obs.rs`, `ofxr.rs`, `openxr.rs`, `optiscaler.rs`, `uevr.rs`, `cheeky.rs`, `updates.rs` | Keep; add the header line below |
-| `reshade.rs`, `reshade_module.rs` | None — already deleted by F-14 |
+| File | Recommendation | Status |
+| --- | --- | --- |
+| `obs_module.rs` | Delete, plus its `mod` line | Done |
+| `ofxr_module.rs` | Delete, plus its `mod` line | Done |
+| `openxr_module.rs` | Delete, plus its `mod` line | Done |
+| `optiscaler_module.rs` | Delete, plus its `mod` line | Done |
+| `uevr_module.rs` | Delete, plus its `mod` line | Done |
+| `updater.rs` | Delete — no `mod` line to remove | Done |
+| `obs.rs`, `ofxr.rs`, `openxr.rs`, `optiscaler.rs`, `uevr.rs`, `cheeky.rs`, `updates.rs` | Keep; add the header line below | **Outstanding** |
+| `reshade.rs`, `reshade_module.rs` | None — already deleted by F-14 | Done |
 
-Deleting the five adapters also leaves `src-tauri/src/module.rs` with no
-production implementor. That is already true today, so it is not a regression,
-but it does mean `module.rs` becomes test-only and should say so.
+Deleting the five adapters left `src-tauri/src/module.rs` with no production
+implementor, as predicted. That is now stated in the file's own module doc and
+enforced by the compiler, not just described here: the un-adopted `Module`
+trait and the types that exist only to serve it (`ModuleCategory`,
+`ModuleContext`, `PreviewReport`, `ApplyResult`, `UpdateInfo`, `UpdateStatus`)
+are `#[cfg(test)]`, so they are not compiled into the shipped binary. The rest
+of the file — `CheckCategory`, `CheckSeverity`, `CheckDefinition`,
+`CheckOutcome`, `VerificationReport`, `ModuleStatus` — stays live, because
+`capability_runner.rs` returns those to the UI.
 
 ## Exact header comments to add
 
-One `//!` line at the very top of each file, above any existing content.
-`obs.rs`, `ofxr.rs`, `openxr.rs`, `optiscaler.rs`, `uevr.rs`, `cheeky.rs` and
-`updates.rs` open with a `use` statement today, so the line becomes line 1.
-The five `*_module.rs` files already open with a `//!` block — insert the line
-above it, and the old block follows as the detail.
+Still outstanding. One `//!` line at the very top of each file, above any
+existing content. `obs.rs`, `ofxr.rs`, `openxr.rs`, `optiscaler.rs`,
+`uevr.rs`, `cheeky.rs` and `updates.rs` open with a `use` statement today, so
+the line becomes line 1.
 
 ```rust
 // obs.rs
 //! Authoritative OBS VR implementation — the three `#[tauri::command]`s invoked from src/App.vue. See docs/BACKEND-MODULES.md.
 
-// obs_module.rs
-//! Unreferenced `Module` trait adapter over `obs` — not a Tauri command and called from nowhere. See docs/BACKEND-MODULES.md.
-
 // ofxr.rs
 //! Authoritative OFXR FrameGen implementation — the three `#[tauri::command]`s invoked from src/App.vue. See docs/BACKEND-MODULES.md.
-
-// ofxr_module.rs
-//! Unreferenced `Module` trait adapter over `ofxr` — not a Tauri command and called from nowhere. See docs/BACKEND-MODULES.md.
 
 // openxr.rs
 //! Authoritative OpenXR runtime manager — the three `#[tauri::command]`s invoked from src/features/openxr/service.ts. See docs/BACKEND-MODULES.md.
 
-// openxr_module.rs
-//! Unreferenced `Module` trait adapter over `openxr` — not a Tauri command and called from nowhere. See docs/BACKEND-MODULES.md.
-
 // optiscaler.rs
 //! Authoritative OptiScaler installer — the three `#[tauri::command]`s invoked from src/App.vue. See docs/BACKEND-MODULES.md.
-
-// optiscaler_module.rs
-//! Unreferenced `Module` trait adapter over `optiscaler` — not a Tauri command and called from nowhere. See docs/BACKEND-MODULES.md.
 
 // uevr.rs
 //! Authoritative UEVR installer — the three `#[tauri::command]`s invoked from src/App.vue. See docs/BACKEND-MODULES.md.
 
-// uevr_module.rs
-//! Unreferenced `Module` trait adapter over `uevr` — not a Tauri command and called from nowhere. See docs/BACKEND-MODULES.md.
-
 // updates.rs
 //! Authoritative per-module version check (`check_module_update`) — this is not an app self-updater. See docs/BACKEND-MODULES.md.
-
-// updater.rs
-//! Not compiled — no `mod updater;` in lib.rs. The live path is updates.rs. See docs/BACKEND-MODULES.md.
 
 // cheeky.rs
 //! Authoritative Cheeky Foveated DLSS commands; a capability spec for the same mod also ships and is also live. See docs/BACKEND-MODULES.md.
 ```
+
+The header lines this document originally proposed for the five adapters and
+`updater.rs` are moot — those files no longer exist.
 
 ## History
 
@@ -377,8 +386,10 @@ file in scope):
 | `reshade_module.rs` | 2026-09-21 | `1e4b047` |
 
 `reshade.rs` and `reshade_module.rs` were deleted in the uncommitted worktree
-by the F-14 cleanup while this document was being written; see the overlap
-section. `git log --diff-filter=A` still dates them at the commits above.
+by the F-14 cleanup while this document was being written. The five
+`*_module.rs` adapters and `updater.rs` were deleted afterwards, on the
+evidence recorded above. `git log --diff-filter=A` still dates them all at the
+commits above.
 
 The history does explain the twins, and it explains them as a spike. The
 command files are the bootstrap MVP (2026-09-12). `module.rs` arrived on
@@ -396,8 +407,16 @@ capability YAML path won instead, and the trait layer was left in place.
 ## Unresolved
 
 * **Whether `module.rs` itself is worth keeping** once the adapters go. This
-  document only establishes that it has no production implementor today. What
+  document only established that it has no production implementor today. What
   it *should* become is a design decision, not a reachability finding.
+  **Partially resolved:** the trait and its private satellites are now
+  `#[cfg(test)]` so they cost nothing in the shipped binary, and the three
+  items nothing constructs even in tests carry a reasoned
+  `#[allow(dead_code, reason = ...)]`. That keeps the contract legible
+  without pretending it is used. Whether to revive it is still open.
+* **The `ofxr-framegen` catalogue card** is now offered by nothing, because
+  the only thing that made `check:catalog` see it was a dead adapter's `fn id`.
+  See the OFXR section above. Owned by `src/catalog/**`.
 * **The Rust-command vs YAML-capability duplication** for `ofxr-bridge`,
   `optiscaler`, `openxr-helpers` and `uevr` is real but out of scope here.
   Both are live; neither is dead. ReShade has been resolved in favour of the

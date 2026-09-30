@@ -5,12 +5,13 @@
 //! that the Tauri command layer (and the future in-process modules)
 //! can call to:
 //!
-//! * [`run_install`] — execute every step in `spec.install`,
+//! * `run_install` — execute every step in `spec.install`,
 //!   record a transaction, and return the structured result.
-//! * [`run_uninstall`] — run the uninstall steps (or rely on the
+//! * `run_uninstall` — run the uninstall steps (or rely on the
 //!   transaction store to roll back the install record).
-//! * [`evaluate_check`] — run a single check by id against the
-//!   current game state.
+//! * `evaluate_check` — run a single check by id against the
+//!   current game state (test-only; the command layer uses
+//!   `evaluate_all_checks`).
 //! * [`evaluate_all_checks`] — drive the UI verification list in one
 //!   call.
 //!
@@ -28,16 +29,15 @@ use crate::{
     transaction::{self, TransactionRecord},
 };
 use serde::Serialize;
+use std::path::PathBuf;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::Path,
 };
-use std::path::PathBuf;
 
 const OFXR_BRIDGE_YAML: &str = include_str!("../capabilities/ofxr-bridge.yaml");
 const OPTISCALER_YAML: &str = include_str!("../capabilities/optiscaler.yaml");
-const CHEEKY_FOVEATED_DLSS_YAML: &str =
-    include_str!("../capabilities/cheeky-foveated-dlss.yaml");
+const CHEEKY_FOVEATED_DLSS_YAML: &str = include_str!("../capabilities/cheeky-foveated-dlss.yaml");
 const RESHADE_YAML: &str = include_str!("../capabilities/reshade.yaml");
 const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
 const UEVR_YAML: &str = include_str!("../capabilities/uevr.yaml");
@@ -47,8 +47,8 @@ const REFRAMEWORK_YAML: &str = include_str!("../capabilities/reframework.yaml");
 
 /// Every capability recipe compiled into the binary.
 ///
-/// Kept as one list so [`CapabilityRegistry::load`] and
-/// [`CapabilityRegistry::load_with_local_dir`] cannot drift apart, and so
+/// Kept as one list so [`CapabilityRegistry::load`] and the test-only
+/// `load_with_local_dir` cannot drift apart, and so
 /// `tests::every_built_in_spec_installs_from_a_local_archive` can cover
 /// each recipe automatically as specs are added.
 const BUILT_IN_YAML: &[&str] = &[
@@ -71,10 +71,7 @@ fn insert_built_ins(specs: &mut HashMap<String, CapabilitySpec>) {
             Ok(mut spec) => {
                 spec.origin = SpecOrigin::BuiltIn;
                 if specs.contains_key(&spec.id) {
-                    panic!(
-                        "duplicate built-in capability id '{id}'",
-                        id = spec.id
-                    );
+                    panic!("duplicate built-in capability id '{id}'", id = spec.id);
                 }
                 specs.insert(spec.id.clone(), spec);
             }
@@ -135,9 +132,11 @@ impl CapabilityRegistry {
     }
 
     /// Same as [`Self::load`] but takes the local override directory
-    /// explicitly. Used by tests and by a future `capability_reload`
-    /// Tauri command so the user can drop a new YAML and re-read it
-    /// without restarting.
+    /// explicitly. Test-only: the live `capability_reload` command calls
+    /// [`Self::reload_local`] on an existing registry rather than
+    /// rebuilding one, so nothing in the product needs a
+    /// build-from-scratch-with-an-explicit-dir entry point.
+    #[cfg(test)]
     pub fn load_with_local_dir<P: AsRef<Path>>(local_dir: P) -> Self {
         let mut registry = Self::default();
         insert_built_ins(&mut registry.specs);
@@ -170,20 +169,14 @@ impl CapabilityRegistry {
             let raw = match std::fs::read_to_string(&path) {
                 Ok(raw) => raw,
                 Err(error) => {
-                    eprintln!(
-                        "moddin: could not read {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("moddin: could not read {}: {error}", path.display());
                     continue;
                 }
             };
             let mut spec = match serde_yaml::from_str::<CapabilitySpec>(&raw) {
                 Ok(spec) => spec,
                 Err(error) => {
-                    eprintln!(
-                        "moddin: could not parse {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("moddin: could not parse {}: {error}", path.display());
                     continue;
                 }
             };
@@ -193,19 +186,19 @@ impl CapabilityRegistry {
                 .insert(spec.id.clone(), spec)
                 .map(|existing| existing.origin);
             match previous_origin {
-                Some(SpecOrigin::BuiltIn) => eprintln!(
-                    "moddin: local capability {spec_id} overrides the built-in"
-                ),
+                Some(SpecOrigin::BuiltIn) => {
+                    eprintln!("moddin: local capability {spec_id} overrides the built-in")
+                }
                 Some(other) if other != SpecOrigin::Local => eprintln!(
                     "moddin: local capability {spec_id} overrides {} capability",
                     other.as_str()
                 ),
-                Some(SpecOrigin::Local) => eprintln!(
-                    "moddin: duplicate local capability id {spec_id}, keeping first"
-                ),
-                Some(SpecOrigin::Community) => eprintln!(
-                    "moddin: local capability {spec_id} overrides community capability"
-                ),
+                Some(SpecOrigin::Local) => {
+                    eprintln!("moddin: duplicate local capability id {spec_id}, keeping first")
+                }
+                Some(SpecOrigin::Community) => {
+                    eprintln!("moddin: local capability {spec_id} overrides community capability")
+                }
                 None => {}
             }
         }
@@ -222,21 +215,15 @@ impl CapabilityRegistry {
     /// game on an engine nothing declares (`doom-2016` on `idtech`)
     /// must not be gated on a comparison that has only one side.
     pub fn declares_engine(&self, engine: &str) -> bool {
-        self.specs
-            .values()
-            .any(|spec| spec.supported_engines.iter().any(|declared| declared == engine))
+        self.specs.values().any(|spec| {
+            spec.supported_engines
+                .iter()
+                .any(|declared| declared == engine)
+        })
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.specs.keys().map(String::as_str)
-    }
-
-    pub fn len(&self) -> usize {
-        self.specs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.specs.is_empty()
     }
 
     /// Re-read the local override directory and either add, replace,
@@ -288,19 +275,38 @@ pub const MAX_DEPENDENCY_DEPTH: usize = 8;
 /// specs that declare a `compatibility` block.
 pub const COMPATIBILITY_CHECK_ID: &str = "exe-version-compat";
 
+/// The per-install inputs that the command layer already holds and every
+/// stage of the install pipeline needs: which game, the resolved recipe
+/// config, and the two directories.
+///
+/// Bundled because five functions below took these five parameters in the
+/// same order, and `install_directory` / `executable_directory` are
+/// adjacent same-typed `&Path`s — a swapped pair still compiles and
+/// silently points the backup scope at the wrong root.
+#[derive(Clone, Copy)]
+struct InstallScope<'a> {
+    game_id: &'a str,
+    game_name: &'a str,
+    config: &'a ResolvedConfig,
+    install_directory: &'a Path,
+    executable_directory: &'a Path,
+}
+
 /// Internal install worker. Called by `run_install` (registry lookup)
 /// and `run_install_with_spec` (community YAML the caller already
 /// fetched + verified). Same transaction store, same step dispatch.
 fn execute_install(
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
 ) -> Result<InstallResult, String> {
+    let InstallScope {
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+    } = *scope;
     let step_context = StepContext {
-        spec,
         config,
         install_directory,
         executable_directory,
@@ -406,14 +412,15 @@ fn is_capability_installed(game_id: &str, capability_id: &str) -> bool {
 fn install_dependencies_recursive(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     chain: &mut Vec<String>,
     installed_dependencies: &mut Vec<String>,
 ) -> Result<(), String> {
+    let InstallScope {
+        game_id,
+        executable_directory,
+        ..
+    } = *scope;
     for dependency_id in &spec.dependencies {
         if is_capability_installed(game_id, dependency_id) {
             continue;
@@ -447,11 +454,7 @@ fn install_dependencies_recursive(
             install_dependencies_recursive(
                 registry,
                 dependency_spec,
-                game_id,
-                game_name,
-                config,
-                install_directory,
-                executable_directory,
+                scope,
                 chain,
                 installed_dependencies,
             )?;
@@ -470,20 +473,13 @@ fn install_dependencies_recursive(
                          accept the risk.",
                         dependency_spec.id,
                         spec.id,
-                        compatibility
-                            .detail
-                            .unwrap_or_else(|| "game executable outside the supported version range".to_owned())
+                        compatibility.detail.unwrap_or_else(|| {
+                            "game executable outside the supported version range".to_owned()
+                        })
                     ));
                 }
             }
-            execute_install(
-                dependency_spec,
-                game_id,
-                game_name,
-                config,
-                install_directory,
-                executable_directory,
-            )?;
+            execute_install(dependency_spec, scope)?;
             installed_dependencies.push(dependency_id.clone());
             Ok(())
         })();
@@ -525,10 +521,16 @@ fn evaluate_compatibility(
         serde_json::Value::String(compatibility.game_exe.clone().unwrap_or_default()),
     );
     if let Some(min) = &compatibility.min_exe_version {
-        params.insert("minVersion".to_owned(), serde_json::Value::String(min.clone()));
+        params.insert(
+            "minVersion".to_owned(),
+            serde_json::Value::String(min.clone()),
+        );
     }
     if let Some(max) = &compatibility.max_exe_version {
-        params.insert("maxVersion".to_owned(), serde_json::Value::String(max.clone()));
+        params.insert(
+            "maxVersion".to_owned(),
+            serde_json::Value::String(max.clone()),
+        );
     }
     if !compatibility.blocked_exe_versions.is_empty() {
         params.insert(
@@ -569,11 +571,7 @@ fn evaluate_compatibility(
 fn install_spec(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
     // `status: planned` means the recipe is a declared intention, not a
@@ -590,7 +588,7 @@ fn install_spec(
     }
     let compatibility = evaluate_compatibility(
         spec,
-        executable_directory,
+        scope.executable_directory,
         &mut builtin_checks::ExeVersionCache::new(),
     );
     if let Some(outcome) = &compatibility {
@@ -611,23 +609,12 @@ fn install_spec(
     install_dependencies_recursive(
         registry,
         spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
+        scope,
         &mut chain,
         &mut installed_dependencies,
     )?;
 
-    let mut result = execute_install(
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-    )?;
+    let mut result = execute_install(spec, scope)?;
     result.installed_dependencies = installed_dependencies;
     result.compatibility = compatibility;
     Ok(result)
@@ -637,29 +624,16 @@ fn install_spec(
 /// registry. Missing `dependencies` are auto-installed first (up to
 /// [`MAX_DEPENDENCY_DEPTH`] levels); `force` bypasses the spec's
 /// compatibility gate for this capability only.
-pub fn run_install(
+fn run_install(
     registry: &CapabilityRegistry,
     capability_id: &str,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
     let spec = registry
         .get(capability_id)
         .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
-    install_spec(
-        registry,
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-        force,
-    )
+    install_spec(registry, spec, scope, force)
 }
 
 /// Run the `install` section of a capability whose `CapabilitySpec`
@@ -667,26 +641,13 @@ pub fn run_install(
 /// `community_capability_install` after the caller has downloaded
 /// and signature-verified the YAML. Dependencies resolve against the
 /// regular registry (built-ins + local overrides).
-pub fn run_install_with_spec(
+fn run_install_with_spec(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
-    install_spec(
-        registry,
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-        force,
-    )
+    install_spec(registry, spec, scope, force)
 }
 
 /// Run the `uninstall` section (or fall back to rolling back the
@@ -709,7 +670,6 @@ pub fn run_uninstall(
     }
     let config = ResolvedConfig::default();
     let step_context = StepContext {
-        spec,
         config: &config,
         install_directory,
         executable_directory: install_directory,
@@ -721,6 +681,13 @@ pub fn run_uninstall(
 }
 
 /// Run a single check by id against the supplied config.
+///
+/// Test-only: the `capability_evaluate` command goes through
+/// [`evaluate_all_checks`] and the UI has no path that names one check
+/// id, so this lookup wrapper is not compiled into the shipped binary.
+/// It stays because the tests below are what pin the "search `checks`
+/// *and* `verify`" behaviour that [`evaluate_all_checks`] relies on.
+#[cfg(test)]
 pub async fn evaluate_check(
     registry: &CapabilityRegistry,
     capability_id: &str,
@@ -811,16 +778,8 @@ pub async fn evaluate_all_checks(
     })
 }
 
-fn parse_index(value: &str) -> Option<usize> {
-    if value.starts_with("check:") {
-        value.trim_start_matches("check:").parse().ok()
-    } else {
-        None
-    }
-}
-
-fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collections::BTreeMap<String, String> {
-    let mut metadata = std::collections::BTreeMap::new();
+fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::new();
     metadata.insert("capabilityId".to_owned(), spec.id.clone());
     if let Some(version) = config.get_string("version") {
         metadata.insert("version".to_owned(), version);
@@ -833,7 +792,6 @@ fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collec
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
-use serde_yaml;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -878,11 +836,13 @@ pub async fn capability_install(
     run_install(
         &registry,
         &request.capability_id,
-        &request.game_id,
-        &request.game_name,
-        &request.config,
-        &install_directory,
-        &executable_directory,
+        &InstallScope {
+            game_id: &request.game_id,
+            game_name: &request.game_name,
+            config: &request.config,
+            install_directory: &install_directory,
+            executable_directory: &executable_directory,
+        },
         request.force,
     )
 }
@@ -1205,11 +1165,13 @@ pub async fn community_capability_install(
     run_install_with_spec(
         &registry,
         &spec,
-        &request.game_id,
-        &request.game_name,
-        &request.config,
-        &install_directory,
-        &executable_directory,
+        &InstallScope {
+            game_id: &request.game_id,
+            game_name: &request.game_name,
+            config: &request.config,
+            install_directory: &install_directory,
+            executable_directory: &executable_directory,
+        },
         request.force,
     )
 }
@@ -1219,7 +1181,6 @@ mod tests {
     use super::*;
     use crate::capability::{CheckSpec, EngineMatch, SpecOrigin};
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::fs;
 
     /// Build a resolved config from key/value pairs, matching how the
@@ -1237,7 +1198,7 @@ mod tests {
     fn registry_loads_ofxr_bridge() {
         let registry = CapabilityRegistry::load();
         assert!(registry.get("ofxr-bridge").is_some());
-        assert!(registry.len() >= 1);
+        assert!(registry.ids().count() >= 1);
     }
 
     #[test]
@@ -1313,10 +1274,8 @@ mod tests {
 
     #[test]
     fn local_overrides_built_in_when_id_matches() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-override-test-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-override-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_local_capability(
             &temp,
@@ -1338,10 +1297,8 @@ status: planned
 
     #[test]
     fn local_adds_new_capability_without_touching_built_ins() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-add-test-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-add-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_local_capability(
             &temp,
@@ -1382,14 +1339,15 @@ install:
 
     #[test]
     fn malformed_local_yaml_is_skipped_not_panicked() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-malformed-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-malformed-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).expect("create temp dir");
-        fs::write(temp.join("bad.yaml"), "this: is: not: valid: yaml: at: all:")
-            .expect("write malformed yaml");
+        fs::write(
+            temp.join("bad.yaml"),
+            "this: is: not: valid: yaml: at: all:",
+        )
+        .expect("write malformed yaml");
         let registry = CapabilityRegistry::load_with_local_dir(&temp);
         // Built-ins unaffected by the malformed local file.
         assert!(registry.get("ofxr-bridge").is_some());
@@ -1403,12 +1361,12 @@ install:
     /// change what these assertions see.
     fn built_in_registry() -> CapabilityRegistry {
         let registry = CapabilityRegistry::load_with_local_dir(temp_root("engine-gate"));
-        assert!(registry.len() > 1, "expected the built-in recipes");
+        assert!(registry.ids().count() > 1, "expected the built-in recipes");
         registry
     }
 
     fn listed_ids(registry: &CapabilityRegistry, engine: Option<&str>) -> Vec<String> {
-        let mut ids: Vec<String> = summaries_for_engine(&registry, engine)
+        let mut ids: Vec<String> = summaries_for_engine(registry, engine)
             .into_iter()
             .map(|summary| summary.id)
             .collect();
@@ -1503,10 +1461,7 @@ install:
         assert_eq!(listed, every_built_in_id(&registry));
         assert!(summaries_for_engine(&registry, Some("idtech"))
             .iter()
-            .all(|summary| matches!(
-                summary.engine_match,
-                EngineMatch::UnknownGameEngine { .. }
-            )));
+            .all(|summary| matches!(summary.engine_match, EngineMatch::UnknownGameEngine { .. })));
     }
 
     #[test]
@@ -1635,9 +1590,7 @@ install:
         );
         config.values.insert(
             "markerMiddle".to_owned(),
-            serde_json::Value::String(
-                executable.join("middle.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("middle.txt").to_string_lossy().into_owned()),
         );
         config.values.insert(
             "markerTop".to_owned(),
@@ -1649,17 +1602,22 @@ install:
         let result = run_install(
             &registry,
             "dep-top",
-            game_id,
-            "Dep Order Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Order Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install with auto-installed dependencies");
 
         // Transitive dependency installs first, then its dependent.
-        assert_eq!(result.installed_dependencies, vec!["dep-base", "dep-middle"]);
+        assert_eq!(
+            result.installed_dependencies,
+            vec!["dep-base", "dep-middle"]
+        );
         assert!(result.compatibility.is_none());
         for name in ["base.txt", "middle.txt", "top.txt"] {
             assert!(
@@ -1707,13 +1665,19 @@ install:
         config.values.insert(
             "markerPresent".to_owned(),
             serde_json::Value::String(
-                executable.join("present.txt").to_string_lossy().into_owned(),
+                executable
+                    .join("present.txt")
+                    .to_string_lossy()
+                    .into_owned(),
             ),
         );
         config.values.insert(
             "markerRequester".to_owned(),
             serde_json::Value::String(
-                executable.join("requester.txt").to_string_lossy().into_owned(),
+                executable
+                    .join("requester.txt")
+                    .to_string_lossy()
+                    .into_owned(),
             ),
         );
 
@@ -1722,11 +1686,13 @@ install:
         run_install(
             &registry,
             "dep-present",
-            game_id,
-            "Dep Skip Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Skip Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install the dependency on its own");
@@ -1734,11 +1700,13 @@ install:
         let result = run_install(
             &registry,
             "dep-requester",
-            game_id,
-            "Dep Skip Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Skip Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install the requester");
@@ -1780,11 +1748,13 @@ install:
         let error = run_install(
             &registry,
             "cycle-alpha",
-            "cycle-game",
-            "Cycle Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "cycle-game",
+                game_name: "Cycle Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("cycle aborts the install");
@@ -1797,11 +1767,13 @@ install:
         let error = run_install(
             &registry,
             "cycle-self",
-            "cycle-game",
-            "Cycle Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "cycle-game",
+                game_name: "Cycle Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("self-dependency aborts the install");
@@ -1837,11 +1809,13 @@ install:
         let error = run_install(
             &registry,
             "chain-0",
-            "depth-game",
-            "Depth Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "depth-game",
+                game_name: "Depth Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("runaway chain aborts the install");
@@ -1876,11 +1850,13 @@ install:
         let error = run_install(
             &registry,
             "dep-orphan",
-            "missing-game",
-            "Missing Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "missing-game",
+                game_name: "Missing Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("unknown dependency aborts the install");
@@ -1927,20 +1903,20 @@ install:
         let mut config = ResolvedConfig::default();
         config.values.insert(
             "markerGated".to_owned(),
-            serde_json::Value::String(
-                executable.join("gated.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("gated.txt").to_string_lossy().into_owned()),
         );
 
         let registry = CapabilityRegistry::load_with_local_dir(&caps);
         let error = run_install(
             &registry,
             "gated-mod",
-            "gate-game",
-            "Gate Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "gate-game",
+                game_name: "Gate Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("incompatible build blocks a plain install");
@@ -1976,20 +1952,20 @@ install:
         let mut config = ResolvedConfig::default();
         config.values.insert(
             "markerGated".to_owned(),
-            serde_json::Value::String(
-                executable.join("gated.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("gated.txt").to_string_lossy().into_owned()),
         );
 
         let registry = CapabilityRegistry::load_with_local_dir(&caps);
         let result = run_install(
             &registry,
             "gated-mod",
-            "gate-game",
-            "Gate Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "gate-game",
+                game_name: "Gate Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             true,
         )
         .expect("force bypasses the compatibility gate");
@@ -2036,7 +2012,11 @@ install:
             "the dummy exe reports no FileVersion, so the row fails"
         );
         assert!(
-            first.detail.as_deref().unwrap_or_default().contains("game.exe"),
+            first
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("game.exe"),
             "detail names the probed exe: {:?}",
             first.detail
         );
@@ -2093,7 +2073,7 @@ install:
 
         let error = capability_compatibility(CapabilityCompatibilityRequest {
             capability_id: "does-not-exist".to_owned(),
-            executable_dir: executable_dir,
+            executable_dir,
         })
         .expect_err("an unknown id is an error, not a silent None");
         assert!(
@@ -2125,11 +2105,13 @@ install:
         let error = run_install(
             &registry,
             "planned-mod",
-            "planned-game",
-            "Planned Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "planned-game",
+                game_name: "Planned Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("a planned recipe cannot be installed");
@@ -2143,11 +2125,13 @@ install:
         let forced = run_install(
             &registry,
             "planned-mod",
-            "planned-game",
-            "Planned Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "planned-game",
+                game_name: "Planned Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             true,
         )
         .expect_err("force does not bypass the planned guard");
@@ -2226,7 +2210,11 @@ install:
                 spec.id
             );
 
-            for step in spec.install.iter().filter(|step| step.kind == "extract-zip") {
+            for step in spec
+                .install
+                .iter()
+                .filter(|step| step.kind == "extract-zip")
+            {
                 let reference = step
                     .params
                     .get("archivePath")
@@ -2300,11 +2288,13 @@ install:
         let result = run_install(
             &registry,
             "overwriter",
-            "overwrite-game",
-            "Overwrite Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "overwrite-game",
+                game_name: "Overwrite Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install runs");
@@ -2373,11 +2363,13 @@ install:
         let error = run_install(
             &registry,
             "half-writer",
-            "partial-game",
-            "Partial Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "partial-game",
+                game_name: "Partial Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("the second step fails");
@@ -2429,11 +2421,13 @@ install:
         let error = run_install(
             &registry,
             "escaper",
-            "escape-game",
-            "Escape Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "escape-game",
+                game_name: "Escape Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("traversal out of the install root is refused");

@@ -102,8 +102,7 @@ const CATALOG_META_FILE: &str = "catalog.meta.json";
 /// — the first 16 hex chars of SHA-256 over these 32 bytes are
 /// `d489a3a0be894b19`. Rotating the maintainer key requires a new
 /// Moddin Desktop release with the updated constant.
-const BOOTSTRAP_PUBLIC_KEY_B64: &str =
-    "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=";
+const BOOTSTRAP_PUBLIC_KEY_B64: &str = "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=";
 
 /// Every key this build is willing to trust, newest first.
 ///
@@ -334,10 +333,9 @@ fn ensure_bootstrap_key_material(dir: &Path) -> Result<VerifyingKey, String> {
                 }
                 Err(_) => pin_rejected = Some("pinned key is not a valid Ed25519 point".to_owned()),
             },
-            Err(_) => pin_rejected = Some(format!(
-                "pinned key is {} bytes, expected 32",
-                bytes.len()
-            )),
+            Err(_) => {
+                pin_rejected = Some(format!("pinned key is {} bytes, expected 32", bytes.len()))
+            }
         }
     }
 
@@ -541,11 +539,7 @@ fn pin_pinned_public_key(dir: &Path, key: &VerifyingKey) -> Result<(), String> {
     Ok(())
 }
 
-fn verify_signature(
-    payload: &[u8],
-    signature_b64: &str,
-    key: &VerifyingKey,
-) -> Result<(), String> {
+fn verify_signature(payload: &[u8], signature_b64: &str, key: &VerifyingKey) -> Result<(), String> {
     let signature_bytes = BASE64
         .decode(signature_b64.trim())
         .map_err(|error| format!("signature is not valid base64: {error}"))?;
@@ -572,8 +566,10 @@ fn verify_signature(
 }
 
 /// Make the payload match the canonical form maintainers sign:
-///   * no leading UTF-8 BOM (`EF BB BF`)
-///   * line endings folded to LF (`0A`)
+///
+/// * no leading UTF-8 BOM (`EF BB BF`)
+/// * line endings folded to LF (`0A`)
+///
 /// Anything else (UTF-16 BOMs, trailing bytes, etc.) is left alone —
 /// the signature will still fail loudly in those cases, which is what
 /// we want for any unexpected CDN transformation.
@@ -647,7 +643,9 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
         .build()
     {
         Ok(client) => client,
-        Err(error) => return empty_result(ttl_seconds, format!("could not build HTTP client: {error}")),
+        Err(error) => {
+            return empty_result(ttl_seconds, format!("could not build HTTP client: {error}"))
+        }
     };
 
     let catalog_response = match client.get(CATALOG_URL).send().await {
@@ -680,7 +678,12 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
     let signature_response = match client.get(CATALOG_SIG_URL).send().await {
         Ok(response) => response,
         Err(error) => {
-            return fallback_to_cache(&dir, ttl_seconds, format!("catalog signature GET failed: {error}")).await
+            return fallback_to_cache(
+                &dir,
+                ttl_seconds,
+                format!("catalog signature GET failed: {error}"),
+            )
+            .await
         }
     };
     let signature_text = match signature_response.text().await {
@@ -711,7 +714,10 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
 
     let fingerprint_value = fingerprint(&key);
     if let Err(error) = pin_pinned_public_key(&dir, &key) {
-        return empty_result(ttl_seconds, format!("could not persist pinned key: {error}"));
+        return empty_result(
+            ttl_seconds,
+            format!("could not persist pinned key: {error}"),
+        );
     }
     let metadata = CacheMetadata {
         cached_at: now_unix(),
@@ -734,11 +740,7 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
     }
 }
 
-async fn fallback_to_cache(
-    dir: &Path,
-    ttl_seconds: u64,
-    error: String,
-) -> CommunityFetchResult {
+async fn fallback_to_cache(dir: &Path, ttl_seconds: u64, error: String) -> CommunityFetchResult {
     match read_verified_cached_catalog(dir) {
         Ok((catalog, meta, key)) => CommunityFetchResult {
             catalog,
@@ -957,7 +959,7 @@ fn validate_capability_yaml_url(
         .host_str()
         .ok_or_else(|| "community: capability URL has no host.".to_owned())?
         .to_ascii_lowercase();
-    if !allowlist.iter().any(|candidate| host == *candidate) {
+    if !allowlist.contains(&host) {
         return Err(format!(
             "community: host '{host}' is not in the allow-list ({}).",
             allowlist.join(", ")
@@ -989,16 +991,12 @@ pub struct CommunitySetTtlRequest {
 }
 
 #[tauri::command]
-pub async fn community_catalog_fetch(
-    request: CommunityFetchRequest,
-) -> CommunityFetchResult {
+pub async fn community_catalog_fetch(request: CommunityFetchRequest) -> CommunityFetchResult {
     fetch(request.force_refresh, request.ttl_seconds).await
 }
 
 #[tauri::command]
-pub async fn community_catalog_set_ttl(
-    request: CommunitySetTtlRequest,
-) -> Result<u64, String> {
+pub async fn community_catalog_set_ttl(request: CommunitySetTtlRequest) -> Result<u64, String> {
     Ok(set_ttl(request.ttl_seconds))
 }
 
@@ -1027,8 +1025,9 @@ mod tests {
     #[test]
     fn every_trusted_key_in_the_keyring_decodes() {
         for encoded in TRUSTED_PUBLIC_KEYS_B64 {
-            let key = decode_public_key(encoded)
-                .unwrap_or_else(|error| panic!("trust list entry {encoded} does not decode: {error}"));
+            let key = decode_public_key(encoded).unwrap_or_else(|error| {
+                panic!("trust list entry {encoded} does not decode: {error}")
+            });
             assert!(is_trusted(&key), "{encoded} is in the list but not trusted");
         }
     }
@@ -1086,8 +1085,7 @@ mod tests {
             now_unix()
         ));
         std::fs::create_dir_all(&dir).expect("temp community dir");
-        std::fs::write(dir.join("pinned-public-key.bin"), b"too short")
-            .expect("write corrupt pin");
+        std::fs::write(dir.join("pinned-public-key.bin"), b"too short").expect("write corrupt pin");
 
         let resolved = ensure_bootstrap_key_material(&dir).expect("falls back to the anchor");
         let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).expect("anchor decodes");
@@ -1118,8 +1116,8 @@ mod tests {
 
     #[test]
     fn signature_rejects_invalid_base64() {
-        let key = ensure_bootstrap_key_material(&std::env::temp_dir())
-            .expect("bootstrap key material");
+        let key =
+            ensure_bootstrap_key_material(&std::env::temp_dir()).expect("bootstrap key material");
         let error = verify_signature(b"payload", "@@@not-base64@@@", &key)
             .expect_err("must reject malformed signature");
         assert!(error.contains("base64"));
@@ -1127,8 +1125,8 @@ mod tests {
 
     #[test]
     fn signature_rejects_wrong_length() {
-        let key = ensure_bootstrap_key_material(&std::env::temp_dir())
-            .expect("bootstrap key material");
+        let key =
+            ensure_bootstrap_key_material(&std::env::temp_dir()).expect("bootstrap key material");
         let error = verify_signature(b"payload", &BASE64.encode([0u8; 32]), &key)
             .expect_err("must reject 32-byte signature");
         assert!(error.contains("64 bytes"));
@@ -1217,8 +1215,8 @@ mod tests {
 
     #[test]
     fn fingerprint_is_short_hex() {
-        let key = ensure_bootstrap_key_material(&std::env::temp_dir())
-            .expect("bootstrap key material");
+        let key =
+            ensure_bootstrap_key_material(&std::env::temp_dir()).expect("bootstrap key material");
         let value = fingerprint(&key);
         assert_eq!(value.len(), 16);
         assert!(value.chars().all(|character| character.is_ascii_hexdigit()));
@@ -1326,11 +1324,7 @@ mod tests {
     /// for those exact bytes. A tampered cache that was actually
     /// rejected because the *fixture* was broken would pass for the
     /// right reason while testing nothing.
-    fn write_cache_signed_by(
-        dir: &Path,
-        payload: &[u8],
-        signing_key: &ed25519_dalek::SigningKey,
-    ) {
+    fn write_cache_signed_by(dir: &Path, payload: &[u8], signing_key: &ed25519_dalek::SigningKey) {
         use ed25519_dalek::Signer;
         let signature: ed25519_dalek::Signature = signing_key.sign(payload);
         let sig_b64 = BASE64.encode(signature.to_bytes());
@@ -1370,7 +1364,10 @@ mod tests {
         use ed25519_dalek::SigningKey;
         let mut seed = [0u8; 32];
         for (index, byte) in seed.iter_mut().enumerate() {
-            *byte = (index as u8).wrapping_add(0xA7).wrapping_mul(7).wrapping_add(11);
+            *byte = (index as u8)
+                .wrapping_add(0xA7)
+                .wrapping_mul(7)
+                .wrapping_add(11);
         }
         let signing_key = SigningKey::from_bytes(&seed);
         let encoded = BASE64.encode(signing_key.verifying_key().to_bytes());
@@ -1430,16 +1427,21 @@ mod tests {
             // Control: the plain read *does* accept the tampered cache,
             // and hands back the attacker's URL. If it stopped doing so
             // the test below would pass for the wrong reason.
-            let (raw, meta) = read_cached_catalog(dir)
-                .expect("the unverified read accepts the tampered cache");
-            assert_eq!(raw.capabilities[0].download_url.as_deref(), Some(ATTACKER_DOWNLOAD_URL));
+            let (raw, meta) =
+                read_cached_catalog(dir).expect("the unverified read accepts the tampered cache");
+            assert_eq!(
+                raw.capabilities[0].download_url.as_deref(),
+                Some(ATTACKER_DOWNLOAD_URL)
+            );
             assert!(meta.signature_verified, "fixture must claim to be verified");
 
             // The gate: signature check against the compiled keyring.
             let error = read_verified_cached_catalog(dir)
                 .expect_err("an untrusted signature must not open the cache");
             assert!(
-                error.contains("signature") || error.contains("64 bytes") || error.contains("base64"),
+                error.contains("signature")
+                    || error.contains("64 bytes")
+                    || error.contains("base64"),
                 "unexpected rejection reason: {error}"
             );
 
@@ -1466,7 +1468,10 @@ mod tests {
                 "control: the raw read still sees the payload"
             );
             let error = read_verified_cached_catalog(dir).expect_err("missing signature is a miss");
-            assert!(error.contains("signature is missing"), "unexpected reason: {error}");
+            assert!(
+                error.contains("signature is missing"),
+                "unexpected reason: {error}"
+            );
         });
     }
 
@@ -1512,7 +1517,11 @@ mod tests {
 
     #[test]
     fn capability_yaml_url_accepts_the_github_hosts_by_default() {
-        for host in ["github.com", "objects.githubusercontent.com", "raw.githubusercontent.com"] {
+        for host in [
+            "github.com",
+            "objects.githubusercontent.com",
+            "raw.githubusercontent.com",
+        ] {
             let url = format!("https://{host}/petonexus/capabilities/x/capability.yaml");
             validate_capability_yaml_url(&url, &default_hosts())
                 .unwrap_or_else(|error| panic!("{host} must be allowed: {error}"));
@@ -1562,11 +1571,9 @@ mod tests {
             &declared,
         )
         .expect("a declared host is allowed");
-        let error = validate_capability_yaml_url(
-            "https://raw.githubusercontent.com/a/b.yaml",
-            &declared,
-        )
-        .expect_err("an explicit list replaces the default rather than adding to it");
+        let error =
+            validate_capability_yaml_url("https://raw.githubusercontent.com/a/b.yaml", &declared)
+                .expect_err("an explicit list replaces the default rather than adding to it");
         assert!(error.contains("not in the allow-list"), "{error}");
     }
 
@@ -1634,7 +1641,7 @@ mod tests {
     ///
     /// Requiring the key would buy nothing. An attacker able to strip
     /// it could equally rewrite the whole catalogue — and then the
- /// signature check refuses every community install — so the key's
+    /// signature check refuses every community install — so the key's
     /// absence adds no protection over the signature, while treating it
     /// as a failure would brick installs against any catalogue
     /// generated before the field existed.
@@ -1689,15 +1696,19 @@ mod tests {
     #[test]
     fn a_malformed_revocation_entry_is_refused() {
         for (label, raw, needle) in [
-            ("no id", r#"[ { "reason": "which one?" } ]"#, "id is required"),
-            ("empty id", r#"[ { "id": "" } ]"#, "non-empty string"),
             (
-                "blank id",
-                r#"[ { "id": "   " } ]"#,
-                "non-empty string",
+                "no id",
+                r#"[ { "reason": "which one?" } ]"#,
+                "id is required",
             ),
+            ("empty id", r#"[ { "id": "" } ]"#, "non-empty string"),
+            ("blank id", r#"[ { "id": "   " } ]"#, "non-empty string"),
             ("id is a number", r#"[ { "id": 7 } ]"#, "non-empty string"),
-            ("entry is a string", r#"[ "bad-actor" ]"#, "must be an object"),
+            (
+                "entry is a string",
+                r#"[ "bad-actor" ]"#,
+                "must be an object",
+            ),
             (
                 "reason is a number",
                 r#"[ { "id": "bad-actor", "reason": 3 } ]"#,
@@ -1707,7 +1718,10 @@ mod tests {
             let value: serde_json::Value = serde_json::from_str(raw).expect("fixture is JSON");
             let error = parse_revocations(Some(&value))
                 .expect_err("a malformed entry must not be silently accepted");
-            assert!(error.contains(needle), "{label}: unexpected reason: {error}");
+            assert!(
+                error.contains(needle),
+                "{label}: unexpected reason: {error}"
+            );
         }
     }
 
@@ -1722,7 +1736,7 @@ mod tests {
     fn a_revocation_in_a_validly_signed_catalog_blocks_the_install() {
         with_temp_community_dir("revoked", |dir| {
             let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
+            let keys = [key_b64.as_str()];
             let payload = catalog_json(
                 TRUSTED_DOWNLOAD_URL,
                 Some(r#"[ { "id": "community-fps-unlocker", "reason": "ships a keylogger" } ]"#),
@@ -1738,7 +1752,10 @@ mod tests {
 
             let error = verified_entry_with_keys("community-fps-unlocker", &keys)
                 .expect_err("a revoked capability must be refused");
-            assert!(error.contains("has been revoked"), "unexpected refusal: {error}");
+            assert!(
+                error.contains("has been revoked"),
+                "unexpected refusal: {error}"
+            );
             assert!(
                 error.contains("ships a keylogger"),
                 "the reason must reach the UI: {error}"
@@ -1752,7 +1769,7 @@ mod tests {
     fn a_live_capability_in_a_validly_signed_catalog_installs() {
         with_temp_community_dir("live", |dir| {
             let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
+            let keys = [key_b64.as_str()];
             write_cache_signed_by(dir, &catalog_fixture(TRUSTED_DOWNLOAD_URL), &signing_key);
 
             let entry = verified_entry_with_keys("community-fps-unlocker", &keys)
@@ -1768,7 +1785,7 @@ mod tests {
     fn a_revocation_beats_the_capability_entry_that_lists_the_same_id() {
         with_temp_community_dir("revoked-but-listed", |dir| {
             let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
+            let keys = [key_b64.as_str()];
             let payload = catalog_json(
                 TRUSTED_DOWNLOAD_URL,
                 Some(r#"[ { "id": "community-fps-unlocker", "reason": "withdrawn" } ]"#),
@@ -1777,10 +1794,17 @@ mod tests {
 
             let catalog: CommunityCatalog =
                 serde_json::from_slice(&payload).expect("fixture parses");
-            assert_eq!(catalog.capabilities.len(), 1, "the capability is still listed");
+            assert_eq!(
+                catalog.capabilities.len(),
+                1,
+                "the capability is still listed"
+            );
             let error = verified_entry_with_keys("community-fps-unlocker", &keys)
                 .expect_err("being listed in the same document does not un-revoke");
-            assert!(error.contains("has been revoked"), "unexpected refusal: {error}");
+            assert!(
+                error.contains("has been revoked"),
+                "unexpected refusal: {error}"
+            );
         });
     }
 
@@ -1790,7 +1814,7 @@ mod tests {
     fn a_revocation_with_no_reason_is_still_refused() {
         with_temp_community_dir("revoked-noreason", |dir| {
             let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
+            let keys = [key_b64.as_str()];
             let payload = catalog_json(
                 TRUSTED_DOWNLOAD_URL,
                 Some(r#"[ { "id": "community-fps-unlocker" } ]"#),
@@ -1799,7 +1823,10 @@ mod tests {
 
             let error = verified_entry_with_keys("community-fps-unlocker", &keys)
                 .expect_err("a revocation with no reason must still be refused");
-            assert!(error.contains("has been revoked"), "unexpected refusal: {error}");
+            assert!(
+                error.contains("has been revoked"),
+                "unexpected refusal: {error}"
+            );
             assert!(
                 error.contains("no reason published"),
                 "an empty reason must not produce an empty sentence: {error}"
@@ -1812,8 +1839,11 @@ mod tests {
     fn a_revocation_only_matches_its_own_id() {
         with_temp_community_dir("revoked-other", |dir| {
             let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
-            let payload = catalog_json(TRUSTED_DOWNLOAD_URL, Some(r#"[ { "id": "something-else" } ]"#));
+            let keys = [key_b64.as_str()];
+            let payload = catalog_json(
+                TRUSTED_DOWNLOAD_URL,
+                Some(r#"[ { "id": "something-else" } ]"#),
+            );
             write_cache_signed_by(dir, &payload, &signing_key);
 
             verified_entry_with_keys("community-fps-unlocker", &keys)
@@ -1833,12 +1863,10 @@ mod tests {
             let payload = catalog_fixture(ATTACKER_DOWNLOAD_URL);
             write_cache_signed_by(dir, &payload, &signing_key);
 
-            let signature = BASE64.encode(
-                {
-                    use ed25519_dalek::Signer;
-                    signing_key.sign(&payload).to_bytes()
-                },
-            );
+            let signature = BASE64.encode({
+                use ed25519_dalek::Signer;
+                signing_key.sign(&payload).to_bytes()
+            });
             verify_signature(&payload, &signature, &verifying_key)
                 .expect("the attacker's signature is valid for the attacker's payload");
             assert!(
@@ -1863,10 +1891,7 @@ mod tests {
                 "attacker drops a real revocation",
                 r#"[ { "id": "community-fps-unlocker", "reason": "withdrawn" } ]"#,
             ),
-            (
-                "attacker un-revokes",
-                r#"[ { "id": "something-else" } ]"#,
-            ),
+            ("attacker un-revokes", r#"[ { "id": "something-else" } ]"#),
         ] {
             with_temp_community_dir("unsigned-revoked", |dir| {
                 write_tampered_cache(dir, &catalog_json(ATTACKER_DOWNLOAD_URL, Some(revoked)));
@@ -1898,7 +1923,7 @@ mod tests {
         ] {
             with_temp_community_dir("signed-but-malformed", |dir| {
                 let (signing_key, key_b64) = trusted_fixture_keypair();
-        let keys = [key_b64.as_str()];
+                let keys = [key_b64.as_str()];
                 let payload = catalog_json(TRUSTED_DOWNLOAD_URL, Some(raw));
                 write_cache_signed_by(dir, &payload, &signing_key);
 

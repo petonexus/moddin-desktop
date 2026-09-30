@@ -294,14 +294,22 @@ const availableModuleCategories = computed(() => {
  * same recipe twice and give the grid a button that can only fail.
  * Keep this list in step with the specs that exist in that folder.
  *
- * `reshade` was missing from this list. Its Rust module was unreachable
- * (no invoke call anywhere), so the grid card it produced fell through
- * every branch of `configureModule` and threw "no action" — a button
- * that advertised an install and could not do it. The declarative spec
- * is registered and available, so the capability section is the path
- * that actually works, and the grid card is the one that had to go.
+ * `reshade` and `ofxr-bridge` were missing from this list. Both were
+ * grid cards whose only backing was a file nothing dispatched to —
+ * `reshade.rs` and `ofxr_module.rs` had no caller, so the cards fell
+ * through every branch of `configureModule` and threw "no action". A
+ * button that advertises an install and cannot perform it is the exact
+ * defect this list exists to prevent. Both recipes are registered and
+ * available, so the capability section is the path that works and the
+ * grid card is the one that had to go.
  */
-const CAPABILITY_BACKED_MODULE_IDS = new Set(['bepinex', 'ue4ss', 'reframework', 'reshade'])
+const CAPABILITY_BACKED_MODULE_IDS = new Set([
+  'bepinex',
+  'ue4ss',
+  'reframework',
+  'reshade',
+  'ofxr-bridge',
+])
 
 function isCapabilityBackedModule(module: ToolModuleDefinition) {
   return CAPABILITY_BACKED_MODULE_IDS.has(module.id)

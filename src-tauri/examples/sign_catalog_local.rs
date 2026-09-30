@@ -13,9 +13,7 @@
 //! what the GitHub Actions workflow produces via `openssl pkeyutl -sign`.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use ed25519_dalek::{
-    pkcs8::DecodePrivateKey, Signature, Signer, SigningKey, Verifier,
-};
+use ed25519_dalek::{pkcs8::DecodePrivateKey, Signature, Signer, SigningKey, Verifier};
 use std::{fs, path::PathBuf};
 
 fn main() {

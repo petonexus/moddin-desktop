@@ -27,7 +27,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
 
 /// Stable identifier for each supported AI assistant.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -126,15 +125,21 @@ fn layout_for(agent: AgentId) -> AgentLayout {
 }
 
 fn cursor_config_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE").map(PathBuf::from).map(|p| p.join(".cursor"))
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|p| p.join(".cursor"))
 }
 
 fn claude_config_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(PathBuf::from).map(|p| p.join("Claude"))
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join("Claude"))
 }
 
 fn codex_config_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE").map(PathBuf::from).map(|p| p.join(".codex"))
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|p| p.join(".codex"))
 }
 
 fn first_existing(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -147,8 +152,7 @@ fn cursor_binary() -> Option<PathBuf> {
         local.join("Programs").join("Cursor").join("Cursor.exe"),
         local.join("Programs").join("cursor").join("Cursor.exe"),
     ];
-    first_existing(&candidates)
-        .or_else(|| which_in_path("cursor").map(PathBuf::from))
+    first_existing(&candidates).or_else(|| which_in_path("cursor").map(PathBuf::from))
 }
 
 fn claude_binary() -> Option<PathBuf> {
@@ -157,8 +161,7 @@ fn claude_binary() -> Option<PathBuf> {
         local.join("Programs").join("Claude").join("Claude.exe"),
         local.join("Programs").join("claude").join("Claude.exe"),
     ];
-    first_existing(&candidates)
-        .or_else(|| which_in_path("claude").map(PathBuf::from))
+    first_existing(&candidates).or_else(|| which_in_path("claude").map(PathBuf::from))
 }
 
 fn codex_binary() -> Option<PathBuf> {
@@ -181,11 +184,6 @@ fn which_in_path(name: &str) -> Option<String> {
     None
 }
 
-fn resolve_config_path(agent: AgentId) -> Option<PathBuf> {
-    let layout = layout_for(agent);
-    (layout.config_dir_from_env)().map(|dir| dir.join(layout.config_filename))
-}
-
 /// Resolve the MCP server runtime Moddin ships. We support two layouts
 /// so that future builds can switch from Node-portable to a real `.exe`
 /// without changing the Tauri command surface:
@@ -206,12 +204,18 @@ fn resolve_mcp_server(resource_dir: &Path) -> Option<McpRuntime> {
     ];
     for exe in exe_candidates {
         if exe.is_file() {
-            return Some(McpRuntime { command: exe, args: vec![] });
+            return Some(McpRuntime {
+                command: exe,
+                args: vec![],
+            });
         }
     }
     // Layout 1 — portable Node + script.
     let node = resource_dir.join("node.exe");
-    let script = resource_dir.join("moddin-agent").join("src").join("mcp-server.mjs");
+    let script = resource_dir
+        .join("moddin-agent")
+        .join("src")
+        .join("mcp-server.mjs");
     if node.is_file() && script.is_file() {
         return Some(McpRuntime {
             command: node,
@@ -289,10 +293,7 @@ fn toml_single_quoted(value: &str) -> String {
     // anything containing a single quote falls back to a basic string
     // with proper escaping.
     if value.contains('\'') {
-        format!(
-            "\"{}\"",
-            value.replace('\\', "\\\\").replace('"', "\\\"")
-        )
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         format!("'{value}'")
     }
@@ -344,8 +345,7 @@ fn write_codex_toml_entry(command: &str, args: &[String]) -> Result<(), String> 
     }
     if path.exists() {
         let bak = backup_path(&path);
-        fs::copy(&path, &bak)
-            .map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
+        fs::copy(&path, &bak).map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
     }
     write_config(&path, &updated)
 }
@@ -356,15 +356,14 @@ fn remove_codex_toml_entry_file() -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    let existing = fs::read_to_string(&path)
-        .map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    let existing =
+        fs::read_to_string(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     let (updated, removed) = remove_codex_toml_entry(&existing);
     if !removed {
         return Ok(());
     }
     let bak = backup_path(&path);
-    fs::copy(&path, &bak)
-        .map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
+    fs::copy(&path, &bak).map_err(|e| format!("Could not back up {}: {e}", path.display()))?;
     write_config(&path, &updated)
 }
 
@@ -372,16 +371,21 @@ fn read_mcp_config(path: &Path) -> Result<serde_json::Value, String> {
     if !path.exists() {
         return Ok(serde_json::json!({ "mcpServers": {} }));
     }
-    let raw = fs::read_to_string(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     if raw.trim().is_empty() {
         return Ok(serde_json::json!({ "mcpServers": {} }));
     }
-    let mut value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("Config {} is not valid JSON: {e}", path.display()))?;
+    let mut value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("Config {} is not valid JSON: {e}", path.display()))?;
     if !value.is_object() {
         return Err(format!("Config {} is not a JSON object", path.display()));
     }
-    if value.get("mcpServers").map(|v| v.is_object()).unwrap_or(false) {
+    if value
+        .get("mcpServers")
+        .map(|v| v.is_object())
+        .unwrap_or(false)
+    {
         return Ok(value);
     }
     // Tolerate missing or wrong-typed mcpServers — create a fresh map.
@@ -392,7 +396,9 @@ fn read_mcp_config(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn write_config(path: &Path, body: &str) -> Result<(), String> {
-    let dir = path.parent().ok_or_else(|| format!("Config {} has no parent directory", path.display()))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("Config {} has no parent directory", path.display()))?;
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     fs::write(path, body).map_err(|e| format!("Could not write {}: {e}", path.display()))
 }
@@ -404,20 +410,11 @@ fn atomic_write(path: &Path, body: &str) -> Result<(), String> {
 
 fn backup_path(config_path: &Path) -> PathBuf {
     let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
-    let name = config_path.file_name().and_then(|n| n.to_str()).unwrap_or("config");
+    let name = config_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config");
     parent.join(format!("{name}.moddin-bak"))
-}
-
-fn restore_from_backup(config_path: &Path) -> Result<(), String> {
-    let bak = backup_path(config_path);
-    if !bak.exists() {
-        return Err(format!("No backup file exists at {}", bak.display()));
-    }
-    if config_path.exists() {
-        fs::remove_file(config_path).map_err(|e| format!("Could not remove broken config: {e}"))?;
-    }
-    fs::rename(&bak, config_path).map_err(|e| format!("Could not restore backup: {e}"))?;
-    Ok(())
 }
 
 // -----------------------------------------------------------------------------
@@ -431,7 +428,10 @@ fn restore_from_backup(config_path: &Path) -> Result<(), String> {
 #[tauri::command]
 pub fn detect_ai_assistants(resource_dir: String) -> Vec<AiAgent> {
     let resource_path = PathBuf::from(resource_dir);
-    AgentId::all().into_iter().map(|id| inspect_agent(id, &resource_path)).collect()
+    AgentId::all()
+        .into_iter()
+        .map(|id| inspect_agent(id, &resource_path))
+        .collect()
 }
 
 /// Connect the supplied AI assistant to Moddin by writing the MCP server
@@ -441,10 +441,19 @@ pub fn setup_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<AiA
     let resource_path = PathBuf::from(resource_dir);
     let layout = layout_for(agent_id);
     let config_path = (layout.config_dir_from_env)()
-        .ok_or_else(|| format!("Could not resolve config directory for {}", agent_id.display_name()))?
+        .ok_or_else(|| {
+            format!(
+                "Could not resolve config directory for {}",
+                agent_id.display_name()
+            )
+        })?
         .join(layout.config_filename);
-    let mcp_server = resolve_mcp_server(&resource_path)
-        .ok_or_else(|| format!("Bundled MCP server not found under {}", resource_path.display()))?;
+    let mcp_server = resolve_mcp_server(&resource_path).ok_or_else(|| {
+        format!(
+            "Bundled MCP server not found under {}",
+            resource_path.display()
+        )
+    })?;
     let mcp_command = mcp_server.command.to_string_lossy().into_owned();
     let mcp_args = mcp_server.args.clone();
 
@@ -495,7 +504,12 @@ pub fn remove_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<Ai
     let resource_path = PathBuf::from(resource_dir);
     let layout = layout_for(agent_id);
     let config_path = (layout.config_dir_from_env)()
-        .ok_or_else(|| format!("Could not resolve config directory for {}", agent_id.display_name()))?
+        .ok_or_else(|| {
+            format!(
+                "Could not resolve config directory for {}",
+                agent_id.display_name()
+            )
+        })?
         .join(layout.config_filename);
     if !config_path.exists() {
         // Nothing to do — return the fresh inspect.
@@ -533,7 +547,10 @@ fn inspect_agent(id: AgentId, resource_dir: &Path) -> AiAgent {
     let binary_path = (layout.detect_binary)();
     let config_path = (layout.config_dir_from_env)().map(|d| d.join(layout.config_filename));
     let (state, detail) = match (binary_path.as_ref(), config_path.as_ref()) {
-        (None, _) => (ConnectionState::NotInstalled, Some("AI tool is not installed on this PC.".to_string())),
+        (None, _) => (
+            ConnectionState::NotInstalled,
+            Some("AI tool is not installed on this PC.".to_string()),
+        ),
         (Some(_), None) => (
             ConnectionState::NotInstalled,
             Some("AI tool is installed but its config directory was not found.".to_string()),
@@ -544,17 +561,28 @@ fn inspect_agent(id: AgentId, resource_dir: &Path) -> AiAgent {
                     .map(|rt| rt.command.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 match entry.get("command").and_then(|v| v.as_str()) {
-                    Some(cmd) if !expected_command.is_empty() && cmd == expected_command => (ConnectionState::Configured, None),
+                    Some(cmd) if !expected_command.is_empty() && cmd == expected_command => {
+                        (ConnectionState::Configured, None)
+                    }
                     Some(other) => (
                         ConnectionState::ConfigError,
-                        Some(format!("Moddin MCP entry points at a different binary: {}", other)),
+                        Some(format!(
+                            "Moddin MCP entry points at a different binary: {}",
+                            other
+                        )),
                     ),
-                    None => (ConnectionState::ConfigError, Some("Moddin MCP entry has no command field.".to_string())),
+                    None => (
+                        ConnectionState::ConfigError,
+                        Some("Moddin MCP entry has no command field.".to_string()),
+                    ),
                 }
             }
             Ok(None) => (
                 ConnectionState::DetectedNotConfigured,
-                Some(format!("AI tool installed at {}. Click Connect to register Moddin.", bin.display())),
+                Some(format!(
+                    "AI tool installed at {}. Click Connect to register Moddin.",
+                    bin.display()
+                )),
             ),
             Err(msg) => (ConnectionState::ConfigError, Some(msg)),
         },
@@ -626,11 +654,7 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let base = env::temp_dir();
-        let unique = base.join(format!(
-            "moddin-ai-test-{}-{}",
-            name,
-            std::process::id()
-        ));
+        let unique = base.join(format!("moddin-ai-test-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&unique);
         fs::create_dir_all(&unique).unwrap();
         unique
@@ -655,35 +679,61 @@ mod tests {
         fs::create_dir_all(&cfg_dir).unwrap();
         let cfg_path = cfg_dir.join("mcp.json");
         // Pre-existing user config the user wants to keep.
-        fs::write(&cfg_path, r#"{ "mcpServers": { "hindsight": { "command": "node", "args": ["h.js"] } } }"#).unwrap();
+        fs::write(
+            &cfg_path,
+            r#"{ "mcpServers": { "hindsight": { "command": "node", "args": ["h.js"] } } }"#,
+        )
+        .unwrap();
 
         let _userprofile = EnvGuard::set("USERPROFILE", dir.to_string_lossy().as_ref());
         let _localappdata = stub_cursor_install(&dir);
         let res_dir = make_runtime_layout(&dir.join("resources"));
 
         // SETUP
-        let agent = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned()).expect("setup should succeed");
+        let agent = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned())
+            .expect("setup should succeed");
         assert_eq!(agent.state, ConnectionState::Configured);
 
         // Verify hindsight survives and moddin is added with the
         // portable-Node shape (command = node.exe, args = [script]).
         let raw = fs::read_to_string(&cfg_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed["mcpServers"]["hindsight"].is_object(), "hindsight entry must survive setup");
+        assert!(
+            parsed["mcpServers"]["hindsight"].is_object(),
+            "hindsight entry must survive setup"
+        );
         let moddin = &parsed["mcpServers"]["moddin"];
-        assert_eq!(moddin["command"].as_str().unwrap(), res_dir.join("node.exe").to_string_lossy().as_ref());
+        assert_eq!(
+            moddin["command"].as_str().unwrap(),
+            res_dir.join("node.exe").to_string_lossy().as_ref()
+        );
         let args = moddin["args"].as_array().expect("args must be an array");
         assert_eq!(args.len(), 1, "exactly one arg (the script path)");
-        assert_eq!(args[0].as_str().unwrap(), res_dir.join("moddin-agent").join("src").join("mcp-server.mjs").to_string_lossy().as_ref());
+        assert_eq!(
+            args[0].as_str().unwrap(),
+            res_dir
+                .join("moddin-agent")
+                .join("src")
+                .join("mcp-server.mjs")
+                .to_string_lossy()
+                .as_ref()
+        );
 
         // REMOVE
-        let agent = remove_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned()).expect("remove should succeed");
+        let agent = remove_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned())
+            .expect("remove should succeed");
         assert_eq!(agent.state, ConnectionState::DetectedNotConfigured);
 
         let raw = fs::read_to_string(&cfg_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed["mcpServers"]["hindsight"].is_object(), "hindsight entry must survive remove");
-        assert!(parsed["mcpServers"].get("moddin").is_none(), "moddin entry must be gone");
+        assert!(
+            parsed["mcpServers"]["hindsight"].is_object(),
+            "hindsight entry must survive remove"
+        );
+        assert!(
+            parsed["mcpServers"].get("moddin").is_none(),
+            "moddin entry must be gone"
+        );
     }
 
     #[test]
@@ -697,7 +747,8 @@ mod tests {
         let _localappdata = stub_cursor_install(&dir);
 
         for _ in 0..3 {
-            let agent = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned()).expect("setup should succeed");
+            let agent = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned())
+                .expect("setup should succeed");
             assert_eq!(agent.state, ConnectionState::Configured);
         }
     }
@@ -708,11 +759,11 @@ mod tests {
         let dir = temp_dir("missing-runtime");
         let res_dir = dir.join("resources");
         fs::create_dir_all(&res_dir).unwrap();
-        let _userprofile = EnvGuard::set("USERPROFILE", dir.join("home").to_string_lossy().as_ref());
+        let _userprofile =
+            EnvGuard::set("USERPROFILE", dir.join("home").to_string_lossy().as_ref());
 
         let err = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned())
-            .err()
-            .expect("setup should fail when MCP runtime is missing");
+            .expect_err("setup should fail when MCP runtime is missing");
         assert!(err.contains("Bundled MCP server not found"), "{err}");
     }
 
@@ -729,8 +780,7 @@ mod tests {
         let res_dir = make_runtime_layout(&dir.join("resources"));
 
         let err = setup_ai_assistant(AgentId::Cursor, res_dir.to_string_lossy().into_owned())
-            .err()
-            .expect("setup should reject bad JSON");
+            .expect_err("setup should reject bad JSON");
         assert!(err.contains("not valid JSON"), "{err}");
     }
 
@@ -740,7 +790,10 @@ mod tests {
     fn make_runtime_layout(res_dir: &Path) -> PathBuf {
         fs::create_dir_all(res_dir).unwrap();
         fs::write(res_dir.join("node.exe"), "stub-node").unwrap();
-        let script = res_dir.join("moddin-agent").join("src").join("mcp-server.mjs");
+        let script = res_dir
+            .join("moddin-agent")
+            .join("src")
+            .join("mcp-server.mjs");
         fs::create_dir_all(script.parent().unwrap()).unwrap();
         fs::write(script, "stub-script").unwrap();
         res_dir.to_path_buf()
@@ -784,12 +837,32 @@ trust_level = 'trusted'
             "C:/mods/moddin/moddin",
         );
         assert!(updated.contains("[mcp_servers.node_repl]"), "{}", updated);
-        assert!(updated.contains(r"C:\OpenAI\Codex\node_repl.exe"), "{}", updated);
-        assert!(updated.contains("[projects.'c:\\mods\\moddin']"), "{}", updated);
+        assert!(
+            updated.contains(r"C:\OpenAI\Codex\node_repl.exe"),
+            "{}",
+            updated
+        );
+        assert!(
+            updated.contains("[projects.'c:\\mods\\moddin']"),
+            "{}",
+            updated
+        );
         assert!(updated.contains("[mcp_servers.moddin]"), "{}", updated);
-        assert!(updated.contains(r"command = 'C:\moddin\node.exe'"), "{}", updated);
-        assert!(updated.contains(r"'C:\moddin\moddin-mcp.mjs'"), "{}", updated);
-        assert!(updated.contains("MODDIN_PROJECT_ROOT = 'C:/mods/moddin/moddin'"), "{}", updated);
+        assert!(
+            updated.contains(r"command = 'C:\moddin\node.exe'"),
+            "{}",
+            updated
+        );
+        assert!(
+            updated.contains(r"'C:\moddin\moddin-mcp.mjs'"),
+            "{}",
+            updated
+        );
+        assert!(
+            updated.contains("MODDIN_PROJECT_ROOT = 'C:/mods/moddin/moddin'"),
+            "{}",
+            updated
+        );
         // The CLI-only section must appear after the preserved content.
         let node_repl_at = updated.find("[mcp_servers.node_repl]").unwrap();
         let moddin_at = updated.find("[mcp_servers.moddin]").unwrap();
@@ -798,17 +871,28 @@ trust_level = 'trusted'
 
     #[test]
     fn codex_toml_upsert_is_idempotent_and_replaces() {
-        let first = upsert_codex_toml_entry(
-            "",
-            r"C:\a\node.exe",
-            &[r"C:\a\mcp.mjs".to_owned()],
+        let first =
+            upsert_codex_toml_entry("", r"C:\a\node.exe", &[r"C:\a\mcp.mjs".to_owned()], "ROOT");
+        let second = upsert_codex_toml_entry(
+            &first,
+            r"C:\b\node.exe",
+            &[r"C:\b\mcp.mjs".to_owned()],
             "ROOT",
         );
-        let second = upsert_codex_toml_entry(&first, r"C:\b\node.exe", &[r"C:\b\mcp.mjs".to_owned()], "ROOT");
-        assert_eq!(second.matches("[mcp_servers.moddin]").count(), 1, "{}", second);
+        assert_eq!(
+            second.matches("[mcp_servers.moddin]").count(),
+            1,
+            "{}",
+            second
+        );
         assert!(second.contains(r"C:\b\node.exe"), "{}", second);
         assert!(!second.contains(r"C:\a\node.exe"), "{}", second);
-        let third = upsert_codex_toml_entry(&second, r"C:\b\node.exe", &[r"C:\b\mcp.mjs".to_owned()], "ROOT");
+        let third = upsert_codex_toml_entry(
+            &second,
+            r"C:\b\node.exe",
+            &[r"C:\b\mcp.mjs".to_owned()],
+            "ROOT",
+        );
         assert_eq!(third, second, "idempotent upsert");
     }
 
@@ -823,7 +907,11 @@ trust_level = 'trusted'
         let (removed_text, removed) = remove_codex_toml_entry(&with_moddin);
         assert!(removed);
         assert!(!removed_text.contains("moddin"), "{}", removed_text);
-        assert!(removed_text.contains("[mcp_servers.node_repl]"), "{}", removed_text);
+        assert!(
+            removed_text.contains("[mcp_servers.node_repl]"),
+            "{}",
+            removed_text
+        );
         let (again, removed_again) = remove_codex_toml_entry(&removed_text);
         assert!(!removed_again);
         assert_eq!(again, removed_text);

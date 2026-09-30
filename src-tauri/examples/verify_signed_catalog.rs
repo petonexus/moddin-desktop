@@ -23,7 +23,11 @@ fn main() {
     let public_b64 = std::env::var("MODDIN_BOOTSTRAP_KEY")
         .expect("set MODDIN_BOOTSTRAP_KEY to the base64 raw 32-byte Ed25519 public key");
     let public_bytes = BASE64.decode(public_b64.trim()).expect("invalid base64");
-    assert_eq!(public_bytes.len(), 32, "expected 32-byte Ed25519 public key");
+    assert_eq!(
+        public_bytes.len(),
+        32,
+        "expected 32-byte Ed25519 public key"
+    );
     let key_array: [u8; 32] = public_bytes
         .as_slice()
         .try_into()
@@ -32,7 +36,9 @@ fn main() {
 
     let catalog_bytes = fs::read(&catalog_path).expect("could not read catalog");
     let sig_b64 = fs::read_to_string(&sig_path).expect("could not read signature");
-    let sig_bytes = BASE64.decode(sig_b64.trim()).expect("signature is not valid base64");
+    let sig_bytes = BASE64
+        .decode(sig_b64.trim())
+        .expect("signature is not valid base64");
     assert_eq!(sig_bytes.len(), 64, "expected 64-byte Ed25519 signature");
     let sig_array: [u8; 64] = sig_bytes
         .as_slice()
