@@ -135,16 +135,10 @@ fn detect_gog_installed_games_sync() -> Vec<InstalledGame> {
     games
 }
 
-#[tauri::command]
-pub async fn detect_gog_installed_games() -> Result<Vec<InstalledGame>, String> {
-    tauri::async_runtime::spawn_blocking(detect_gog_installed_games_sync)
-        .await
-        .map_err(|error| format!("GOG library scan task failed: {error}"))
-}
-
-/// Synchronous variant used by the background scanner, which already
-/// runs the Steam/Epic detector on a blocking task and wants to append
-/// GOG entries without an extra `Result` layer.
+/// GOG discovery, called by
+/// [`crate::steam::detect_installed_games_blocking`] on the same
+/// blocking worker thread as the Steam/Epic scan, so it takes and
+/// returns no `Result` of its own.
 pub fn detect_gog_installed_games_blocking() -> Vec<InstalledGame> {
     detect_gog_installed_games_sync()
 }

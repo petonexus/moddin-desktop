@@ -2,7 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
-import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
+import BaseDialog from '../../components/ui/BaseDialog.vue'
+import ErrorCallout from '../../components/ui/ErrorCallout.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
+import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
 import { dateLocaleFor } from '../../i18n/locale'
 import { COMMUNITY_TTL_PRESETS, type CommunityCatalogEntry, type CommunityFetchResult } from '../../types/community'
 import { communityCopyForLocale, formatCopy } from './copy'
@@ -12,6 +15,7 @@ import {
   fetchCommunityCatalog,
   installCommunityCapability as installCapability,
   listCapabilities,
+  reloadCapabilities,
   setCommunityCatalogTtl,
 } from './service'
 import type { CapabilitySummary } from './types'
@@ -24,46 +28,34 @@ const loading = ref(false)
 const installingId = ref<string | null>(null)
 const error = ref<string | null>(null)
 const success = ref<string | null>(null)
+/** Which action produced `error` — the raw string alone cannot say. */
+const errorContext = ref<string | null>(null)
 
 /**
- * Translate raw backend errors into a friendly summary + a 'why' line the
- * user can actually act on. We keep the raw message below for power users.
- *
- * Inspired by Microsoft HAI Guidelines G1/G2: make clear what went wrong
- * and how the user can recover.
+ * Raw backend errors turned into a summary plus a 'why' line the user can
+ * act on, with the original kept one disclosure away for power users.
  */
-const friendlyError = computed<{ title: string; why: string; showRaw: boolean } | null>(() => {
-  if (!error.value) return null
-  const raw = error.value
+const errorRules = computed<FriendlyErrorRule[]>(() => {
   const c = copy.value
-  if (/signature|Verification equation/i.test(raw)) {
-    return {
-      title: c.errorSigTitle,
-      why: c.errorSigWhy,
-      showRaw: true,
-    }
-  }
-  if (/network|fetch|timeout|ENOTFOUND|ETIMEDOUT|Could not reach/i.test(raw)) {
-    return {
-      title: c.errorNetworkTitle,
-      why: c.errorNetworkWhy,
-      showRaw: true,
-    }
-  }
-  if (/not found|404|missing catalog|catalog\.json/i.test(raw)) {
-    return {
-      title: c.errorMissingTitle,
-      why: c.errorMissingWhy,
-      showRaw: true,
-    }
-  }
-  return {
-    title: c.errorGenericTitle,
-    why: c.errorGenericWhy,
-    showRaw: true,
-  }
+  return [
+    { match: /signature|Verification equation/i, title: c.errorSigTitle, why: c.errorSigWhy, showRaw: true },
+    { match: /network|fetch|timeout|ENOTFOUND|ETIMEDOUT|Could not reach/i, context: 'fetch', title: c.errorNetworkTitle, why: c.errorNetworkWhy, showRaw: true },
+    { match: /not found|404|missing catalog|catalog\.json/i, context: 'fetch', title: c.errorMissingTitle, why: c.errorMissingWhy, showRaw: true },
+    { context: 'fetch', title: c.errorGenericTitle, why: c.errorGenericWhy, showRaw: true },
+    { match: /no space|ENOSPC|disk|quota/i, context: 'install', title: c.errorDiskTitle, why: c.errorDiskWhy, showRaw: true },
+    { match: /denied|permission|0x80070005|access/i, context: 'install', title: c.errorPermissionTitle, why: c.errorPermissionWhy, showRaw: true },
+    { context: 'install', title: c.errorInstallTitle, why: c.errorInstallWhy, showRaw: true },
+  ]
 })
-const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
+
+/** Copy the panel already wrote; it needs no translation, only surfacing. */
+const alreadyLocalized = computed(() => [
+  copy.value.notInCatalog,
+  copy.value.needsConsent,
+  copy.value.noGameSelected,
+])
+
+const friendlyError = useFriendlyError({ error, rules: () => errorRules.value, context: errorContext, verbatim: alreadyLocalized })
 
 const fetchResult = ref<CommunityFetchResult | null>(null)
 const ttlSeconds = ref<number>(24 * 60 * 60)
@@ -72,13 +64,54 @@ const capabilities = ref<CapabilitySummary[]>([])
 
 const communityEntries = computed<CommunityCatalogEntry[]>(() => fetchResult.value?.catalog.capabilities ?? [])
 
+// Focus, Escape and focus restore are BaseDialog's job; these only say
+// whether the dialog is on screen.
+function openDialog() {
+  open.value = true
+}
+
+function closeDialog() {
+  open.value = false
+}
+
+/**
+ * The maintainers' kill switch, keyed by capability id. A revoked entry
+ * stays in the list and is flagged rather than hidden: the user asked
+ * what the community catalogue offers, and "this one was withdrawn,
+ * here is why" is more useful than a silently shorter list.
+ */
+const revocations = computed<Map<string, string>>(() => {
+  const map = new Map<string, string>()
+  for (const entry of fetchResult.value?.revoked ?? []) map.set(entry.id, entry.reason)
+  return map
+})
+
+function revocationFor(id: string): string | null {
+  return revocations.value.has(id) ? revocations.value.get(id) ?? '' : null
+}
+
+/**
+ * A capability is only installable when the catalogue is signed *and* the
+ * revocation list was readable. `revocationsVerified === false` means
+ * Moddin could not check the kill switch, and the backend refuses the
+ * install for the same reason — the button says so rather than failing
+ * later with a surprise error.
+ */
+function isBlocked(entry: CommunityCatalogEntry): boolean {
+  return revocations.value.has(entry.id) || fetchResult.value?.revocationsVerified === false
+}
+
 async function refreshCapabilities() {
   capabilities.value = await listCapabilities()
 }
 
 async function openPanel() {
   await openDialog()
-  await Promise.all([refreshCapabilities(), fetchCatalog(false)])
+  // `capability_reload` rather than `capability_list`: it re-reads the
+  // local override directory, so a recipe the user just dropped in shows
+  // up in this panel's built-in list without an app restart.
+  const [reloaded] = await Promise.all([reloadCapabilities(), fetchCatalog(false)])
+  capabilities.value = reloaded
 }
 
 // Reset transient messages whenever the dialog closes (button, Esc or backdrop).
@@ -91,6 +124,7 @@ watch(open, (isOpen) => {
 async function fetchCatalog(forceRefresh: boolean) {
   loading.value = true
   error.value = null
+  errorContext.value = 'fetch'
   try {
     const result = await fetchCommunityCatalog(forceRefresh, ttlSeconds.value)
     fetchResult.value = result
@@ -113,6 +147,15 @@ async function install(entry: CommunityCatalogEntry) {
     error.value = copy.value.notInCatalog
     return
   }
+  const revoked = revocationFor(entry.id)
+  if (revoked !== null) {
+    error.value = formatCopy(copy.value.revokedReason, { name: entry.displayName || entry.id, reason: revoked || copy.value.revokedNoReason })
+    return
+  }
+  if (fetchResult.value?.revocationsVerified === false) {
+    error.value = copy.value.revocationsUnknown
+    return
+  }
   if (!entry.signed && !acceptUnsigned.value[entry.id]) {
     error.value = copy.value.needsConsent
     return
@@ -120,6 +163,7 @@ async function install(entry: CommunityCatalogEntry) {
 
   installingId.value = entry.id
   error.value = null
+  errorContext.value = 'install'
   success.value = null
   try {
     // Installing a community mod still means installing it *for a game*:
@@ -143,7 +187,7 @@ async function install(entry: CommunityCatalogEntry) {
     success.value = formatCopy(copy.value.installed, { name: entry.displayName || entry.id })
     await refreshCapabilities()
   } catch (err) {
-    error.value = formatCopy(copy.value.installFailed, { error: err instanceof Error ? err.message : String(err) })
+    error.value = err instanceof Error ? err.message : String(err)
   } finally {
     installingId.value = null
   }
@@ -200,124 +244,110 @@ onMounted(async () => {
   </button>
 
   <Teleport to="body">
-    <div v-if="open" class="dialog-backdrop" @click.self="closeDialog">
-      <section
-        ref="dialogElement"
-        class="dialog dialog-lg"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="copy.title"
-        tabindex="-1"
-      >
-        <header class="dialog-header">
-          <div>
-            <h2>{{ copy.title }}</h2>
-            <p class="dialog-description">{{ copy.subtitle }}</p>
-          </div>
-          <button class="btn btn-icon" type="button" :aria-label="copy.close" @click="closeDialog">
-            <AppIcon name="close" :size="18" />
+    <BaseDialog
+      v-if="open"
+      size="lg"
+      :title="copy.title"
+      :description="copy.subtitle"
+      @close="closeDialog"
+    >
+      <div class="community-toolbar">
+        <label class="field">
+          <span>{{ copy.refreshEvery }}</span>
+          <select class="select" :value="ttlSeconds" @change="setTtl(Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="preset in COMMUNITY_TTL_PRESETS" :key="preset.seconds" :value="preset.seconds">
+              {{ ttlLabel(preset.seconds) }}
+            </option>
+          </select>
+        </label>
+        <div class="community-refresh">
+          <small>{{ formatCopy(copy.lastUpdated, { timestamp: formatTimestamp(fetchResult?.cachedAt ?? 0) }) }}</small>
+          <button class="btn btn-sm" :class="{ 'is-loading': loading }" type="button" :disabled="loading" @click="fetchCatalog(true)">
+            <AppIcon v-if="!loading" name="refresh" :size="14" />
+            {{ copy.refreshNow }}
           </button>
-        </header>
-
-        <div class="dialog-body">
-          <div class="community-toolbar">
-            <label class="field">
-              <span>{{ copy.refreshEvery }}</span>
-              <select class="select" :value="ttlSeconds" @change="setTtl(Number(($event.target as HTMLSelectElement).value))">
-                <option v-for="preset in COMMUNITY_TTL_PRESETS" :key="preset.seconds" :value="preset.seconds">
-                  {{ ttlLabel(preset.seconds) }}
-                </option>
-              </select>
-            </label>
-            <div class="community-refresh">
-              <small>{{ formatCopy(copy.lastUpdated, { timestamp: formatTimestamp(fetchResult?.cachedAt ?? 0) }) }}</small>
-              <button class="btn btn-sm" :class="{ 'is-loading': loading }" type="button" :disabled="loading" @click="fetchCatalog(true)">
-                <AppIcon v-if="!loading" name="refresh" :size="14" />
-                {{ copy.refreshNow }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="fetchResult" class="community-trust" :class="{ bad: !fetchResult.signatureVerified }">
-            <AppIcon :name="fetchResult.signatureVerified ? 'shield' : 'alert'" />
-            <span>{{ fetchResult.signatureVerified ? copy.catalogVerified : copy.catalogNotVerified }}</span>
-            <small :title="fetchResult.bootstrapPublicKeyFingerprint">
-              {{ formatCopy(copy.keyFingerprint, { fingerprint: fetchResult.bootstrapPublicKeyFingerprint }) }}
-            </small>
-          </div>
-
-          <div v-if="friendlyError" class="callout callout-danger" role="alert">
-            <strong>{{ friendlyError.title }}</strong>
-            <p>{{ friendlyError.why }}</p>
-            <details v-if="friendlyError.showRaw" class="callout-raw">
-              <summary>{{ copy.errorRawToggle }}</summary>
-              <code>{{ error }}</code>
-            </details>
-          </div>
-          <div v-if="success" class="callout callout-info" role="status">{{ success }}</div>
-
-          <div v-if="loading" class="empty-state">
-            <span class="spinner" />
-            <span>{{ copy.loading }}</span>
-          </div>
-          <div v-else-if="communityEntries.length === 0" class="empty-state">
-            <AppIcon name="community" :size="28" />
-            <span>{{ copy.empty }}</span>
-          </div>
-
-          <div v-else class="community-list">
-            <article v-for="entry in communityEntries" :key="entry.id" class="community-entry">
-              <div class="community-entry-top">
-                <div>
-                  <strong>{{ entry.displayName || entry.id }}</strong>
-                  <small>v{{ entry.version }}</small>
-                </div>
-                <span class="badge" :class="entry.signed ? 'badge-success' : 'badge-warning'">
-                  {{ entry.signed ? copy.signed : copy.unsigned }}
-                </span>
-              </div>
-
-              <ul v-if="entry.safetyNotes.length" class="note-list community-notes">
-                <li v-for="(note, index) in entry.safetyNotes" :key="index">{{ note }}</li>
-              </ul>
-
-              <label v-if="!entry.signed" class="community-consent">
-                <input
-                  type="checkbox"
-                  :checked="acceptUnsigned[entry.id] ?? false"
-                  @change="setAcceptUnsigned(entry.id, ($event.target as HTMLInputElement).checked)"
-                />
-                <span>{{ copy.acceptUnsigned }}</span>
-              </label>
-
-              <div class="community-entry-actions">
-                <button
-                  class="btn btn-primary btn-sm"
-                  :class="{ 'is-loading': installingId === entry.id }"
-                  type="button"
-                  :disabled="installingId === entry.id || (!entry.signed && !acceptUnsigned[entry.id])"
-                  @click="install(entry)"
-                >
-                  {{ installingId === entry.id ? copy.installing : copy.install }}
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <details v-if="capabilities.length" class="disclosure community-builtin">
-            <summary>{{ formatCopy(copy.builtInHeading, { count: capabilities.length }) }}</summary>
-            <ul>
-              <li v-for="cap in capabilities" :key="`${cap.id}-${cap.origin}`">
-                <span>{{ cap.displayName }}</span>
-                <span class="badge badge-plain" :class="cap.origin === 'community' ? 'badge-accent' : cap.origin === 'local' ? 'badge-warning' : ''">
-                  {{ originLabel(cap.origin) }}
-                </span>
-              </li>
-            </ul>
-          </details>
         </div>
-      </section>
-    </div>
+      </div>
+
+      <div v-if="fetchResult" class="community-trust" :class="{ bad: !fetchResult.signatureVerified || !fetchResult.revocationsVerified }">
+        <AppIcon :name="fetchResult.signatureVerified && fetchResult.revocationsVerified ? 'shield' : 'alert'" />
+        <span v-if="!fetchResult.signatureVerified">{{ copy.catalogNotVerified }}</span>
+        <span v-else-if="!fetchResult.revocationsVerified">{{ copy.revocationsUnknown }}</span>
+        <span v-else>{{ copy.catalogVerified }}</span>
+        <small :title="fetchResult.bootstrapPublicKeyFingerprint">
+          {{ formatCopy(copy.keyFingerprint, { fingerprint: fetchResult.bootstrapPublicKeyFingerprint }) }}
+        </small>
+      </div>
+
+      <ErrorCallout :error="friendlyError" />
+      <div v-if="success" class="callout callout-info" role="status">{{ success }}</div>
+
+      <EmptyState v-if="loading" busy :description="copy.loading" />
+      <EmptyState
+        v-else-if="communityEntries.length === 0"
+        icon="community"
+        :description="copy.empty"
+      />
+
+      <div v-else class="community-list">
+        <article v-for="entry in communityEntries" :key="entry.id" class="community-entry">
+          <div class="community-entry-top">
+            <div>
+              <strong>{{ entry.displayName || entry.id }}</strong>
+              <small>v{{ entry.version }}</small>
+            </div>
+            <span v-if="revocationFor(entry.id) !== null" class="badge badge-danger">
+              {{ copy.revoked }}
+            </span>
+            <span v-else class="badge" :class="entry.signed ? 'badge-success' : 'badge-warning'">
+              {{ entry.signed ? copy.signed : copy.unsigned }}
+            </span>
+          </div>
+
+          <p v-if="revocationFor(entry.id) !== null" class="callout callout-danger community-revoked">
+            {{ formatCopy(copy.revokedReason, { name: entry.displayName || entry.id, reason: revocationFor(entry.id) || copy.revokedNoReason }) }}
+          </p>
+
+          <ul v-if="entry.safetyNotes.length" class="note-list community-notes">
+            <li v-for="(note, index) in entry.safetyNotes" :key="index">{{ note }}</li>
+          </ul>
+
+          <label v-if="!entry.signed && revocationFor(entry.id) === null" class="community-consent">
+            <input
+              type="checkbox"
+              :checked="acceptUnsigned[entry.id] ?? false"
+              @change="setAcceptUnsigned(entry.id, ($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ copy.acceptUnsigned }}</span>
+          </label>
+
+          <div class="community-entry-actions">
+            <button
+              class="btn btn-primary btn-sm"
+              :class="{ 'is-loading': installingId === entry.id }"
+              type="button"
+              :disabled="installingId === entry.id || isBlocked(entry) || (!entry.signed && !acceptUnsigned[entry.id])"
+              :title="isBlocked(entry) ? (revocationFor(entry.id) !== null ? copy.revoked : copy.revocationsUnknown) : undefined"
+              @click="install(entry)"
+            >
+              {{ installingId === entry.id ? copy.installing : isBlocked(entry) ? copy.unavailable : copy.install }}
+            </button>
+          </div>
+        </article>
+      </div>
+
+      <details v-if="capabilities.length" class="disclosure community-builtin">
+        <summary>{{ formatCopy(copy.builtInHeading, { count: capabilities.length }) }}</summary>
+        <ul>
+          <li v-for="cap in capabilities" :key="`${cap.id}-${cap.origin}`">
+            <span>{{ cap.displayName }}</span>
+            <span class="badge badge-plain" :class="cap.origin === 'community' ? 'badge-accent' : cap.origin === 'local' ? 'badge-warning' : ''">
+              {{ originLabel(cap.origin) }}
+            </span>
+          </li>
+        </ul>
+      </details>
+    </BaseDialog>
   </Teleport>
 </template>
 

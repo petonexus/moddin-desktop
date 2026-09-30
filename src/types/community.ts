@@ -1,3 +1,9 @@
+/** One entry of the community repo's `revoked-ids.json`. */
+export interface CommunityRevocation {
+  id: string
+  reason: string
+}
+
 /**
  * Mirrors `crate::community_catalog::CommunityFetchResult` in Rust.
  * Returned by the `community_catalog_fetch` Tauri command.
@@ -14,6 +20,15 @@ export interface CommunityFetchResult {
   /** When `signatureVerified` is false OR the fetch failed, this
    *  carries the underlying error message for the UI banner. */
   lastError: string | null
+  /** False when `revoked-ids.json` could not be read at all. The
+   *  catalog can be perfectly signed and still be unusable: Moddin
+   *  refuses to install while this is false, because "I could not check
+   *  the kill switch" and "nothing is revoked" must not look the same. */
+  revocationsVerified: boolean
+  /** Revoked capabilities stay in the list, flagged, so the panel can
+   *  say why one of them cannot be installed instead of quietly hiding
+   *  it. */
+  revoked: CommunityRevocation[]
 }
 
 export interface CommunityCatalog {

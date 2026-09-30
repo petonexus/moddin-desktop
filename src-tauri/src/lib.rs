@@ -9,12 +9,10 @@ mod capability_authoring;
 mod capability_runner;
 mod community_catalog;
 mod path_guard;
-mod compat_report;
 mod cheeky;
 mod desktop_shortcut;
 mod gog;
 mod inspection;
-mod library_state;
 mod module;
 mod pcgw_cache;
 mod obs;
@@ -26,8 +24,6 @@ mod openxr_module;
 mod optiscaler;
 mod optiscaler_module;
 mod process;
-mod reshade;
-mod reshade_module;
 mod steam;
 mod transaction;
 mod uevr;
@@ -108,7 +104,6 @@ fn open_web_url(url: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(library_state::LibraryCache::new())
         .invoke_handler(tauri::generate_handler![
             activity::record_ui_action_log,
             capability_runner::capability_install,
@@ -133,7 +128,6 @@ pub fn run() {
             desktop_shortcut::preview_desktop_shortcut,
             desktop_shortcut::create_desktop_shortcut,
             steam::detect_installed_games,
-            gog::detect_gog_installed_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,
             ofxr::install_ofxr,
@@ -147,20 +141,14 @@ pub fn run() {
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
-            reshade::preview_reshade,
-            reshade::install_reshade,
-            reshade::uninstall_reshade,
-            // UE4SS, BepInEx and REFramework no longer expose dedicated
-            // commands: they are capability specs (src-tauri/capabilities/),
-            // so they install through `capability_install` with the same
-            // checks, preview and rollback as every other recipe.
+            // UE4SS, BepInEx, REFramework and ReShade no longer expose
+            // dedicated commands: they are capability specs
+            // (src-tauri/capabilities/), so they install through
+            // `capability_install` with the same checks, preview and
+            // rollback as every other recipe.
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
-            transaction::create_snapshot,
-            transaction::list_snapshots,
-            transaction::rollback_snapshot,
-            transaction::delete_snapshot,
             updates::check_module_update,
             open_external_url,
             open_web_url,
@@ -169,9 +157,6 @@ pub fn run() {
             uevr::uninstall_uevr,
             vr_launch::preview_vr_launch,
             vr_launch::launch_vr_game,
-            compat_report::get_compat_report,
-            library_state::refresh_installed_games_async,
-            library_state::get_cached_installed_games,
             pcgw_cache::lookup_pcgw_summary,
             pcgw_cache::get_pcgw_cache,
             pcgw_cache::clear_pcgw_cache,

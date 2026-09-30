@@ -17,3 +17,13 @@ export function setCommunityCatalogTtl(ttlSeconds: number) {
 export function installCommunityCapability(request: CommunityInstallRequest) {
   return invoke<CommunityInstallResult>('community_capability_install', { request })
 }
+
+/**
+ * Re-read the local capability override directory and return what is
+ * loaded now. Called alongside the catalog refresh so a YAML the user
+ * just dropped into `%LOCALAPPDATA%\Moddin\capabilities\` shows up
+ * without an app restart.
+ */
+export function reloadCapabilities() {
+  return invoke<CapabilitySummary[]>('capability_reload', { request: {} })
+}

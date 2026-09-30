@@ -156,12 +156,24 @@ pub async fn detect_installed_games() -> Result<Vec<InstalledGame>, String> {
     detect_installed_games_blocking()
 }
 
-/// Synchronous variant used by the background library cache. Avoids the
-/// `spawn_blocking` round-trip when the caller is already on a blocking
-/// task (the scanner runs the Steam/Epic + GOG detectors in the same
-/// worker thread).
+/// Full library scan: Steam, Epic and GOG in one blocking pass.
+///
+/// GOG is folded in here rather than behind a command of its own. The
+/// only caller of the GOG detector used to be the background library
+/// cache, which nothing in the UI invoked — so GOG games were in the
+/// build but not in the app. This is the command the frontend actually
+/// calls on load and on Refresh, and it is already on a blocking task,
+/// which is exactly what the GOG detector needs.
 pub fn detect_installed_games_blocking() -> Result<Vec<InstalledGame>, String> {
-    detect_installed_games_sync()
+    let mut games = detect_installed_games_sync()?;
+    games.append(&mut crate::gog::detect_gog_installed_games_blocking());
+    games.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.store.cmp(&b.store))
+    });
+    Ok(games)
 }
 
 fn discover_epic_manifest_dirs() -> Vec<PathBuf> {
