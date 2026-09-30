@@ -296,6 +296,78 @@ describe('stateFor', () => {
 
     expect(modules.stateFor('alpha').configValues.count).toBe(9)
   })
+
+  it('pre-fills a required field from the catalogue for the selected game', async () => {
+    // The card used to render every required field blank and wait for the
+    // user to paste a download URL and a digest nobody can be expected to
+    // know. The per-game `config:` block already holds both — the same
+    // data the game page's own module card shows.
+    mockedList.mockResolvedValue([summary('optiscaler')])
+    mockedSpec.mockResolvedValue(
+      spec('optiscaler', {
+        configSchema: [
+          { name: 'downloadUrl', type: 'url', required: true },
+          { name: 'sha256', type: 'sha256', required: true },
+          { name: 'version', type: 'string', required: true },
+        ],
+      }),
+    )
+    const { modules } = harness({ gameId: () => 'cyberpunk-2077', gameName: () => 'Cyberpunk 2077' })
+
+    await modules.ensureLoaded()
+    await modules.install(summary('optiscaler'))
+
+    expect(mockedInstall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capabilityId: 'optiscaler',
+        config: {
+          values: {
+            downloadUrl: 'https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z',
+            sha256: '575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad',
+            version: '0.9.4',
+          },
+        },
+      }),
+    )
+    // The values the catalogue filled are not reported as the user's
+    // unfinished work.
+    expect(modules.missingRequiredFields('optiscaler')).toEqual([])
+  })
+
+  it('still asks for a required field the catalogue has no value for', async () => {
+    // The shipped `optiscaler` recipe: `proxy` is a required path, and it
+    // is the one field the catalogue cannot know — it depends on which
+    // DLLs already live in the game folder. A default is not invented for
+    // it, and it is not quietly made optional.
+    mockedList.mockResolvedValue([summary('optiscaler')])
+    mockedSpec.mockResolvedValue(
+      spec('optiscaler', {
+        configSchema: [
+          { name: 'downloadUrl', type: 'url', required: true },
+          { name: 'proxy', type: 'path', required: true },
+        ],
+      }),
+    )
+    const { modules } = harness({ gameId: () => 'cyberpunk-2077' })
+
+    await modules.ensureLoaded()
+
+    expect(modules.stateFor('optiscaler').configValues.downloadUrl).toContain('Optiscaler_0.9.4')
+    expect(modules.missingRequiredFields('optiscaler')).toEqual(['proxy'])
+  })
+
+  it('fills from the catalogue of the game that is selected, not another one', async () => {
+    mockedList.mockResolvedValue([summary('obs-vr')])
+    mockedSpec.mockResolvedValue(
+      spec('obs-vr', { configSchema: [{ name: 'sourceName', type: 'string', required: true }] }),
+    )
+    const { modules } = harness({ gameId: () => 'dawnwalker' })
+
+    await modules.ensureLoaded()
+
+    expect(modules.stateFor('obs-vr').configValues.sourceName).toBe('The Blood of Dawnwalker VR')
+    expect(modules.missingRequiredFields('obs-vr')).toEqual([])
+  })
 })
 
 describe('isInstalled', () => {

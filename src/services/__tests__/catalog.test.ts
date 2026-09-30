@@ -5,10 +5,12 @@ import {
   findCatalogGameById,
   findCatalogGameByInstalledGame,
   findCatalogGameBySteamAppId,
+  findCatalogModule,
   findInstalledGameForCatalogGame,
   gameCatalog,
   getMissingDependencies,
   getMissingDependenciesForModule,
+  resolveCatalogConfig,
 } from '../catalog'
 import type { GameCatalogEntry, InstalledGame, ToolModuleDefinition } from '../../types/game'
 
@@ -118,6 +120,53 @@ describe('findInstalledGameForCatalogGame', () => {
       expect(catalogId).toBeDefined()
       expect(findInstalledGameForCatalogGame(installed, catalogId!)?.appId).toBe(game.appId)
     }
+  })
+})
+
+describe('resolveCatalogConfig', () => {
+  // The whole reason this function exists: the per-game `config:` block is
+  // the answer to "what values does this recipe need for this game", and
+  // two install paths were sending `{}` while the answer sat in the
+  // catalogue. These read the real shipped YAML, so a renamed key or a
+  // dropped `config:` block goes red here rather than at an install.
+  it('returns the per-game config values a recipe needs', () => {
+    const config = resolveCatalogConfig('cyberpunk-2077', 'optiscaler')
+    expect(config.version).toBe('0.9.4')
+    expect(config.downloadUrl).toContain('Optiscaler_0.9.4')
+    expect(config.sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(config.proxyCandidates).toBe('dxgi.dll,wininet.dll')
+  })
+
+  it('is per game, not global: the same recipe answers per game', () => {
+    // `obs-vr` is the clean case: the same module, a different answer for
+    // each game. A resolver that read the first match it found would
+    // point Cyberpunk's capture at Dawnwalker's executable.
+    const cyberpunk = resolveCatalogConfig('cyberpunk-2077', 'obs-vr')
+    const dawnwalker = resolveCatalogConfig('dawnwalker', 'obs-vr')
+    expect(cyberpunk.sourceName).toBe('Cyberpunk 2077 VR')
+    expect(dawnwalker.sourceName).toBe('The Blood of Dawnwalker VR')
+    expect(cyberpunk.executableName).toBe('Cyberpunk2077.exe')
+  })
+
+  it('returns a copy, so a caller cannot write back into the catalogue', () => {
+    const config = resolveCatalogConfig('cyberpunk-2077', 'optiscaler')
+    config.version = 'tampered'
+    expect(resolveCatalogConfig('cyberpunk-2077', 'optiscaler').version).toBe('0.9.4')
+  })
+
+  it('returns nothing rather than a guess for a game or module it does not carry', () => {
+    // The two honest "I do not know" cases. A caller that finds an empty
+    // object asks the user; a caller that found a value would be sending
+    // an invented one.
+    expect(resolveCatalogConfig('cyberpunk-2077', 'ofxr-bridge')).toEqual({})
+    expect(resolveCatalogConfig('not-a-game', 'optiscaler')).toEqual({})
+    expect(resolveCatalogConfig(null, 'optiscaler')).toEqual({})
+  })
+
+  it('finds the module the game page renders, preset merge included', () => {
+    const module = findCatalogModule('doom-2016', 'desktop-shortcut')
+    expect(module?.id).toBe('desktop-shortcut')
+    expect(findCatalogModule('doom-2016', 'not-declared')).toBeUndefined()
   })
 })
 

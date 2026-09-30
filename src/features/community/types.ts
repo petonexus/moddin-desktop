@@ -1,3 +1,5 @@
+import type { ResolvedConfig } from '../../types/capability'
+
 export interface CapabilitySummary {
   id: string
   displayName: string
@@ -12,7 +14,12 @@ export interface CommunityInstallRequest {
   gameName: string
   installDir: string
   executableDir: string
-  config: Record<string, unknown>
+  /**
+   * `ResolvedConfig`, not a bare map: the backend's request struct wraps
+   * the values in `values`, so sending `{}` here was rejected by the
+   * deserializer before the install even started.
+   */
+  config: ResolvedConfig
   acceptUnsigned: boolean
   /** Install even when the spec's compatibility block rejects the game build. */
   force?: boolean

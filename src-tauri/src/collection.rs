@@ -21,13 +21,16 @@
 //! that has spent a week deleting them.
 //!
 //! What the loader *does* refuse is a collection that could not be
-//! installed: a member that is not a registered capability, a member whose
-//! recipe is `status: planned` (which refuses to install, by design), and
-//! a member that does not declare one of the engines the collection claims
-//! for its game. Those are load-time refusals rather than install-time
-//! failures on purpose. A collection that advertises a set the user cannot
-//! install is worse than no collection, because the panel would be
-//! recommending something the engine gate hides or the runner refuses.
+//! installed: a member that is not a registered capability, a member that
+//! is a **community** recipe (which is signature-checked when it installs,
+//! not when a set is previewed, so this loader cannot promise it), a
+//! member whose recipe is `status: planned` (which refuses to install, by
+//! design), and a member that does not declare one of the engines the
+//! collection claims for its game. Those are load-time refusals rather
+//! than install-time failures on purpose. A collection that advertises a
+//! set the user cannot install is worse than no collection, because the
+//! panel would be recommending something the engine gate hides or the
+//! runner refuses.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -580,12 +583,29 @@ fn parse(
             return Err(format!("`{}` is listed twice", entry.id));
         }
 
-        let member = capabilities.get(&entry.id).ok_or_else(|| {
-            format!(
-                "names capability `{}`, which is not a registered capability",
-                entry.id
-            )
-        })?;
+        let member = match capabilities.get(&entry.id) {
+            Some(member) => member,
+            None if is_community_capability_id(&entry.id) => {
+                // A community recipe is not a registered capability: it is
+                // fetched from the signed catalogue and signature-checked
+                // at install time, so this loader cannot say whether one is
+                // signed. A collection is a promise about what a run will
+                // do, and a member whose signature can only be checked
+                // halfway through is a refusal the user learns about with
+                // the earlier members already written. Refused here, with
+                // the reason named, next to the two refusals above.
+                return Err(format!(
+                    "names community capability `{}`, which Moddin does not register: a community recipe is signature-checked when it installs, and a collection may not carry one",
+                    entry.id
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "names capability `{}`, which is not a registered capability",
+                    entry.id
+                ));
+            }
+        };
 
         // A planned recipe refuses to install with a message instead of
         // reporting success while writing nothing. A collection that
@@ -629,6 +649,23 @@ fn is_collection_id(id: &str) -> bool {
         && id
             .chars()
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+}
+
+/// Whether a member id names a community recipe rather than a registered
+/// capability.
+///
+/// The community repository publishes every capability as
+/// `community-<name>`, and its submission guide asks for exactly that
+/// (`mkdir capabilities/community-my-mod`, `id: community-my-mod`). That
+/// prefix is the only signal available before the signed catalogue is
+/// read: verifying a community entry is
+/// [`crate::community_catalog`]'s job, at install time, with the keyring
+/// check and the revocation list, and duplicating any of that here would
+/// make the loader's answer depend on whether the user happened to open
+/// the Community panel first. Fail-closed by design — an id that looks
+/// like a community one is refused, whatever the catalogue says.
+fn is_community_capability_id(id: &str) -> bool {
+    id.starts_with("community-")
 }
 
 #[cfg(test)]
@@ -904,6 +941,54 @@ mod tests {
             report.issues[0]
                 .message
                 .contains("`uevr`, whose recipe is `planned` and refuses to install"),
+            "{report:?}"
+        );
+
+        let _ = fs::remove_dir_all(&local);
+    }
+
+    #[test]
+    fn a_collection_naming_an_unsigned_community_member_is_refused_at_load_time() {
+        let capabilities = built_in_capabilities("community");
+        let local = temp_root("community-local");
+        write_collection(
+            &local,
+            "with-community.yaml",
+            &collection_yaml(
+                "with-community",
+                "  - id: optiscaler\n    required: true\n  - id: community-fps-unlocker\n    required: false\n",
+            ),
+        );
+
+        let (registry, report) = CollectionRegistry::load_with_local_dir(&capabilities, &local);
+
+        // `community-fps-unlocker` is the shipped community entry: it is
+        // `status: planned` and unsigned, and the only catalogue entry
+        // there is. A collection run installs `acceptUnsigned: false`, so
+        // carrying it would be a refusal discovered on the second member
+        // with the first one already written. Refused at load, and the
+        // message says *why* rather than calling it a typo.
+        assert!(registry.get("with-community").is_none());
+        assert_eq!(report.issues.len(), 1, "{report:?}");
+        assert!(
+            report.issues[0]
+                .message
+                .contains("names community capability `community-fps-unlocker`"),
+            "{report:?}"
+        );
+        assert!(
+            report.issues[0]
+                .message
+                .contains("a community recipe is signature-checked when it installs"),
+            "{report:?}"
+        );
+        // Not the generic "not a registered capability" wording: the
+        // reason is that its signature is unknowable here, and a message
+        // that says otherwise sends the author looking for a typo.
+        assert!(
+            !report.issues[0]
+                .message
+                .contains("which is not a registered capability"),
             "{report:?}"
         );
 

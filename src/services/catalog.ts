@@ -161,6 +161,38 @@ export function findInstalledGameForCatalogGame(
 }
 
 /**
+ * The catalogue's own entry for one module of one game, engine preset
+ * already merged in — the same object the game page's module cards
+ * render, so a caller that finds a module here is looking at the data
+ * the player was shown. `undefined` when the game declares no such
+ * module, which is not an error: the catalogue is per-game and silent
+ * about the capabilities it does not carry.
+ */
+export function findCatalogModule(gameId: string, moduleId: string): ToolModuleDefinition | undefined {
+  return findCatalogGameById(gameId)?.modules.find((module) => module.id === moduleId)
+}
+
+/**
+ * The `config:` values the catalogue holds for `(gameId, capabilityId)`,
+ * keyed by config-field name.
+ *
+ * This is the one place that answers "what values does this recipe need
+ * for this game". It reads the per-game `config:` block out of
+ * `src/catalog/games/*.yaml` — the same block the module's own
+ * configuration dialog is built from — and returns it verbatim. An empty
+ * object means the game declares no such module, or the module declares
+ * no `config:` block; it never invents a value, and a second table beside
+ * a form is exactly the drift this catalogue exists to prevent.
+ */
+export function resolveCatalogConfig(
+  gameId: string | null | undefined,
+  capabilityId: string,
+): Record<string, string | string[]> {
+  if (!gameId) return {}
+  return { ...(findCatalogModule(gameId, capabilityId)?.config ?? {}) }
+}
+
+/**
  * Depth-first collection of the modules that are not installed yet, in
  * dependency order: a dependency always appears before the module that
  * requires it. Already-installed modules are skipped together with their

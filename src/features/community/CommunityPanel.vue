@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import BaseDialog from '../../components/ui/BaseDialog.vue'
@@ -9,7 +9,9 @@ import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useF
 import { dateLocaleFor } from '../../i18n/locale'
 import { COMMUNITY_TTL_PRESETS, type CommunityCatalogEntry, type CommunityFetchResult } from '../../types/community'
 import { communityCopyForLocale, formatCopy } from './copy'
+import { parseConfigSchema, resolveCapabilityConfig } from '../capability-modules/config'
 import { resolveInstallTarget } from '../capability-modules/service'
+import type { CapabilityConfigValue } from '../capability-modules/types'
 import { recordUnsignedConsent } from '../../composables/useAiAssistant'
 import {
   fetchCommunityCatalog,
@@ -53,6 +55,7 @@ const alreadyLocalized = computed(() => [
   copy.value.notInCatalog,
   copy.value.needsConsent,
   copy.value.noGameSelected,
+  copy.value.needsConfig,
 ])
 
 const friendlyError = useFriendlyError({ error, rules: () => errorRules.value, context: errorContext, verbatim: alreadyLocalized })
@@ -60,9 +63,76 @@ const friendlyError = useFriendlyError({ error, rules: () => errorRules.value, c
 const fetchResult = ref<CommunityFetchResult | null>(null)
 const ttlSeconds = ref<number>(24 * 60 * 60)
 const acceptUnsigned = ref<Record<string, boolean>>({})
+/** Entries the user has tried to install, so a blank field can be flagged. */
+const configAttempted = ref<Record<string, boolean>>({})
 const capabilities = ref<CapabilitySummary[]>([])
 
 const communityEntries = computed<CommunityCatalogEntry[]>(() => fetchResult.value?.catalog.capabilities ?? [])
+
+/**
+ * The recipe's own config schema, as it arrived inside the signed
+ * catalogue. This is the only copy of it this side ever sees: the YAML
+ * behind the entry's `downloadUrl` is fetched and parsed by the backend
+ * at install time, and the game page's cards are built from the registry,
+ * which does not hold community recipes.
+ */
+function schemaFor(entry: CommunityCatalogEntry) {
+  return parseConfigSchema(entry.configSchema)
+}
+
+/** Per-entry form state, keyed by capability id. */
+const configValues = reactive<Record<string, Record<string, CapabilityConfigValue>>>({})
+
+/**
+ * Fill an entry's form from the same answer the game page's cards get:
+ * the per-game `config:` block the catalogue holds for this capability,
+ * then the recipe's defaults. Whatever the user has typed wins, so
+ * re-seeding (a refresh, a game change) never eats an edit.
+ */
+function seedConfigValues(entry: CommunityCatalogEntry) {
+  const schema = schemaFor(entry)
+  if (schema.length === 0) return
+  configValues[entry.id] = resolveCapabilityConfig({
+    gameId: readSelectedAppId(),
+    capabilityId: entry.id,
+    schema,
+    current: configValues[entry.id],
+  }).values
+}
+
+function configValue(entry: CommunityCatalogEntry, name: string): CapabilityConfigValue {
+  return configValues[entry.id]?.[name] ?? ''
+}
+
+function setConfigValue(entry: CommunityCatalogEntry, name: string, value: CapabilityConfigValue) {
+  configValues[entry.id] = { ...configValues[entry.id], [name]: value }
+}
+
+/**
+ * Which required fields of an entry are still empty. Recomputed from
+ * the form rather than remembered, and never guessed away: a field the
+ * catalogue has no answer for and the recipe does not default is asked
+ * for, because the alternative is a download step that fails naming a
+ * field the user never saw.
+ */
+function missingRequiredFields(entry: CommunityCatalogEntry): string[] {
+  const schema = schemaFor(entry)
+  return resolveCapabilityConfig({
+    gameId: readSelectedAppId(),
+    capabilityId: entry.id,
+    schema,
+    current: configValues[entry.id],
+  }).missingRequired
+}
+
+/**
+ * Whether a field should read as an error. Only after the user tried to
+ * install with it empty — before that, a form full of `aria-invalid` is
+ * a form telling the user about mistakes they have not made yet.
+ */
+function fieldInvalid(entry: CommunityCatalogEntry, name: string): boolean {
+  return configAttempted.value[entry.id] === true && missingRequiredFields(entry).includes(name)
+}
 
 // Focus, Escape and focus restore are BaseDialog's job; these only say
 // whether the dialog is on screen.
@@ -115,6 +185,9 @@ async function openPanel() {
   // up in this panel's built-in list without an app restart.
   const [reloaded] = await Promise.all([reloadCapabilities(), fetchCatalog(false)])
   capabilities.value = reloaded
+  // Re-seed against the game the user is looking at now, not the one the
+  // catalogue was first opened for.
+  for (const entry of communityEntries.value) seedConfigValues(entry)
 }
 
 // Reset transient messages whenever the dialog closes (button, Esc or backdrop).
@@ -131,6 +204,7 @@ async function fetchCatalog(forceRefresh: boolean) {
   try {
     const result = await fetchCommunityCatalog(forceRefresh, ttlSeconds.value)
     fetchResult.value = result
+    for (const entry of result.catalog.capabilities) seedConfigValues(entry)
     if (result.lastError && !result.signatureVerified) error.value = result.lastError
     if (result.ttlSeconds !== ttlSeconds.value && result.ttlSeconds > 0) ttlSeconds.value = result.ttlSeconds
   } catch (err) {
@@ -160,6 +234,21 @@ async function install(entry: CommunityCatalogEntry) {
     return
   }
 
+  // A recipe that declares required config is installable from here only
+  // once those fields have values. Resolve them against the selected
+  // game (the same call that seeds the form) and refuse before the
+  // command, naming what is missing.
+  seedConfigValues(entry)
+  const missing = missingRequiredFields(entry)
+  if (missing.length > 0) {
+    configAttempted.value = { ...configAttempted.value, [entry.id]: true }
+    error.value = formatCopy(copy.value.needsConfig, {
+      name: entry.displayName || entry.id,
+      fields: missing.join(', '),
+    })
+    return
+  }
+
   installingId.value = entry.id
   error.value = null
   errorContext.value = 'install'
@@ -180,7 +269,17 @@ async function install(entry: CommunityCatalogEntry) {
       gameName: target.gameName,
       installDir: target.installDir,
       executableDir: target.executableDir,
-      config: {},
+      // Resolved again against the target's own game id: the form is
+      // seeded from the selected game, and this is the game the files
+      // are about to be written into.
+      config: {
+        values: resolveCapabilityConfig({
+          gameId: target.gameId,
+          capabilityId: entry.id,
+          schema: schemaFor(entry),
+          current: configValues[entry.id],
+        }).values,
+      },
       acceptUnsigned: acceptUnsigned.value[entry.id] ?? false,
     })
     success.value = formatCopy(copy.value.installed, { name: entry.displayName || entry.id })
@@ -322,6 +421,66 @@ onMounted(async () => {
             <span>{{ copy.acceptUnsigned }}</span>
           </label>
 
+          <!--
+            The recipe's own fields, pre-filled from the catalogue for the
+            selected game. A recipe with required config cannot be
+            installed from here without this form: the backend used to
+            receive an empty config and fail inside its first step with a
+            field name nobody had shown the user.
+          -->
+          <fieldset v-if="schemaFor(entry).length" class="community-config">
+            <legend>{{ copy.configTitle }}</legend>
+            <label v-for="field in schemaFor(entry)" :key="field.name" class="field">
+              <span>
+                {{ field.name }}<em v-if="field.required" class="community-required" aria-hidden="true">*</em>
+              </span>
+              <select
+                v-if="field.type === 'enum'"
+                class="select"
+                :id="`community-config-${entry.id}-${field.name}`"
+                :value="String(configValue(entry, field.name))"
+                :aria-required="field.required ? 'true' : undefined"
+                :aria-invalid="fieldInvalid(entry, field.name) ? 'true' : undefined"
+                @change="setConfigValue(entry, field.name, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="option in field.enumValues ?? []" :key="option" :value="option">
+                  {{ option }}
+                </option>
+              </select>
+              <input
+                v-else-if="field.type === 'boolean'"
+                type="checkbox"
+                :id="`community-config-${entry.id}-${field.name}`"
+                :checked="Boolean(configValue(entry, field.name))"
+                @change="setConfigValue(entry, field.name, ($event.target as HTMLInputElement).checked)"
+              />
+              <input
+                v-else-if="field.type === 'number'"
+                type="number"
+                class="input"
+                :id="`community-config-${entry.id}-${field.name}`"
+                :value="Number(configValue(entry, field.name))"
+                :aria-required="field.required ? 'true' : undefined"
+                :aria-invalid="fieldInvalid(entry, field.name) ? 'true' : undefined"
+                @input="setConfigValue(entry, field.name, Number(($event.target as HTMLInputElement).value))"
+              />
+              <input
+                v-else
+                type="text"
+                class="input"
+                :id="`community-config-${entry.id}-${field.name}`"
+                :value="String(configValue(entry, field.name))"
+                :aria-required="field.required ? 'true' : undefined"
+                :aria-invalid="fieldInvalid(entry, field.name) ? 'true' : undefined"
+                @input="setConfigValue(entry, field.name, ($event.target as HTMLInputElement).value)"
+              />
+              <small v-if="field.description">{{ field.description }}</small>
+              <small v-if="fieldInvalid(entry, field.name)" class="community-field-error" role="alert">
+                {{ copy.fieldRequired }}
+              </small>
+            </label>
+          </fieldset>
+
           <div class="community-entry-actions">
             <button
               class="btn btn-primary btn-sm"
@@ -385,6 +544,12 @@ onMounted(async () => {
 .community-notes { color: var(--moddin-warning); }
 .community-consent { display: flex; align-items: flex-start; gap: var(--moddin-space-2); color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
 .community-consent input { margin-top: 3px; accent-color: var(--moddin-accent); }
+.community-config { display: grid; gap: var(--moddin-space-3); margin: 0; padding: var(--moddin-space-3); border: 1px solid var(--moddin-line-soft); border-radius: var(--moddin-radius-sm); }
+.community-config legend { padding: 0 var(--moddin-space-2); color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); text-transform: uppercase; letter-spacing: 0.06em; }
+.community-config .field { display: grid; gap: var(--moddin-space-1); }
+.community-config small { color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
+.community-required { color: var(--moddin-danger); font-style: normal; }
+.community-field-error { color: var(--moddin-danger); }
 .community-entry-actions { display: flex; justify-content: flex-end; }
 
 .community-builtin > summary { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); font-weight: 600; }

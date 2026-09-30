@@ -153,7 +153,10 @@ describe('CollectionsPanel — the install path', () => {
       gameName: 'Elden Ring',
       installDir: 'C:\\games\\elden-ring\\Mods',
       executableDir: 'C:\\games\\elden-ring',
-      config: {},
+      // `ResolvedConfig` is a wrapper: the request struct deserialises
+      // into `{ values: { … } }`, so the bare `{}` this used to assert
+      // was rejected by the backend before the run began.
+      config: { values: {} },
       // Fail closed: a collection may not wave through an unsigned recipe.
       acceptUnsigned: false,
     })
