@@ -50,6 +50,7 @@ modules:
       downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z
       updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
       sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxy: dxgi.dll
       proxyCandidates: dxgi.dll,wininet.dll
   - id: cheeky-foveated-dlss
     name: Cheeky Foveated DLSS
@@ -69,6 +70,15 @@ modules:
     description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
     category: vr
     status: available
+    config:
+      version: 0.2.1
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.1/OFXR-Bridge-v0.2.1-V116.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases/latest
+      sha256: db224491cbc9553a51fe55d08623d25864c4ec0a3d49bd76e9d6c4d9b2410c67
+      implementationVersion: 116
+      backend: fidelityfx
+      nvidiaPreset: medium
+      nvidiaInputScale: 50
   - id: openxr
     name: OpenXR tools
     description: Manage OpenXR-related helpers and per-game VR configuration.
