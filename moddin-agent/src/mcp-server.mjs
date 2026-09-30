@@ -61,8 +61,8 @@ const STEP_KINDS = Object.freeze({
     touches: [],
   },
   "extract-zip": {
-    summary: "Extract a zip archive into the game's executable directory. Takes a local path, never a URL — pair it with download-file.",
-    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField"],
+    summary: "Extract a zip archive into the game's executable directory. Takes a local path, never a URL — pair it with download-file. `targetSubdir` extracts into a staging subdirectory instead, so a later move-file can promote one named file out of it.",
+    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField", "targetSubdir", "targetSubdirField"],
     touches: ["executableDir"],
   },
   "verify-hash": {
@@ -101,14 +101,27 @@ const STEP_KINDS = Object.freeze({
     touches: ["process"],
   },
   "registry-write": {
-    summary: "reg.exe add <key> /v <name> /t <type> /d <data> /f. HKCU only.",
-    fields: ["keyField", "nameField", "typeField", "dataField"],
+    summary:
+      "Write a value under an HKCU key. The params are literal, not config references: `key`, `value` and `type` are read directly from the step.",
+    fields: ["key", "value", "type", "force"],
     touches: ["registry"],
   },
   "registry-delete": {
-    summary: "reg.exe delete <key> /v <name> /f. HKCU only.",
-    fields: ["keyField", "nameField"],
+    summary: "Delete a value under an HKCU key. `key` is read directly from the step.",
+    fields: ["key", "value", "force"],
     touches: ["registry"],
+  },
+  "git-checkout": {
+    summary:
+      "Clone a repository and check out an exact tag or full commit SHA, for sources that ship no prebuilt archive. A branch name or a short SHA is refused. Use build-project next.",
+    fields: ["repoField", "repo", "refField", "ref", "targetField", "target", "hostAllowlist"],
+    touches: ["executableDir"],
+  },
+  "build-project": {
+    summary:
+      "Run a build command in a checked-out source tree and verify each declared output exists afterwards. Reuses the same process runner as spawn-process.",
+    fields: ["directory", "directoryField", "command", "commandField", "args", "outputs"],
+    touches: ["executableDir", "process"],
   },
 });
 

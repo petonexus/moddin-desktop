@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Capability kind parity guard.
 //
-// The step and check kinds a recipe may use are declared in four
+// The step and check kinds a recipe may use are declared in five
 // places, in three repositories:
 //
 //   * src-tauri/src/builtin_steps.rs  -> builtin_steps::known_kinds()
 //   * src-tauri/src/builtin_checks.rs -> builtin_checks::known_kinds()
 //   * src/types/capability.ts         -> StepKind / CheckKind unions
 //   * moddin-agent/schema/capability.schema.json -> step.kind / check.kind enums
+//   * moddin-agent/src/mcp-server.mjs -> STEP_KINDS / CHECK_KINDS
 //   * moddin-community-capabilities/scripts/validate_capability.py
 //                                    -> KNOWN_STEP_KINDS / KNOWN_CHECK_KINDS
 //
@@ -18,6 +19,16 @@
 // step kinds. A community author could not express the recipe that
 // CONTRIBUTING.md documents as the minimum, and the validator failed a
 // capability whose checks were perfectly valid.
+//
+// A fifth source was found already stale when the first four were
+// brought into line: mcp-server.mjs keeps its own STEP_KINDS map,
+// feeds it to the agent through get_step_kinds, and was not covered
+// by this check. It was missing two step kinds and one check kind, and
+// its `registry-write` entry documented param names the Rust step
+// does not read — so an agent authoring a recipe through MCP would
+// have produced a step that failed at install time with "key is
+// required". Adding the kind lists was not enough; the map itself has
+// to be checked, which is what the field-level check below does.
 //
 // This check makes that drift a red build instead of a surprise.
 //
@@ -108,6 +119,81 @@ function jsonSchemaEnum(relative, defName, property = 'kind') {
   return values
 }
 
+/**
+ * Top-level keys of a `const NAME = Object.freeze({ "kind": { ... } })` map
+ * in mcp-server.mjs. The keys sit at exactly two spaces of indentation;
+ * the nested `summary` / `fields` / `touches` properties sit at four, so
+ * anchoring on the indentation is enough to tell them apart.
+ *
+ * The scan has to stop at the literal's own closing brace. Both maps sit
+ * at the same indentation in one file, so a scan that runs to EOF reads
+ * CHECK_KINDS' keys as if they were STEP_KINDS'.
+ */
+function jsObjectKeys(relative, constName) {
+  const source = read(relative)
+  const start = source.indexOf(`const ${constName} = Object.freeze({`)
+  if (start < 0) {
+    fail(`could not find ${constName} in ${relative}`)
+    return []
+  }
+  const close = source.indexOf('\n})', start)
+  if (close < 0) {
+    fail(`could not find the end of ${constName} in ${relative}`)
+    return []
+  }
+  const body = source.slice(start, close)
+  const keys = new Set()
+  for (const match of body.matchAll(/^ {2}"([^"]+)":/gm)) {
+    keys.add(match[1])
+  }
+  return [...keys]
+}
+
+/**
+ * The `fields` array declared for one kind in mcp-server.mjs's STEP_KINDS
+ * map. This is what an agent is told a step accepts, so it is the one
+ * place where a wrong name becomes a recipe that fails at install time.
+ */
+function jsEntryFields(relative, constName, kind) {
+  const source = read(relative)
+  const start = source.indexOf(`const ${constName} = Object.freeze({`)
+  if (start < 0) return null
+  const keyAt = source.indexOf(`\n  "${kind}": {`, start)
+  if (keyAt < 0) return null
+  const fieldsAt = source.indexOf('fields:', keyAt)
+  if (fieldsAt < 0) return null
+  const open = source.indexOf('[', fieldsAt)
+  const close = source.indexOf(']', open)
+  if (open < 0 || close < 0) return null
+  return [...source.slice(open, close).matchAll(/"([^"]+)"/g)].map((match) => match[1])
+}
+
+/**
+ * Every param name the Rust runner knows, across the whole of
+ * builtin_steps.rs.
+ *
+ * This is deliberately file-global rather than per-function. A
+ * per-function scan was tried first and reported five false positives,
+ * because several steps resolve their path through a shared helper
+ * (`path_param`, `build_working_directory`, `declared_outputs`) whose
+ * literals live in another function's body. A guard that cries wolf is
+ * worse than no guard, because it teaches people to ignore it.
+ *
+ * The trade is that this cannot catch a real field attached to the
+ * wrong kind. It does catch invented names, which is the failure that
+ * was actually live: an agent told `registry-write` accepts
+ * `keyField` authors a step the runner rejects with "key is required".
+ */
+function rustKnownParamNames() {
+  const relative = 'src-tauri/src/builtin_steps.rs'
+  const source = read(relative)
+  const names = new Set(
+    [...source.matchAll(/"([a-zA-Z][a-zA-Z0-9]*)"/g)].map((match) => match[1]),
+  )
+  if (names.size === 0) fail(`found no param names in ${relative}`)
+  return names
+}
+
 function compare(label, lists) {
   const [[referenceName, reference], ...rest] = lists
   const expected = [...reference].sort()
@@ -134,6 +220,7 @@ function compare(label, lists) {
 
 const communityValidator = 'moddin-community-capabilities/scripts/validate_capability.py'
 const agentSchema = 'moddin-agent/schema/capability.schema.json'
+const agentServer = 'moddin-agent/src/mcp-server.mjs'
 
 // The community repo is a git submodule. It is not initialised in a
 // fresh `git clone` of this repo, and a guard that quietly skipped the
@@ -158,6 +245,7 @@ compare('step kinds', [
   ['builtin_steps.rs', rustKinds('src-tauri/src/builtin_steps.rs', 'known_kinds')],
   ['capability.ts', tsUnion('src/types/capability.ts', 'StepKind')],
   ['capability.schema.json', jsonSchemaEnum(agentSchema, 'step')],
+  ['mcp-server.mjs', jsObjectKeys(agentServer, 'STEP_KINDS')],
   ['validate_capability.py', pythonSet(communityValidator, 'KNOWN_STEP_KINDS')],
 ])
 
@@ -165,8 +253,32 @@ compare('check kinds', [
   ['builtin_checks.rs', rustKinds('src-tauri/src/builtin_checks.rs', 'known_kinds')],
   ['capability.ts', tsUnion('src/types/capability.ts', 'CheckKind')],
   ['capability.schema.json', jsonSchemaEnum(agentSchema, 'check')],
+  ['mcp-server.mjs', jsObjectKeys(agentServer, 'CHECK_KINDS')],
   ['validate_capability.py', pythonSet(communityValidator, 'KNOWN_CHECK_KINDS')],
 ])
+
+// Kind parity is necessary but not sufficient. mcp-server.mjs also tells
+// the agent which param names each step accepts, and a wrong name there
+// produces a recipe that passes every kind check and then fails at
+// install time. That is exactly what happened with registry-write,
+// which documented keyField/nameField/typeField/dataField while the
+// Rust step reads key/value/type.
+if (!process.exitCode) {
+  const known = rustKnownParamNames()
+  for (const kind of jsObjectKeys(agentServer, 'STEP_KINDS')) {
+    const declared = jsEntryFields(agentServer, 'STEP_KINDS', kind)
+    if (declared === null) continue
+    const invented = declared.filter((field) => !known.has(field))
+    if (invented.length) {
+      fail(
+        `mcp-server.mjs tells the agent that ${kind} accepts ` +
+          `${invented.join(', ')}, which the Rust runner never reads. ` +
+          `An agent authoring that step would produce a recipe that ` +
+          `passes every kind check and then fails at install time.`,
+      )
+    }
+  }
+}
 
 if (process.exitCode) {
   console.error(
@@ -175,6 +287,8 @@ if (process.exitCode) {
   console.error('  src-tauri/src/builtin_steps.rs / builtin_checks.rs')
   console.error('  src/types/capability.ts')
   console.error(`  ${agentSchema}`)
+  console.error(`  ${agentServer} (STEP_KINDS / CHECK_KINDS, and the ` +
+    '`fields` array of every entry)')
   console.error(`  ${communityValidator}`)
   process.exit(process.exitCode)
 }
