@@ -9,6 +9,7 @@ mod capability;
 mod capability_authoring;
 mod capability_runner;
 mod cheeky;
+mod collection;
 mod community_catalog;
 mod desktop_shortcut;
 mod gog;
@@ -118,6 +119,13 @@ pub fn run() {
             capability_runner::capability_get,
             capability_runner::capability_reload,
             capability_runner::community_capability_install,
+            // The one collection command. `collection_install`,
+            // `collection_resume`, `collection_abort` and
+            // `collection_save_yaml` belonged to the session runner the
+            // `feat/agent-mcp` branch paired this loader with; they are
+            // not here, and registering them would put a second install
+            // path back next to `community_capability_install`.
+            collection::collection_list,
             capability_authoring::validate_capability_yaml,
             capability_authoring::preview_capability_plan,
             capability_authoring::save_capability_yaml,

@@ -510,6 +510,9 @@ const ptBR = {
   collectionInstallConfirmDetailReplace: 'Arquivos que já existem ali podem ser substituídos.',
   collectionInstallConfirmDetailBackup: 'O Moddin faz backup de cada arquivo que mexe e registra a mudança no Histórico, então dá pra desfazer.',
   collectionInstallConfirmDetailGameClosed: 'Feche o jogo antes — o Moddin não escreve enquanto ele estiver rodando.',
+  collectionBlockedHeading: 'Não instalável em {game}',
+  collectionBlockedWrongGame: 'Montado para {target}, e {game} é o jogo que você escolheu.',
+  collectionBlockedEngineMismatch: '{capability} não dá suporte a {game} — dá suporte a {supported}.',
 
   // Contribute
   contributeButton: 'Contribuir',

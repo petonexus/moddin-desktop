@@ -9,7 +9,7 @@ import { useCollectionInstall } from '../../composables/useCollectionInstall'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
 import { readLocalValue } from '../../services/storage'
 import { findCatalogGameById } from '../../services/catalog'
-import type { CollectionSummary } from '../../types/collection'
+import type { CollectionBlocker, CollectionSummary } from '../../types/collection'
 
 /**
  * Sidebar panel that lists collections and hands a chosen one to the
@@ -45,6 +45,37 @@ const collectionsError = computed<string | null>(() =>
  */
 const pendingId = computed(() => pending.value?.id ?? null)
 
+/**
+ * Collections the loader refused for the selected game, with the reason.
+ *
+ * The verdict is the backend's, not a rule re-derived here: the loader
+ * resolves the engine gate the same way `capability_list` does, so this
+ * list cannot claim a set is fine that the capability cards would hide,
+ * or the reverse. A collection curated for another game stays in the
+ * list — the AI assistant recommends across games, and a user with two
+ * games in their library can see what the other one gets — but the wizard
+ * will not open for it.
+ */
+const blockedRows = computed(() => {
+  if (selectedGame.value.gameId === null) return []
+  return install.collections.value
+    .map((entry) => ({ entry, blockers: entry.preset?.blocked ?? [] }))
+    .filter((row) => row.blockers.length > 0)
+})
+
+function blockerText(entry: CollectionSummary, blocker: CollectionBlocker) {
+  const game = selectedGame.value.gameName ?? selectedGame.value.gameId ?? ''
+  if (blocker.kind === 'wrongGame') {
+    return t('collectionBlockedWrongGame', { target: blocker.targetGame ?? '', game })
+  }
+  const member = entry.preset?.capabilities.find((capability) => capability.id === blocker.capabilityId)
+  return t('collectionBlockedEngineMismatch', {
+    capability: member?.displayName ?? blocker.capabilityId ?? '',
+    supported: blocker.supportedEngines.join(', '),
+    game,
+  })
+}
+
 const errorRules = computed<FriendlyErrorRule[]>(() => [
   { context: 'load', title: t('collectionErrorLoadTitle'), why: t('collectionErrorLoadWhy'), showRaw: true },
   { title: t('collectionErrorGenericTitle'), why: t('collectionErrorGenericWhy'), showRaw: true },
@@ -67,6 +98,11 @@ function closePanel() {
 }
 
 function choose(summary: CollectionSummary) {
+  // A set the loader already refused must not reach the wizard. The
+  // wizard installs every member in order, so the refusal would arrive
+  // halfway through the run with files already written, instead of here
+  // where the reason is already on screen.
+  if (selectedGame.value.gameId !== null && (summary.preset?.blocked ?? []).length > 0) return
   pending.value = summary
 }
 
@@ -110,6 +146,20 @@ watch(open, (isOpen) => {
       size="lg"
       @close="closePanel"
     >
+      <div v-if="blockedRows.length > 0" class="collections-blocked" role="status">
+        <p class="collections-blocked-heading">
+          {{ t('collectionBlockedHeading', { game: selectedGame.gameName ?? selectedGame.gameId ?? '' }) }}
+        </p>
+        <ul>
+          <li v-for="row in blockedRows" :key="row.entry.id">
+            <strong>{{ row.entry.displayName }}</strong>
+            <span v-for="(blocker, index) in row.blockers" :key="index">
+              {{ blockerText(row.entry, blocker) }}
+            </span>
+          </li>
+        </ul>
+      </div>
+
       <CollectionsTab
         :collections="install.collections.value"
         :loading="install.collectionsLoading.value"
@@ -135,3 +185,31 @@ watch(open, (isOpen) => {
     />
   </Teleport>
 </template>
+
+<style scoped>
+/*
+ * The refused sets sit above the list rather than inside a row: the row
+ * is owned by `CollectionsTab`, and a reason that changes the meaning of
+ * an entire list does not belong to any one entry. Quiet styling on
+ * purpose — this is a note about two of six rows, not an error.
+ */
+.collections-blocked {
+  display: grid;
+  gap: var(--moddin-space-2);
+  margin-bottom: var(--moddin-space-4);
+  padding: var(--moddin-space-3) var(--moddin-space-4);
+  border: 1px solid var(--moddin-line-soft);
+  border-radius: var(--moddin-radius-md);
+  background: var(--moddin-surface-2);
+}
+
+.collections-blocked-heading {
+  margin: 0;
+  color: var(--moddin-text-soft);
+  font-size: var(--moddin-text-sm);
+}
+
+.collections-blocked ul { margin: 0; padding-left: var(--moddin-space-4); }
+.collections-blocked li { font-size: var(--moddin-text-sm); color: var(--moddin-text-muted); }
+.collections-blocked strong { color: var(--moddin-text); margin-right: var(--moddin-space-2); }
+</style>

@@ -504,6 +504,9 @@ const en = {
   collectionInstallConfirmDetailReplace: 'Files that already exist there can be replaced.',
   collectionInstallConfirmDetailBackup: 'Moddin backs up every file it changes and records each change in History, so you can undo it.',
   collectionInstallConfirmDetailGameClosed: 'Close the game first — Moddin will not write while it is running.',
+  collectionBlockedHeading: 'Not installable into {game}',
+  collectionBlockedWrongGame: 'Curated for {target}, and {game} is the game you picked.',
+  collectionBlockedEngineMismatch: '{capability} does not support {game} — it supports {supported}.',
 
   // Contribute
   contributeButton: 'Contribute',

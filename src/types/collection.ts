@@ -18,7 +18,12 @@
  * and nothing here mirrors a Tauri payload.
  */
 
-export type { CollectionPreset, CollectionSummary } from '../features/collection/service'
+export type {
+  CollectionBlocker,
+  CollectionMember,
+  CollectionPreset,
+  CollectionSummary,
+} from '../features/collection/service'
 
 export type CollectionCategory = 'vr' | 'graphics' | 'qol' | 'system'
 

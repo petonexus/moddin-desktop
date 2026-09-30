@@ -1,0 +1,46 @@
+# Curated bundle: S.T.A.L.K.E.R. 2 in VR.
+#
+# Same two recipes as the Cyberpunk bundle, on the other engine: both
+# declare `unreal5`, the engine `src/catalog/games/stalker-2.yaml`
+# declares. `requiredEngines` is load-time validation, not documentation —
+# a member that does not declare one of the engines the collection claims
+# is refused by `src-tauri/src/collection.rs` before the panel can offer
+# the set.
+id: vr-stalker-2-stack
+displayName: S.T.A.L.K.E.R. 2 VR performance stack
+description: >-
+  DLSS Super Resolution through OptiScaler plus OpenXR frame generation,
+  for playing S.T.A.L.K.E.R. 2 in VR at a resolution the headset can hold.
+  Close the game and the OFXR tray before applying — both recipes write
+  into the game folder, and a running game holds the file the runner needs
+  to replace.
+category: vr
+status: available
+targetGame: stalker-2
+requiredEngines:
+  - unreal5
+# Two authoring decisions worth keeping in the file rather than in a doc
+# nobody reads:
+#
+# 1. UEVR is deliberately absent. The `uevr` recipe is `status: planned`,
+#    and a planned recipe refuses to install with a message instead of
+#    reporting success while writing nothing — a collection naming it would
+#    advertise a member the runner turns down. This is the mistake the
+#    `feat/agent-mcp` branch's own collections made.
+# 2. OptiScaler ships a frame-generation mode of its own. Leave it off
+#    when OFXR Bridge is doing the frame generation.
+#
+# The S.T.A.L.K.E.R. 2 catalogue entry marks this OptiScaler release
+# `compatibilityStatus: proven` and pins the upstream official build; keep
+# that version unless another one has been tested.
+capabilities:
+  - id: optiscaler
+    required: true
+    note: >-
+      DLSS Super Resolution, from the official OptiScaler build the
+      S.T.A.L.K.E.R. 2 catalogue entry pins and marks proven.
+  - id: ofxr-bridge
+    required: true
+    note: >-
+      Optical-flow frame generation delivered inside the headset through
+      OpenXR, on top of the upscaled image OptiScaler produces.

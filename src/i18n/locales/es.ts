@@ -504,6 +504,9 @@ const es = {
   collectionInstallConfirmDetailReplace: 'Los archivos que ya existen ahí pueden ser reemplazados.',
   collectionInstallConfirmDetailBackup: 'Moddin hace copia de cada archivo que modifica y registra el cambio en el Historial, así que puedes deshacerlo.',
   collectionInstallConfirmDetailGameClosed: 'Cierra el juego primero — Moddin no escribe mientras esté corriendo.',
+  collectionBlockedHeading: 'No instalable en {game}',
+  collectionBlockedWrongGame: 'Creado para {target}, y {game} es el juego que elegiste.',
+  collectionBlockedEngineMismatch: '{capability} no es compatible con {game}: es compatible con {supported}.',
 
   // Contribute
   contributeButton: 'Contribuir',

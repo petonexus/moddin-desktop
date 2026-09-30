@@ -1,0 +1,51 @@
+# Curated bundle: Cyberpunk 2077 in VR.
+#
+# Every member here is a shipped recipe with `status: available` that
+# declares `redengine`, the engine `src/catalog/games/cyberpunk-2077.yaml`
+# declares, so the engine gate offers both of them to this game and to
+# nobody else. `src-tauri/src/collection.rs` refuses to load a collection
+# whose members break any of those rules, and its tests check the shipped
+# files against the shipped catalogue, so this file cannot rot into a set
+# the user cannot install without a test failing.
+#
+# Install order is the order below: OptiScaler provides the upscaler the
+# headset view runs on, and OFXR Bridge does the frame generation on top of
+# it. The collection is a list — each member is installed by the existing
+# `community_capability_install` command, one at a time, with that
+# command's own preflight, transaction and rollback.
+id: vr-cyberpunk-2077-stack
+displayName: Cyberpunk 2077 VR performance stack
+description: >-
+  The two capabilities that make Cyberpunk 2077 hold up in VR: DLSS Super
+  Resolution through OptiScaler for the flat view the headset is tethered
+  to, and optical-flow frame generation streamed into the headset through
+  OpenXR. Close Cyberpunk 2077 and the OFXR tray before applying — both
+  recipes write into the game folder, and a running game holds the file
+  the runner needs to replace.
+category: vr
+status: available
+targetGame: cyberpunk-2077
+requiredEngines:
+  - redengine
+# Two authoring decisions worth keeping in the file rather than in a
+# doc nobody reads:
+#
+# 1. OptiScaler ships a frame-generation mode of its own. OFXR Bridge is
+#    the one doing the frame generation in this set; running both is the
+#    configuration neither recipe tests.
+# 2. Cheeky Foveated DLSS is deliberately absent. It is a ReShade add-on,
+#    and ReShade's dxgi.dll proxy collides with OptiScaler's unless the
+#    two are pinned to different files — a decision about one user's
+#    folder that a collection should not make for them.
+capabilities:
+  - id: optiscaler
+    required: true
+    note: >-
+      DLSS Super Resolution for the flat view. The Cyberpunk catalogue pins
+      the release and its checksum, so this is the same OptiScaler the
+      game page installs.
+  - id: ofxr-bridge
+    required: true
+    note: >-
+      Optical-flow frame generation delivered inside the headset through
+      OpenXR, on top of the upscaled image OptiScaler produces.
