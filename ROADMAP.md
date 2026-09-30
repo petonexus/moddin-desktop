@@ -513,12 +513,29 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       precedence rule in `src/features/capability-modules/config.ts`, and a required field with
       no value is refused **before** any install call instead of failing inside the first step
       the run had already begun.
-- [ ] **Translate `safetyNotes`, `configSchema[].description` and `displayName`.** — new
+- [-] **Translate `safetyNotes`, `configSchema[].description` and `displayName`.** — new
       The localization boundary covers the four backend-authored identifiers and the card
-      description. These four are still English in pt-BR and es. `check.detail` deliberately
-      stays as-is: it is data with an embedded version, not prose. The three new collection
-      and check labels added in this pass were written by hand in all three locales; the
-      `configSchema[].description` strings in the recipes are the remaining bulk.
+      description. These three were not. **The decision, and the part worth arguing about:**
+      `displayName` is in scope, and the other two are not.
+
+      `displayName` is a short label behind a stable id, and the app already rewrites
+      `description` the same way, so it gets a `CAPABILITY_NAMES` table beside
+      `capabilityDescriptionKey` — same shape, same exhaustiveness guard, three locales written
+      by hand.
+
+      `safetyNotes` and `configSchema[].description` stay in the recipe's own language, for the
+      reason this codebase already wrote down about community recipes: *"that text is the
+      author's, not the backend's, and the app does not get to rewrite what a person wrote."*
+      That was written to protect an outside author from being paraphrased. It applies with more
+      force to first-party prose that is mostly **warnings** — a note saying a registry write
+      needs UAC, or that a transaction rollback is partial, is text the reader is relying on.
+      A machine rendering of a safety warning is worse than an English one, because the reader
+      has no way to check it. Translating them is not a localization gap; it is a safety
+      regression wearing one.
+
+      If that call is wrong, the honest way to reverse it is per-field opt-in with a human
+      reviewer on the copy, not a blanket pass. `check.detail` stays as-is either way: it is
+      data with an embedded version, not prose.
 - [ ] **A real Save-As in the profile import/export.** — new
       The profiles feature has a storage layer and a YAML shape, but there is no file dialog,
       so export writes nothing the user can reach. `tauri-plugin-dialog` is the missing
