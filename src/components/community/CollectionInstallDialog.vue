@@ -40,9 +40,32 @@ const pendingConfirm = ref(false)
 
 const plan = computed(() => props.summary.preset?.capabilities ?? [])
 
+/**
+ * What the user is told when a member has no config for this game.
+ *
+ * A collection run has no per-member form to ask on, so the refusal has to
+ * name the member and the fields itself — otherwise the dialog falls
+ * through to `install.error`, which is null for this code, and the user
+ * gets a generic heading with an empty body. One line per member, because
+ * "nothing was installed" is only actionable when it says what to fix.
+ */
+const needsConfigWhy = computed<string | null>(() => {
+  const missing = install.missingConfig.value
+  if (missing.length === 0) return null
+  return missing
+    .map((item) =>
+      t('collectionErrorNeedsConfig', {
+        capability: item.capabilityId,
+        fields: item.fields.join(', '),
+      }),
+    )
+    .join(' ')
+})
+
 const error = computed<string | null>(() => {
   if (install.errorCode.value === 'noGame') return t('collectionNoGame')
   if (install.errorCode.value === 'noPreset') return t('collectionErrorNoPresetWhy')
+  if (install.errorCode.value === 'needsConfig') return needsConfigWhy.value
   return install.error.value
 })
 
@@ -56,7 +79,17 @@ const errorRules = computed<FriendlyErrorRule[]>(() => [
 ])
 
 /** Copy this panel already wrote; it needs surfacing, not re-titling. */
-const alreadyLocalized = computed(() => [t('collectionNoGame'), t('collectionErrorNoPresetWhy')])
+const alreadyLocalized = computed(() => [
+  t('collectionNoGame'),
+  t('collectionErrorNoPresetWhy'),
+  // A per-member line, not a fixed string: the body changes with the game.
+  ...install.missingConfig.value.map((item) =>
+    t('collectionErrorNeedsConfig', {
+      capability: item.capabilityId,
+      fields: item.fields.join(', '),
+    }),
+  ),
+])
 
 const friendlyError = useFriendlyError({
   error,

@@ -19,22 +19,44 @@ import type { CollectionSummary } from '../../../types/collection'
 vi.mock('../../../features/collection/service', () => ({ listCollections: vi.fn() }))
 vi.mock('../../../features/community/service', () => ({ installCommunityCapability: vi.fn() }))
 vi.mock('../../../features/capability-modules/service', () => ({
+  // The whole surface the composable reaches for. It used to mock only
+  // `resolveInstallTarget` and `uninstallCapability`, so `listCapabilities`
+  // was undefined: the composable caught that, cleared its registry of
+  // built-in ids, and sent every member down the community path. The test
+  // below then asserted the community command *and passed* — on a branch
+  // the mock had forced, not the one a real build takes.
+  listCapabilities: vi.fn(),
+  getCapabilitySpec: vi.fn(),
+  installCapability: vi.fn(),
   resolveInstallTarget: vi.fn(),
   uninstallCapability: vi.fn(),
 }))
-vi.mock('../../../services/catalog', () => ({ findCatalogGameById: vi.fn(() => null) }))
+vi.mock('../../../services/catalog', () => ({
+  findCatalogGameById: vi.fn(() => null),
+  resolveCatalogConfig: vi.fn(() => ({})),
+}))
 
 import { listCollections } from '../../../features/collection/service'
 import { installCommunityCapability } from '../../../features/community/service'
-import { resolveInstallTarget, uninstallCapability } from '../../../features/capability-modules/service'
-import { findCatalogGameById } from '../../../services/catalog'
+import {
+  getCapabilitySpec,
+  installCapability,
+  listCapabilities,
+  resolveInstallTarget,
+  uninstallCapability,
+} from '../../../features/capability-modules/service'
+import { findCatalogGameById, resolveCatalogConfig } from '../../../services/catalog'
 import type { CommunityInstallResult } from '../../../features/community/types'
 
 const mockedList = vi.mocked(listCollections)
 const mockedInstall = vi.mocked(installCommunityCapability)
+const mockedCapabilityList = vi.mocked(listCapabilities)
+const mockedSpec = vi.mocked(getCapabilitySpec)
+const mockedInstallCapability = vi.mocked(installCapability)
 const mockedResolve = vi.mocked(resolveInstallTarget)
 const mockedUninstall = vi.mocked(uninstallCapability)
 const mockedFindGame = vi.mocked(findCatalogGameById)
+const mockedResolveConfig = vi.mocked(resolveCatalogConfig)
 
 enableAutoUnmount(afterEach)
 
@@ -49,9 +71,13 @@ beforeEach(() => {
   i18n.global.locale.value = 'en'
   mockedList.mockReset()
   mockedInstall.mockReset()
+  mockedCapabilityList.mockReset()
+  mockedSpec.mockReset()
+  mockedInstallCapability.mockReset()
   mockedResolve.mockReset()
   mockedUninstall.mockReset()
   mockedFindGame.mockReset()
+  mockedResolveConfig.mockReset()
 
   window.localStorage.setItem('moddin-selected-appId', 'elden-ring')
   mockedFindGame.mockReturnValue({
@@ -60,6 +86,25 @@ beforeEach(() => {
     executable: 'eldenring.exe',
     modules: [],
   })
+  // Both members are recipes this build ships. That is the branch under
+  // test: a registered member goes through `capability_install`.
+  mockedCapabilityList.mockResolvedValue([
+    { id: 'uevr', origin: 'builtIn' },
+    { id: 'vd', origin: 'builtIn' },
+  ] as Awaited<ReturnType<typeof listCapabilities>>)
+  // No required fields, so the run is not refused before it starts. Only
+  // `configSchema` is read on this path, so the rest of the spec is stubbed
+  // out rather than filled in to satisfy the type.
+  mockedSpec.mockResolvedValue({ configSchema: [] } as unknown as Awaited<
+    ReturnType<typeof getCapabilitySpec>
+  >)
+  mockedResolveConfig.mockReturnValue({})
+  mockedInstallCapability.mockResolvedValue({
+    capabilityId: 'uevr',
+    transaction: { id: 'tx-1' },
+    steps: [],
+    affectedPaths: [],
+  } as unknown as Awaited<ReturnType<typeof installCapability>>)
   mockedResolve.mockResolvedValue({
     gameId: 'elden-ring',
     gameName: 'Elden Ring',
@@ -145,9 +190,14 @@ describe('CollectionsPanel — the install path', () => {
     confirmButton()?.click()
     await flushPromises()
 
-    // Two capabilities, two calls, in the order the preset lists them.
-    expect(mockedInstall).toHaveBeenCalledTimes(2)
-    expect(mockedInstall).toHaveBeenNthCalledWith(1, {
+    // Both members are recipes this build ships, so both go out through
+    // `capability_install` — the same command the game page uses. The
+    // community command is for a recipe that is not in the registry, and
+    // the loader has already refused a collection that names one.
+    expect(mockedInstallCapability).toHaveBeenCalledTimes(2)
+    expect(mockedInstall).not.toHaveBeenCalled()
+
+    expect(mockedInstallCapability).toHaveBeenNthCalledWith(1, {
       capabilityId: 'uevr',
       gameId: 'elden-ring',
       gameName: 'Elden Ring',
@@ -157,10 +207,15 @@ describe('CollectionsPanel — the install path', () => {
       // into `{ values: { … } }`, so the bare `{}` this used to assert
       // was rejected by the backend before the run began.
       config: { values: {} },
-      // Fail closed: a collection may not wave through an unsigned recipe.
-      acceptUnsigned: false,
+      // No `acceptUnsigned` here, and there should not be: that flag is how
+      // the community command says "this recipe is not in the registry".
+      // A member the registry *does* know is trusted by definition, so the
+      // flag would be a category error rather than a safety belt.
     })
-    expect(mockedInstall).toHaveBeenNthCalledWith(
+    expect(mockedInstallCapability).not.toHaveBeenCalledWith(
+      expect.objectContaining({ acceptUnsigned: expect.anything() }),
+    )
+    expect(mockedInstallCapability).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ capabilityId: 'vd' }),
     )
@@ -204,6 +259,40 @@ describe('CollectionsPanel — the install path', () => {
     expect((confirmButton() as HTMLButtonElement).tagName).toBe('BUTTON')
   })
 
+  /**
+   * A member whose required field has no value refuses the whole run, and
+   * the refusal has to say which member and which field.
+   *
+   * Before this the dialog fell through to `install.error`, which is null
+   * for the `needsConfig` code, so the user got the generic heading with
+   * nothing under it — told something failed, with no way to act on it.
+   */
+  it('names the member and the field when the catalogue has no value for it', async () => {
+    mockedSpec.mockImplementation((capabilityId: string) =>
+      Promise.resolve({
+        configSchema:
+          capabilityId === 'uevr'
+            ? [{ name: 'downloadUrl', type: 'url', required: true }]
+            : [],
+      } as unknown as Awaited<ReturnType<typeof getCapabilitySpec>>),
+    )
+    await openPanel()
+    await requestInstall()
+    confirmButton()?.click()
+    await flushPromises()
+
+    // Refused before anything was written.
+    expect(mockedInstallCapability).not.toHaveBeenCalled()
+    expect(mockedInstall).not.toHaveBeenCalled()
+
+    const text = dialogs()[0]?.textContent ?? ''
+    expect(text).toContain('uevr')
+    expect(text).toContain('downloadUrl')
+    // And it says what state the folder is in, so the user knows the run
+    // did not half-finish.
+    expect(text).toContain('Nothing was installed')
+  })
+
   it('dismisses the confirmation on Escape without issuing the command', async () => {
     await openPanel()
     await requestInstall()
@@ -222,13 +311,13 @@ describe('CollectionsPanel — the install path', () => {
 
   it('reverts what the run installed, newest first, through the capability uninstall', async () => {
     // The first capability lands; the second one cannot.
-    mockedInstall
+    mockedInstallCapability
       .mockResolvedValueOnce({
         capabilityId: 'uevr',
         transaction: { id: 'tx-1' },
         steps: [],
         affectedPaths: [],
-      } as CommunityInstallResult)
+      } as unknown as Awaited<ReturnType<typeof installCapability>>)
       .mockRejectedValueOnce(new Error('VirtualDesktop needs a writable folder'))
     await openPanel()
     await requestInstall()
@@ -298,7 +387,9 @@ describe('CollectionsPanel — states', () => {
   })
 
   it('surfaces a failed install through ErrorCallout, not the raw message', async () => {
-    mockedInstall.mockRejectedValue(new Error('0x80070005: access denied to C:\\games\\elden-ring'))
+    mockedInstallCapability.mockRejectedValue(
+      new Error('0x80070005: access denied to C:\\games\\elden-ring'),
+    )
     await openPanel()
     await requestInstall()
     confirmButton()?.click()

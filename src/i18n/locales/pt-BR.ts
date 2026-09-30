@@ -498,6 +498,7 @@ const ptBR = {
   collectionErrorHeading: 'A collection parou com erro',
   collectionNoGame: 'Primeiro escolha na biblioteca pra qual jogo é essa collection — o Moddin precisa saber em qual pasta escrever.',
   collectionErrorNoPresetWhy: 'Essa collection ainda não tem nada anexado, então não há o que o Moddin possa instalar.',
+  collectionErrorNeedsConfig: 'Nada foi instalado. {capability} precisa de um valor para {fields}, e este jogo ainda não tem nenhum no catálogo.',
   collectionErrorLoadTitle: 'Não deu pra carregar as collections',
   collectionErrorLoadWhy: 'O Moddin não conseguiu ler o catálogo de collections. Nada foi alterado.',
   collectionErrorInstallTitle: 'A collection não terminou',

@@ -492,6 +492,7 @@ const es = {
   collectionErrorHeading: 'La collection se detuvo con un error',
   collectionNoGame: 'Elige primero en tu biblioteca para qué juego es esta collection — Moddin necesita saber en qué carpeta escribir.',
   collectionErrorNoPresetWhy: 'Esta collection todavía no tiene nada adjunto, así que no hay nada que Moddin pueda instalar.',
+  collectionErrorNeedsConfig: 'No se instaló nada. {capability} necesita un valor para {fields}, y este juego todavía no tiene ninguno en el catálogo.',
   collectionErrorLoadTitle: 'No se pudieron cargar las collections',
   collectionErrorLoadWhy: 'Moddin no pudo leer el catálogo de collections. No se cambió nada.',
   collectionErrorInstallTitle: 'La collection no terminó',

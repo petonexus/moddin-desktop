@@ -492,6 +492,7 @@ const en = {
   collectionErrorHeading: 'The collection stopped with an error',
   collectionNoGame: 'Pick the game this collection is for in your library first — Moddin needs to know which folder to write into.',
   collectionErrorNoPresetWhy: 'This collection has nothing attached to it yet, so there is nothing Moddin can install.',
+  collectionErrorNeedsConfig: 'Nothing was installed. {capability} needs a value for {fields}, and this game has none in the catalogue yet.',
   collectionErrorLoadTitle: 'Collections could not be loaded',
   collectionErrorLoadWhy: 'Moddin could not read the collection catalog. Nothing was changed.',
   collectionErrorInstallTitle: 'The collection did not finish',
