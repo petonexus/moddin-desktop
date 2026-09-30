@@ -6,9 +6,10 @@ import type { CapabilityConfigValue } from '../capability-modules/types'
 import {
   listTransactions,
   loadProfileContext,
+  pickProfileFile,
   readProfileFile,
   revealProfileFile,
-  writeProfileFile,
+  saveProfileFile,
 } from './service'
 import type { ProfileFileResult } from './service'
 import {
@@ -25,7 +26,7 @@ import {
 } from './types'
 
 /** Which action produced `error`; the raw string alone cannot say. */
-export type ProfileAction = 'export' | 'import' | 'apply' | 'reveal'
+export type ProfileAction = 'export' | 'import' | 'browse' | 'apply' | 'reveal'
 
 /** A refusal the view already knows how to phrase. */
 export interface ProfileNotice {
@@ -147,21 +148,31 @@ export function useProfiles(options: UseProfilesOptions = {}) {
     () => Boolean(preview.value) && (preview.value?.applyCount ?? 0) > 0 && !applying.value,
   )
 
+  /**
+   * Export, to wherever the user says.
+   *
+   * The file name is what the Save-As dialog starts with; the folder is
+   * the user's answer and this function has no second opinion about it.
+   * A dismissed dialog is the one branch that reports nothing at all —
+   * no error, no notice, and the previous result left standing, because
+   * "no" is not a thing that went wrong.
+   */
   async function runExport() {
     if (!canExport.value) return false
     busy.value = true
     clearMessages()
-    exportResult.value = null
     try {
       const document = await buildExport()
       if (!document.games.length) {
         notice.value = { code: 'export-empty', detail: '' }
         return false
       }
-      exportResult.value = await writeProfileFile(
+      const saved = await saveProfileFile(
         fileName.value.trim(),
         `${JSON.stringify(document, null, 2)}\n`,
       )
+      if (!saved) return false
+      exportResult.value = saved
       return true
     } catch (err) {
       fail('export', err)
@@ -207,6 +218,31 @@ export function useProfiles(options: UseProfilesOptions = {}) {
     } finally {
       busy.value = false
     }
+  }
+
+  /**
+   * Ask which profile file to read, then read that one.
+   *
+   * The path box keeps the answer, so a file picked here and a path
+   * pasted there are the same thing from here on — and a dismissed
+   * dialog leaves both the box and the current preview exactly as they
+   * were, because a file that was never opened cannot have changed
+   * anything.
+   */
+  async function browseImport() {
+    if (busy.value) return false
+    busy.value = true
+    try {
+      const chosen = await pickProfileFile()
+      if (!chosen) return false
+      importPath.value = chosen
+    } catch (err) {
+      fail('browse', err)
+      return false
+    } finally {
+      busy.value = false
+    }
+    return readImport()
   }
 
   /** Forget the loaded profile. Applies nothing; that is the point. */
@@ -316,6 +352,7 @@ export function useProfiles(options: UseProfilesOptions = {}) {
     canApply,
     schemaVersion: PROFILE_SCHEMA_VERSION,
     runExport,
+    browseImport,
     readImport,
     applyPreview,
     cancelImport,

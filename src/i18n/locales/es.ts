@@ -545,6 +545,8 @@ const es = {
   profileImportHint: 'Elige un perfil que exportaste antes. No se instala nada hasta que leas la vista previa y pulses Aplicar.',
   profileImportPath: 'Archivo de perfil',
   profileImportRead: 'Leer archivo',
+  profileImportBrowse: 'Examinar…',
+  profileImportBrowseTitle: 'Elige un archivo de perfil para leer',
   profileImportEmptyTitle: 'Ningún perfil cargado',
   profileImportEmptyHint: 'Pega la ruta completa del perfil arriba y léelo. Verás qué cambiaría antes de que pase nada.',
   profileImportDiscard: 'Descartar vista previa',

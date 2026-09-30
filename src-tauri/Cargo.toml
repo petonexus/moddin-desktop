@@ -31,6 +31,15 @@ serde_yaml = "0.9"
 sevenz-rust = "0.6.1"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
+# The one file dialog in the app. Pinned to the 2.7 line because 2.8
+# requires `tauri = "^2.12"` and the lock is on 2.11.5 for the reason the
+# updater pin below gives; nothing here needs 2.8.
+#
+# The webview is granted no permission for it (see
+# `src-tauri/capabilities/dialog.json`): the dialogs are opened from the
+# `profile_files` commands, so a profile can only ever be written to a
+# path the user picked in a native dialog.
+tauri-plugin-dialog = "~2.7.0"
 # Pinned to the 2.11 line on purpose: 2.12+ requires `tauri = "2.12"`,
 # so a wider range here would silently drag the whole graph — and the
 # toolchain that `rust-toolchain.toml` pins — off the version CI verifies.

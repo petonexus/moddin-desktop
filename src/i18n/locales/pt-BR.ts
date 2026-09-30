@@ -551,6 +551,8 @@ const ptBR = {
   profileImportHint: 'Escolha um perfil que você exportou antes. Nada é instalado até você ler a prévia e apertar Aplicar.',
   profileImportPath: 'Arquivo de perfil',
   profileImportRead: 'Ler arquivo',
+  profileImportBrowse: 'Procurar…',
+  profileImportBrowseTitle: 'Escolha um arquivo de perfil para ler',
   profileImportEmptyTitle: 'Nenhum perfil carregado',
   profileImportEmptyHint: 'Cole o caminho completo do perfil acima e leia. Você vê o que ele mudaria antes de qualquer coisa acontecer.',
   profileImportDiscard: 'Descartar prévia',

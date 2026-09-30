@@ -545,6 +545,8 @@ const en = {
   profileImportHint: 'Pick a profile file you exported before. Nothing is installed until you read the preview and press Apply.',
   profileImportPath: 'Profile file',
   profileImportRead: 'Read file',
+  profileImportBrowse: 'Browse…',
+  profileImportBrowseTitle: 'Pick a profile file to read',
   profileImportEmptyTitle: 'No profile loaded',
   profileImportEmptyHint: 'Paste the full path of a profile file above and read it. You will see what it would change before anything happens.',
   profileImportDiscard: 'Discard preview',

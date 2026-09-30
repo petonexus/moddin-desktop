@@ -5,9 +5,10 @@ import { i18n } from '../../../i18n'
 import {
   listTransactions,
   loadProfileContext,
+  pickProfileFile,
   readProfileFile,
   revealProfileFile,
-  writeProfileFile,
+  saveProfileFile,
 } from '../service'
 import { installCapability } from '../../capability-modules/service'
 import { PROFILE_KIND, PROFILE_SCHEMA_VERSION, type ProfileImportContext } from '../types'
@@ -27,9 +28,10 @@ import type { CapabilitySpec, CapabilitySummary } from '../../../types/capabilit
 vi.mock('../service', () => ({
   listTransactions: vi.fn(),
   loadProfileContext: vi.fn(),
+  pickProfileFile: vi.fn(),
   readProfileFile: vi.fn(),
   revealProfileFile: vi.fn(),
-  writeProfileFile: vi.fn(),
+  saveProfileFile: vi.fn(),
 }))
 
 vi.mock('../../capability-modules/service', () => ({
@@ -38,8 +40,9 @@ vi.mock('../../capability-modules/service', () => ({
 
 const mockedList = vi.mocked(listTransactions)
 const mockedContext = vi.mocked(loadProfileContext)
+const mockedPick = vi.mocked(pickProfileFile)
 const mockedRead = vi.mocked(readProfileFile)
-const mockedWrite = vi.mocked(writeProfileFile)
+const mockedSave = vi.mocked(saveProfileFile)
 const mockedReveal = vi.mocked(revealProfileFile)
 const mockedInstall = vi.mocked(installCapability)
 
@@ -132,13 +135,14 @@ beforeEach(() => {
   mockedList.mockReset()
   mockedContext.mockReset()
   mockedRead.mockReset()
-  mockedWrite.mockReset()
+  mockedPick.mockReset()
+  mockedSave.mockReset()
   mockedReveal.mockReset()
   mockedInstall.mockReset()
   mockedList.mockResolvedValue([])
   mockedContext.mockResolvedValue(importContext())
   mockedRead.mockResolvedValue({ path: 'C:\\inbox\\profile.json', contents: documentJson([GOOD_ENTRY]) })
-  mockedWrite.mockResolvedValue({ path: 'C:\\localappdata\\Moddin\\profiles\\exports\\p.json', bytes: 64 })
+  mockedSave.mockResolvedValue({ path: 'C:\\Users\\you\\Desktop\\p.json', bytes: 64 })
   mockedReveal.mockResolvedValue(null)
 })
 
@@ -199,10 +203,17 @@ async function click(element: Element | null | undefined) {
   await flushPromises()
 }
 
-/** Fill the import path and press "Read file". */
+/**
+ * Fill the import path and press "Read file".
+ *
+ * By label, not by position. The import row holds a "Browse" button and a
+ * "Read file" button, so `panelRowButtons()[1]` is whichever of the two was
+ * added last, and every test that went through this helper broke the day
+ * the other button appeared.
+ */
 async function readProfile() {
   await setInput(panelInputs()[1], 'C:\\inbox\\profile.json')
-  await click(panelRowButtons()[1])
+  await click(buttonLabelled('Read file'))
 }
 
 async function pressApply() {
@@ -400,8 +411,8 @@ describe('ProfilesPanel — exporting a profile', () => {
 
     await click(panelRowButtons()[0])
 
-    expect(mockedWrite).toHaveBeenCalledTimes(1)
-    expect(panel()?.textContent).toContain('C:\\localappdata\\Moddin\\profiles\\exports\\p.json')
+    expect(mockedSave).toHaveBeenCalledTimes(1)
+    expect(panel()?.textContent).toContain('C:\\Users\\you\\Desktop\\p.json')
   })
 
   it('says there is nothing to export rather than writing an empty file', async () => {
@@ -410,7 +421,7 @@ describe('ProfilesPanel — exporting a profile', () => {
     await click(panelRowButtons()[0])
 
     expect(callouts()[0].textContent).toContain('There is nothing to export yet')
-    expect(mockedWrite).not.toHaveBeenCalled()
+    expect(mockedSave).not.toHaveBeenCalled()
   })
 
   it('will not write a name that is not a .json file', async () => {
@@ -421,7 +432,7 @@ describe('ProfilesPanel — exporting a profile', () => {
     expect(panelRowButtons()[0].disabled).toBe(true)
     await click(panelRowButtons()[0])
 
-    expect(mockedWrite).not.toHaveBeenCalled()
+    expect(mockedSave).not.toHaveBeenCalled()
   })
 
   it('opens the folder the file went to on request', async () => {
@@ -431,6 +442,6 @@ describe('ProfilesPanel — exporting a profile', () => {
 
     await click(buttonLabelled('Show the file'))
 
-    expect(mockedReveal).toHaveBeenCalledWith('C:\\localappdata\\Moddin\\profiles\\exports\\p.json')
+    expect(mockedReveal).toHaveBeenCalledWith('C:\\Users\\you\\Desktop\\p.json')
   })
 })

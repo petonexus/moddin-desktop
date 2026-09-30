@@ -25,14 +25,29 @@ export interface ProfileFileContents {
 }
 
 /**
- * Write an export into `%LOCALAPPDATA%\Moddin\profiles\exports\`.
+ * Ask the user where the profile goes, and write it there.
  *
- * There is no save dialog in this build (see the module doc on the Rust
- * side), so `fileName` is a bare name and the folder is Moddin's. The
- * returned path is what the panel shows and what "Reveal" opens.
+ * `fileName` is the name the dialog starts with, not a destination: the
+ * path the file lands on is the user's answer, and the command writes
+ * nothing at all when they close the window — which is why the return
+ * type is nullable. `null` here is "no file was written", never a
+ * failure, and a caller that treats it as one is the bug this signature
+ * is shaped to prevent.
  */
-export function writeProfileFile(fileName: string, contents: string) {
-  return invoke<ProfileFileResult>('write_profile_file', { request: { fileName, contents } })
+export function saveProfileFile(fileName: string, contents: string) {
+  return invoke<ProfileFileResult | null>('save_profile_file', { request: { fileName, contents } })
+}
+
+/**
+ * Ask which profile file to read. `null` is the user closing the
+ * dialog.
+ *
+ * The command answers with a path and nothing else; the file is read by
+ * `readProfileFile`, so a file chosen in the dialog and a path typed in
+ * the box are judged by the same rules.
+ */
+export function pickProfileFile() {
+  return invoke<string | null>('pick_profile_file')
 }
 
 /** Read a profile from a path the user names, anywhere on the disk. */

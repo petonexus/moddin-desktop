@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dialog",
+  "description": "Deliberately grants the webview no tauri-plugin-dialog permission. The plugin's own commands (open / save / message) would let any script in the WebView raise a file dialog and learn a path, or be handed one, without the profile feature deciding anything. The two dialogs this app has are opened from the commands in src-tauri/src/profile_files.rs — application commands, outside this ACL — which validate the path the user chose before a byte is written, and answer \"nothing happened\" when the user closes the window. Same shape and same reasoning as app-update.json. JSON rather than YAML because the .yaml files in this directory are capability recipes, read by scripts/validate-catalog.mjs, and this is a Tauri ACL entry.",
+  "windows": ["main"],
+  "permissions": []
+}

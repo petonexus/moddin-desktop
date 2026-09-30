@@ -61,6 +61,7 @@ const {
   canApply,
   schemaVersion,
   runExport,
+  browseImport,
   readImport,
   applyPreview,
   cancelImport,
@@ -320,6 +321,16 @@ function closePanel() {
               :placeholder="'C:\\Users\\you\\Downloads\\moddin-profile-2026-01-31.json'"
             />
           </label>
+          <button
+            class="btn"
+            type="button"
+            :disabled="busy"
+            :title="t('profileImportBrowseTitle')"
+            @click="browseImport"
+          >
+            <AppIcon name="folder" :size="14" />
+            {{ t('profileImportBrowse') }}
+          </button>
           <button
             class="btn"
             type="button"

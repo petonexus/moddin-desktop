@@ -106,6 +106,13 @@ pub fn run() {
         // ask it to do, and the capability set grants the plugin's own
         // commands to nobody. See src-tauri/capabilities/app-update.yaml.
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // The file dialog, for the same reason and with the same shape:
+        // `profile_files` opens the two dialogs, and
+        // src-tauri/capabilities/dialog.json grants the webview no
+        // permission on the plugin. A dialog the frontend could raise on
+        // its own would let it read a path the user never chose and write
+        // to one they did.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             activity::record_ui_action_log,
             app_update::app_update_status,
@@ -130,7 +137,8 @@ pub fn run() {
             capability_authoring::preview_capability_plan,
             capability_authoring::save_capability_yaml,
             capability_authoring::validate_recommendations_yaml,
-            profile_files::write_profile_file,
+            profile_files::save_profile_file,
+            profile_files::pick_profile_file,
             profile_files::read_profile_file,
             profile_files::reveal_profile_file,
             community_catalog::community_catalog_fetch,
