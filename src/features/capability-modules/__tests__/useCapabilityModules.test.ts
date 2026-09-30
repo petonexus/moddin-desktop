@@ -335,16 +335,25 @@ describe('stateFor', () => {
   })
 
   it('still asks for a required field the catalogue has no value for', async () => {
-    // The shipped `optiscaler` recipe: `proxy` is a required path, and it
-    // is the one field the catalogue cannot know — it depends on which
-    // DLLs already live in the game folder. A default is not invented for
-    // it, and it is not quietly made optional.
-    mockedList.mockResolvedValue([summary('optiscaler')])
+    // The `ofxr-bridge` path fields. The catalogue cannot know them: they
+    // resolve under `%LOCALAPPDATA%`, and no step expands an environment
+    // variable, so a committed value would have to be a fabricated
+    // `C:\Users\<someone>\…` that breaks for every other user. A default
+    // is not invented for them, and they are not quietly made optional.
+    //
+    // This test used `optiscaler`'s `proxy` field, which made the same
+    // argument at the time. It no longer does: the catalogue now carries
+    // `proxy: dxgi.dll` for cyberpunk-2077, verified from the asset's own
+    // installer, so there is nothing left to ask for there. The field the
+    // app genuinely cannot fill is the one above.
+    mockedList.mockResolvedValue([summary('ofxr-bridge')])
     mockedSpec.mockResolvedValue(
-      spec('optiscaler', {
+      spec('ofxr-bridge', {
         configSchema: [
           { name: 'downloadUrl', type: 'url', required: true },
-          { name: 'proxy', type: 'path', required: true },
+          { name: 'backend', type: 'enum', required: true },
+          { name: 'runtimePath', type: 'path', required: true },
+          { name: 'trayExe', type: 'path', required: true },
         ],
       }),
     )
@@ -352,8 +361,11 @@ describe('stateFor', () => {
 
     await modules.ensureLoaded()
 
-    expect(modules.stateFor('optiscaler').configValues.downloadUrl).toContain('Optiscaler_0.9.4')
-    expect(modules.missingRequiredFields('optiscaler')).toEqual(['proxy'])
+    // What the catalogue does know is still used.
+    expect(modules.stateFor('ofxr-bridge').configValues.downloadUrl).toContain('OFXR-Bridge')
+    expect(modules.stateFor('ofxr-bridge').configValues.backend).toBe('fidelityfx')
+    // And what it cannot know is still asked for, both of it, in order.
+    expect(modules.missingRequiredFields('ofxr-bridge')).toEqual(['runtimePath', 'trayExe'])
   })
 
   it('fills from the catalogue of the game that is selected, not another one', async () => {

@@ -26,7 +26,11 @@ import type {
   AgentRunResult,
 } from '../features/ai-assistant/service'
 import { listCollections } from '../features/collection/service'
-import { resolveInstallTarget } from '../features/capability-modules/service'
+import { getCapabilitySpec, resolveInstallTarget } from '../features/capability-modules/service'
+import { readConfigSchema, resolveCapabilityConfig } from '../features/capability-modules/config'
+import type { ConfigFieldSpec } from '../types/capability'
+import type { CommunityCatalogEntry } from '../types/community'
+import type { CapabilityConfigValue } from '../features/capability-modules/types'
 import { installCommunityCapability as installCapability } from '../features/community/service'
 import { readLocalValue, writeLocalValue } from '../services/storage'
 
@@ -76,6 +80,23 @@ export function recordUnsignedConsent(capabilityId: string) {
 }
 
 /**
+ * The verified catalog's entries, or `null` when the fetch failed.
+ *
+ * `null` is not an empty list: "no catalog" is what leaves every
+ * recommendation unverified, and both gates below read that.
+ */
+async function fetchCatalogEntries(): Promise<CommunityCatalogEntry[] | null> {
+  try {
+    const { fetchCommunityCatalog } = await import('../features/community/service')
+    const result = await fetchCommunityCatalog(false, 0)
+    return result?.catalog?.capabilities ?? []
+  } catch {
+    // No verified catalog available. Everything is unverified.
+    return null
+  }
+}
+
+/**
  * Capabilities from a verified catalog whose signature the app could not
  * confirm. Signed entries install without any prompt.
  *
@@ -83,26 +104,126 @@ export function recordUnsignedConsent(capabilityId: string) {
  * unverified: the safest reading of "I have never heard of this" is
  * "ask the user", not "install it".
  */
-async function splitBySignature(
+function splitBySignature(
   ids: string[],
-): Promise<{ verified: string[]; needsConsent: string[] }> {
-  let entries: Array<{ id: string; signed?: boolean }> = []
-  try {
-    const { fetchCommunityCatalog } = await import('../features/community/service')
-    const result = await fetchCommunityCatalog(false, 0)
-    entries = result?.catalog?.capabilities ?? []
-  } catch {
-    // No verified catalog available. Everything is unverified.
-    return { verified: [], needsConsent: [...ids] }
-  }
-  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  entries: CommunityCatalogEntry[] | null,
+): { verified: string[]; needsConsent: string[] } {
+  const byId = new Map((entries ?? []).map((entry) => [entry.id, entry]))
   const verified: string[] = []
   const needsConsent: string[] = []
   for (const id of ids) {
-    if (byId.get(id)?.signed === true) verified.push(id)
+    if (entries !== null && byId.get(id)?.signed === true) verified.push(id)
     else needsConsent.push(id)
   }
   return { verified, needsConsent }
+}
+
+/**
+ * The recipe's own config schema, or `null` when this build cannot read
+ * one for `capabilityId`.
+ *
+ * Two sources, in the order the install that follows can trust them. A
+ * community recipe is deliberately not in the built-in registry — its
+ * YAML is fetched, signature-checked and parsed by the backend at
+ * install time — so the only copy of its schema on this side is the one
+ * the signed catalogue carries, which is the copy the Community panel
+ * reads. An id the catalogue does not carry is asked of the registry
+ * instead, whose `capability_get` answers an id it does not hold with an
+ * error rather than an empty spec.
+ */
+async function schemaFor(
+  capabilityId: string,
+  entries: CommunityCatalogEntry[] | null,
+): Promise<ConfigFieldSpec[] | null> {
+  const entry = entries?.find((item) => item.id === capabilityId)
+  if (entry) {
+    const read = readConfigSchema(entry.configSchema)
+    return read.known ? read.schema : null
+  }
+  try {
+    const spec = await getCapabilitySpec(capabilityId)
+    return spec.configSchema ?? []
+  } catch {
+    return null
+  }
+}
+
+interface PlannedConfig {
+  capabilityId: string
+  /** The values to send, or `null` when no schema could be read. */
+  values: Record<string, CapabilityConfigValue> | null
+  /** Required fields with no value. Non-empty means "needs input". */
+  missingRequired: string[]
+}
+
+/**
+ * Resolve every selected recommendation's config before the first
+ * install — the same plan-before-install shape the collection runner
+ * uses, over the same shared resolver.
+ *
+ * `values: null` is a refusal, not a default: a recipe whose schema
+ * cannot be read has not been shown to have no required fields, and
+ * installing it on that assumption is the blank-config failure this
+ * replaces.
+ */
+async function planRecommendationConfig(
+  gameId: string,
+  selected: Recommendation[],
+  entries: CommunityCatalogEntry[] | null,
+): Promise<PlannedConfig[]> {
+  const plans: PlannedConfig[] = []
+  for (const rec of selected) {
+    const schema = await schemaFor(rec.id, entries)
+    if (schema === null) {
+      plans.push({ capabilityId: rec.id, values: null, missingRequired: [] })
+      continue
+    }
+    const resolved = resolveCapabilityConfig({
+      // The target's own game id, not the selection's: this is the game
+      // the files are about to be written into.
+      gameId,
+      capabilityId: rec.id,
+      schema,
+    })
+    plans.push({
+      capabilityId: rec.id,
+      values: resolved.values,
+      missingRequired: resolved.missingRequired,
+    })
+  }
+  return plans
+}
+
+/**
+ * Why a batch was refused for config, in the voice of the signature
+ * gate above it: the capability named, the fields named, and where the
+ * user goes to fill them in.
+ *
+ * English on purpose, like `NO_GAME_SELECTED` and the signature
+ * sentence: the composable has no i18n instance, and this is surfaced in
+ * the dialog's error callout beside the same untranslated messages.
+ */
+function configRefusal(plans: PlannedConfig[]): string {
+  const unreadable = plans.filter((plan) => plan.values === null)
+  const incomplete = plans.filter((plan) => plan.values !== null && plan.missingRequired.length > 0)
+  const sentences: string[] = []
+  if (unreadable.length > 0) {
+    const ids = unreadable.map((plan) => `"${plan.capabilityId}"`)
+    sentences.push(
+      unreadable.length === 1
+        ? `${ids[0]} could not be checked for required settings, so it was not installed. Open Community mods to install it from there, then install the recommendations again.`
+        : `${unreadable.length} of these mods could not be checked for required settings, so they were not installed: ${ids.join(', ')}. Open Community mods to install them from there, then install the recommendations again.`,
+    )
+  }
+  if (incomplete.length > 0) {
+    const named = incomplete.map((plan) => `"${plan.capabilityId}" (${plan.missingRequired.join(', ')})`)
+    sentences.push(
+      incomplete.length === 1
+        ? `${named[0]} needs setup before it can install. Open Community mods to fill it in, then install the recommendations again.`
+        : `${incomplete.length} of these mods need setup before they can install: ${named.join('; ')}. Open Community mods to fill them in, then install the recommendations again.`,
+    )
+  }
+  return sentences.join('\n')
 }
 import type { CatalogCapability, CatalogCollection } from '../types/ai-assistant'
 import type { CapabilitySummary } from '../types/capability'
@@ -535,7 +656,8 @@ async function installSelectedRecommendations() {
   // closed instead: install only what the catalog has signed, and tell
   // the user exactly which ones need their OK.
   const consent = readUnsignedConsent()
-  const { needsConsent } = await splitBySignature(selected.map((rec) => rec.id))
+  const entries = await fetchCatalogEntries()
+  const { needsConsent } = splitBySignature(selected.map((rec) => rec.id), entries)
   const blocked = needsConsent.filter((id) => consent[id] !== true)
 
   if (blocked.length > 0) {
@@ -555,6 +677,34 @@ async function installSelectedRecommendations() {
     return
   }
 
+  // Every recipe's config is resolved before the first install, and a
+  // batch that still has a required field with no value is refused
+  // whole. Sending the blank instead would fail inside the first step
+  // the recipe had already begun, with the rest of the batch on disk
+  // behind it — and a recipe whose schema this build cannot read is
+  // refused too, because "I could not check" is not "there is nothing
+  // to fill in".
+  const plans = await planRecommendationConfig(target.gameId, selected, entries)
+  const blockedByConfig = new Set(
+    plans
+      .filter((plan) => plan.values === null || plan.missingRequired.length > 0)
+      .map((plan) => plan.capabilityId),
+  )
+  if (blockedByConfig.size > 0) {
+    for (const rec of selected) {
+      const key = `${rec.type}:${rec.id}`
+      recommendationInstallStatus.value = {
+        ...recommendationInstallStatus.value,
+        [key]: blockedByConfig.has(rec.id) ? 'failed' : 'pending',
+      }
+    }
+    error.value = configRefusal(plans)
+    busy.value = false
+    step.value = 'saved'
+    return
+  }
+  const configById = new Map(plans.map((plan) => [plan.capabilityId, plan.values ?? {}]))
+
   for (const rec of selected) {
     const key = `${rec.type}:${rec.id}`
     recommendationInstallStatus.value = { ...recommendationInstallStatus.value, [key]: 'running' }
@@ -565,7 +715,10 @@ async function installSelectedRecommendations() {
         gameName: target.gameName,
         installDir: target.installDir,
         executableDir: target.executableDir,
-        config: { values: {} },
+        // The recipe's declared fields, resolved against the game the
+        // files are about to be written into. Planned above, so this is
+        // never a blank nobody checked.
+        config: { values: configById.get(rec.id) ?? {} },
         // Only ever true for a capability whose unsigned warning the
         // user has already acknowledged. See `blocked` above.
         acceptUnsigned: consent[rec.id] === true,

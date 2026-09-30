@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const CONSENT_KEY = 'moddin-unsigned-consent'
 
 vi.mock('../../features/capability-modules/service', () => ({
+  getCapabilitySpec: vi.fn(),
   resolveInstallTarget: vi.fn(),
 }))
 vi.mock('../../features/community/service', () => ({
@@ -65,6 +66,7 @@ function select(assistant: Assistant['useAiAssistant'] extends () => infer R ? R
 
 let install: ReturnType<typeof vi.fn>
 let resolveTarget: ReturnType<typeof vi.fn>
+let getSpec: ReturnType<typeof vi.fn>
 let fetchCatalog: ReturnType<typeof vi.fn>
 let record: Assistant['recordUnsignedConsent']
 
@@ -76,12 +78,19 @@ beforeEach(async () => {
   const capabilityService = await import('../../features/capability-modules/service')
   const communityService = await import('../../features/community/service')
   resolveTarget = vi.mocked(capabilityService.resolveInstallTarget)
+  getSpec = vi.mocked(capabilityService.getCapabilitySpec)
   fetchCatalog = vi.mocked(communityService.fetchCommunityCatalog)
   install = vi.mocked(communityService.installCommunityCapability)
 
   resolveTarget.mockResolvedValue(TARGET)
   install.mockResolvedValue({ ok: true })
   fetchCatalog.mockResolvedValue({ catalog: { capabilities: [] } })
+  // The registry's own verdict for an id it does not hold, verbatim from
+  // `capability_get` — an unknown capability is an error, never a
+  // default-empty spec.
+  getSpec.mockImplementation(async (id: string) => {
+    throw new Error(`Unknown capability id '${id}'.`)
+  })
 })
 
 describe('recordUnsignedConsent', () => {
@@ -307,5 +316,172 @@ describe('installSelectedRecommendations: no install target', () => {
 
     expect(resolveTarget).not.toHaveBeenCalled()
     expect(install).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The config gate. `installSelectedRecommendations` used to send
+ * `config: { values: {} }` for every recommendation, so a recipe that
+ * declares a required field was confirmed, passed the signature gate,
+ * and then failed inside the first step it had already begun.
+ *
+ * The schema comes from the signed catalogue's own copy of the recipe
+ * (what the Community panel reads), and from the registry for a
+ * recommendation the community catalog does not carry.
+ */
+function entry(id: string, configSchema: unknown, extra: Record<string, unknown> = {}) {
+  return { id, signed: true, configSchema, ...extra }
+}
+
+describe('installSelectedRecommendations: config is resolved, not invented', () => {
+  it('refuses a recipe that declares a required field and never reaches the command', async () => {
+    fetchCatalog.mockResolvedValue({
+      catalog: {
+        capabilities: [entry('fps-unlocker', [{ name: 'preset', type: 'string', required: true }])],
+      },
+    })
+    const { useAiAssistant } = await loadAssistant()
+    const assistant = useAiAssistant()
+    select(assistant as never, ['fps-unlocker'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).not.toHaveBeenCalled()
+    expect(assistant.error.value).toContain('fps-unlocker')
+    expect(assistant.error.value).toContain('preset')
+    expect(assistant.recommendationInstallStatus.value['capability:fps-unlocker']).toBe('failed')
+    expect(assistant.busy.value).toBe(false)
+  })
+
+  it('installs a recipe whose fields all resolve, carrying the resolved values', async () => {
+    fetchCatalog.mockResolvedValue({
+      catalog: {
+        capabilities: [
+          entry('fps-unlocker', [
+            { name: 'preset', type: 'string', required: true, default: 'ultra' },
+            { name: 'frameCap', type: 'number', required: true, default: 240 },
+            { name: 'notes', type: 'string' },
+          ]),
+        ],
+      },
+    })
+    const { useAiAssistant } = await loadAssistant()
+    const assistant = useAiAssistant()
+    select(assistant as never, ['fps-unlocker'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(install).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: { values: { preset: 'ultra', frameCap: 240, notes: '' } },
+      }),
+    )
+    expect(assistant.recommendationInstallStatus.value['capability:fps-unlocker']).toBe('done')
+    expect(assistant.error.value).toBeNull()
+  })
+
+  it('refuses the whole batch when one member needs input, naming both halves', async () => {
+    fetchCatalog.mockResolvedValue({
+      catalog: {
+        capabilities: [
+          entry('fps-unlocker', []),
+          entry('reshade', [{ name: 'archivePath', type: 'path', required: true }]),
+        ],
+      },
+    })
+    const { useAiAssistant } = await loadAssistant()
+    const assistant = useAiAssistant()
+    select(assistant as never, ['fps-unlocker', 'reshade'])
+
+    await assistant.installSelectedRecommendations()
+
+    // The good half is not applied either: planning happens before the
+    // first install, so nothing is half-written.
+    expect(install).not.toHaveBeenCalled()
+    expect(assistant.error.value).toContain('reshade')
+    expect(assistant.error.value).toContain('archivePath')
+    expect(assistant.recommendationInstallStatus.value['capability:reshade']).toBe('failed')
+    expect(assistant.recommendationInstallStatus.value['capability:fps-unlocker']).toBe('pending')
+  })
+
+  it('refuses a recipe whose schema it cannot read, rather than assuming no fields', async () => {
+    // A signed entry carrying something other than a list of fields is
+    // not a statement that the recipe has no config.
+    fetchCatalog.mockResolvedValue({
+      catalog: { capabilities: [entry('weird', 'schema coming later')] },
+    })
+    const { useAiAssistant } = await loadAssistant()
+    const assistant = useAiAssistant()
+    select(assistant as never, ['weird'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).not.toHaveBeenCalled()
+    expect(assistant.error.value).toContain('weird')
+    expect(assistant.recommendationInstallStatus.value['capability:weird']).toBe('failed')
+  })
+
+  it('refuses a recipe it can find in neither the catalogue nor the registry', async () => {
+    fetchCatalog.mockResolvedValue({ catalog: { capabilities: [] } })
+    const { useAiAssistant } = await loadAssistant()
+    // Recorded consent gets it past the signature gate, which is not the
+    // gate under test: the question here is what config it can prove.
+    record('ghost')
+    const assistant = useAiAssistant()
+    select(assistant as never, ['ghost'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).not.toHaveBeenCalled()
+    expect(assistant.error.value).toContain('ghost')
+  })
+
+  it('reads the schema from the registry for a recipe the community catalog does not carry', async () => {
+    fetchCatalog.mockResolvedValue({ catalog: { capabilities: [] } })
+    getSpec.mockResolvedValue({
+      configSchema: [{ name: 'target', type: 'string', required: true }],
+    })
+    const { useAiAssistant } = await loadAssistant()
+    record('ofxr-bridge')
+    const assistant = useAiAssistant()
+    select(assistant as never, ['ofxr-bridge'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).not.toHaveBeenCalled()
+    expect(assistant.error.value).toContain('ofxr-bridge')
+    expect(assistant.error.value).toContain('target')
+  })
+
+  it('installs a registered recipe with the values the registry schema resolves', async () => {
+    fetchCatalog.mockResolvedValue({ catalog: { capabilities: [] } })
+    getSpec.mockResolvedValue({
+      configSchema: [{ name: 'count', type: 'number', default: 3 }],
+    })
+    const { useAiAssistant } = await loadAssistant()
+    record('ofxr-bridge')
+    const assistant = useAiAssistant()
+    select(assistant as never, ['ofxr-bridge'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({ config: { values: { count: 3 } } }))
+  })
+
+  it('treats a catalogue entry with no config block as a recipe with no fields', async () => {
+    // The catalogue's own convention: an entry with no `configSchema`
+    // says the recipe declares no config, which is the one safe reading
+    // of a missing key.
+    fetchCatalog.mockResolvedValue({
+      catalog: { capabilities: [entry('plain-mod', null)] },
+    })
+    const { useAiAssistant } = await loadAssistant()
+    const assistant = useAiAssistant()
+    select(assistant as never, ['plain-mod'])
+
+    await assistant.installSelectedRecommendations()
+
+    expect(install).toHaveBeenCalledWith(expect.objectContaining({ config: { values: {} } }))
   })
 })

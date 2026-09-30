@@ -155,10 +155,16 @@ describe('resolveCatalogConfig', () => {
   })
 
   it('returns nothing rather than a guess for a game or module it does not carry', () => {
-    // The two honest "I do not know" cases. A caller that finds an empty
+    // The honest "I do not know" cases. A caller that finds an empty
     // object asks the user; a caller that found a value would be sending
     // an invented one.
-    expect(resolveCatalogConfig('cyberpunk-2077', 'ofxr-bridge')).toEqual({})
+    //
+    // `uevr` is the right unknown here rather than `ofxr-bridge`: the
+    // latter used to be the example, and it stopped being true when the
+    // catalogue gained real ofxr-bridge config. A test that pins "absent"
+    // to an id whose absence was a bug will fail the day the bug is
+    // fixed, and the fix is what it was waiting for.
+    expect(resolveCatalogConfig('cyberpunk-2077', 'uevr')).toEqual({})
     expect(resolveCatalogConfig('not-a-game', 'optiscaler')).toEqual({})
     expect(resolveCatalogConfig(null, 'optiscaler')).toEqual({})
   })

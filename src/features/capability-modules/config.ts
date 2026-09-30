@@ -60,10 +60,47 @@ const configFieldSchema = z.object({
  * schema a community recipe ever has here: the YAML behind its
  * `downloadUrl` is fetched and parsed by the backend at install time, not
  * by the UI.
+ *
+ * Reading is lossy on purpose at the *field* level (an unknown `type`
+ * becomes a string input) and at the *array* level too. A caller that
+ * installs from this needs the strict answer instead — see
+ * `readConfigSchema`.
  */
 export function parseConfigSchema(raw: unknown): ConfigFieldSpec[] {
+  const read = readConfigSchema(raw)
+  return read.known ? read.schema : []
+}
+
+/**
+ * A schema, or the reason there isn't a readable one.
+ *
+ * `known: false` is not an error case to be smoothed over: it is the
+ * only honest answer for a `configSchema` this build cannot interpret,
+ * and an installer that treats it as "no fields" sends a blank it
+ * cannot justify. Callers that install refuse on it.
+ */
+export type ConfigSchemaRead =
+  | { known: true; schema: ConfigFieldSpec[] }
+  | { known: false; reason: string }
+
+/**
+ * Read a `configSchema` without guessing at a malformed one.
+ *
+ * An absent key is a statement, not a defect: Rust defaults
+ * `CapabilitySpec::config_schema` to an empty `Vec` and the community
+ * catalogue entry's `serde_json::Value` to `null`, so a recipe that
+ * declares no config arrives as `null`, `[]` or missing — all of which
+ * mean the same thing, "this recipe has no fields". Anything else that
+ * fails to parse is a schema this build cannot vouch for, and comes back
+ * as `known: false` rather than as an empty list.
+ */
+export function readConfigSchema(raw: unknown): ConfigSchemaRead {
+  if (raw === undefined || raw === null) return { known: true, schema: [] }
   const parsed = z.array(configFieldSchema).safeParse(raw)
-  return parsed.success ? parsed.data : []
+  if (parsed.success) return { known: true, schema: parsed.data }
+  const issue = parsed.error.issues[0]
+  const where = issue?.path.length ? issue.path.join('.') : 'configSchema'
+  return { known: false, reason: `${where}: ${issue?.message ?? 'unreadable schema'}` }
 }
 
 /** The empty value a field of this type starts from. */
