@@ -625,6 +625,17 @@ const en = {
   capabilityDescriptionReshade: 'Adds post-processing to any DirectX game — sharpening, bloom, colour correction and anti-aliasing.',
   capabilityDescriptionUe4ss: 'Scripting framework for Unreal Engine — lets mods change the game while it is running.',
   capabilityDescriptionUevr: 'Brings Unreal Engine VR rendering to flat-screen Unreal games.',
+  // Capability card titles. The recipes' own `displayName`, kept verbatim:
+  // these are the English the pt-BR and es rows are written against.
+  capabilityNameBepinex: 'BepInEx',
+  capabilityNameCheekyFoveatedDlss: 'Cheeky Foveated DLSS',
+  capabilityNameOfxrBridge: 'OFXR Bridge FrameGen',
+  capabilityNameOpenxrHelpers: 'OpenXR runtime helpers',
+  capabilityNameOptiscaler: 'OptiScaler DLSS upscaler',
+  capabilityNameReframework: 'REFramework scripting framework',
+  capabilityNameReshade: 'ReShade host',
+  capabilityNameUe4ss: 'UE4SS scripting framework',
+  capabilityNameUevr: 'UEVR engine-aware installer',
   capabilityCheckArchiveReachable: 'Download reachable',
   capabilityCheckArchiveSha256: 'Checksum matches',
   capabilityCheckCorePresent: 'Framework core installed',

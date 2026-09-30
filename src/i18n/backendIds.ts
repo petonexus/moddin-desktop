@@ -6,11 +6,12 @@ import type ptBR from './locales/pt-BR'
  *
  * Four backend fields are the subject — `entry.action`, `check.label`,
  * `state.warnings` and `agent.detail` — plus the capability card's
- * `description`, which is the player-facing sentence every other string
- * on that card is read alongside. Each one was an English sentence or a
- * snake_case command name written in Rust, handed to a Vue template and
- * rendered verbatim, so a pt-BR or es user read the backend's English
- * in the middle of an otherwise translated screen.
+ * `description` and `displayName`, which are the player-facing sentence
+ * and title every other string on that card is read alongside. Each one
+ * was an English sentence or a snake_case command name written in Rust,
+ * handed to a Vue template and rendered verbatim, so a pt-BR or es user
+ * read the backend's English in the middle of an otherwise translated
+ * screen.
  *
  * ## The rule
  *
@@ -309,4 +310,39 @@ export function capabilityDescriptionKey(
   capabilityId: string,
 ): BackendTextKey | undefined {
   return lookup(CAPABILITY_DESCRIPTIONS, capabilityId)
+}
+
+/**
+ * The capability card's `displayName` — the title the user chooses the mod
+ * by, and the last of the card's three player-facing fields to cross this
+ * boundary. Same key as the description, because the two are authored
+ * together in the same recipe and a card whose sentence is translated while
+ * its title is not is a worse reading experience than either extreme.
+ *
+ * The upstream spelling is kept where one exists — BepInEx, UE4SS,
+ * REFramework, ReShade, OptiScaler, OFXR Bridge, Cheeky — and the
+ * descriptive half of the name ("scripting framework", "runtime helpers",
+ * "DLSS upscaler") is what the locale rows translate. A name that is
+ * nothing but a product name is the same in all three bundles; that is not
+ * an untranslated row, it is a word.
+ *
+ * Same fallback as above, for the same reason: a community or AI-authored
+ * recipe's `displayName` is its author's copy and the app does not rewrite
+ * it.
+ */
+const CAPABILITY_NAMES: Readonly<Record<CapabilityId, BackendTextKey>> = {
+  bepinex: 'capabilityNameBepinex',
+  'cheeky-foveated-dlss': 'capabilityNameCheekyFoveatedDlss',
+  'ofxr-bridge': 'capabilityNameOfxrBridge',
+  'openxr-helpers': 'capabilityNameOpenxrHelpers',
+  optiscaler: 'capabilityNameOptiscaler',
+  reframework: 'capabilityNameReframework',
+  reshade: 'capabilityNameReshade',
+  ue4ss: 'capabilityNameUe4ss',
+  uevr: 'capabilityNameUevr',
+}
+
+/** Capability id to locale key for its display name. Undeclared id: no key. */
+export function capabilityNameKey(capabilityId: string): BackendTextKey | undefined {
+  return lookup(CAPABILITY_NAMES, capabilityId)
 }

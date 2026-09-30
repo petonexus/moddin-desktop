@@ -10,7 +10,7 @@ import type {
   ResolvedConfig,
 } from '../../types/capability'
 import type { TransactionRecord } from '../../types/transaction'
-import { capabilityCheckLabel, capabilityDescriptionKey } from '../../i18n/backendIds'
+import { capabilityCheckLabel, capabilityDescriptionKey, capabilityNameKey } from '../../i18n/backendIds'
 import type {
   CapabilityCompatibilityParams,
   CapabilityEvaluateParams,
@@ -98,21 +98,26 @@ export function listCapabilities(engine?: string | null) {
 }
 
 /**
- * UX-21: the card's `description` is a sentence this project wrote in a
- * recipe, and the recipes are English. A pt-BR user reading the mod
- * gallery was reading English to decide whether to install something.
+ * UX-21: the card's `displayName` and `description` are strings this
+ * project wrote in a recipe, and the recipes are English. A pt-BR user
+ * reading the mod gallery was reading English to decide whether to install
+ * something.
  *
- * The key is attached here, next to the original string, and the section
- * renders the key when it is there. A recipe this table does not declare
- * — a community mod, one the AI saved — keeps the sentence its author
- * wrote; see the fallback note in `src/i18n/backendIds.ts`.
+ * The keys are attached here, next to the original strings, and the
+ * section renders the keys when they are there. A recipe this table does
+ * not declare — a community mod, one the AI saved — keeps the words its
+ * author wrote; see the fallback note in `src/i18n/backendIds.ts`.
  *
  * Exported because it is the boundary itself: pure, and the one thing
  * worth asserting on without standing up the Tauri bridge.
  */
 export function toCapabilitySummaryView(summary: CapabilitySummary): CapabilitySummaryView {
-  const key = capabilityDescriptionKey(summary.id)
-  return key ? { ...summary, descriptionKey: key } : { ...summary }
+  const nameKey = capabilityNameKey(summary.id)
+  const descriptionKey = capabilityDescriptionKey(summary.id)
+  const view: CapabilitySummaryView = { ...summary }
+  if (nameKey) view.nameKey = nameKey
+  if (descriptionKey) view.descriptionKey = descriptionKey
+  return view
 }
 
 /** Full recipe for one capability (config schema, safety notes, checks). */

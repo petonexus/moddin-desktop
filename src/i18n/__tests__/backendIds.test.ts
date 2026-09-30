@@ -9,6 +9,7 @@ import {
   agentDetailText,
   capabilityCheckLabel,
   capabilityDescriptionKey,
+  capabilityNameKey,
   openXrWarningText,
   type BackendTextKey,
 } from '../backendIds'
@@ -122,6 +123,18 @@ describe('every declared backend id resolves to a locale key', () => {
       expectResolved(key as BackendTextKey, id)
     }
   })
+
+  it('covers every capability name, in every locale', () => {
+    // The card title is the one string on the card a pt-BR user reads
+    // before anything else, and it was the last field of the capability
+    // still coming straight out of the English recipe. Same contract as
+    // the description: every shipped id, every locale, prose not the id.
+    for (const id of CAPABILITY_IDS) {
+      const key = capabilityNameKey(id)
+      expect(key, `no name key for capability "${id}"`).toBeDefined()
+      expectResolved(key as BackendTextKey, id)
+    }
+  })
 })
 
 describe('the tables are exhaustive over the sources the ids come from', () => {
@@ -176,6 +189,15 @@ describe('the tables are exhaustive over the sources the ids come from', () => {
 
     // The description table is the whole shipped set, not a subset of it.
     expect([...capabilityIds].sort()).toEqual([...CAPABILITY_IDS].sort())
+    // The card title is translated from that same id set, read straight
+    // off the recipes. `CAPABILITY_NAMES` is a `Record<CapabilityId, …>`,
+    // so a row for an id no recipe declares is a typecheck failure rather
+    // than a row nothing ever reads.
+    for (const id of capabilityIds) {
+      const nameKey = capabilityNameKey(id)
+      expect(nameKey, `no name key for shipped capability "${id}"`).toBeDefined()
+      expectResolved(nameKey as BackendTextKey, id)
+    }
     // Every id a shipped recipe names — capability or check — is declared
     // in one of the two tables.
     for (const id of everyId) {
@@ -214,8 +236,16 @@ describe('the fallback for an id nobody declared', () => {
     expect(capabilityDescriptionKey('community-authored-mod')).toBeUndefined()
   })
 
+  it('keeps a community recipe\'s own display name', () => {
+    // A card with no title is a card the user cannot pick, and the name
+    // on a community recipe is its author's copy — so the table declines
+    // it rather than inventing a translation for it.
+    expect(capabilityNameKey('community-authored-mod')).toBeUndefined()
+  })
+
   it('does not resolve a prototype member as a translation', () => {
     expect(actionText('toString').key).toBeUndefined()
     expect(capabilityCheckLabel('constructor')).toBeUndefined()
+    expect(capabilityNameKey('toString')).toBeUndefined()
   })
 })

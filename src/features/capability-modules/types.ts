@@ -20,6 +20,8 @@ import type { BackendTextKey } from '../../i18n/backendIds'
  * `service.ts`.
  */
 export type CapabilitySummaryView = CapabilitySummary & {
+  /** Present only for a shipped capability whose title is translated. */
+  nameKey?: BackendTextKey
   /** Present only for a shipped capability whose description is translated. */
   descriptionKey?: BackendTextKey
 }

@@ -405,6 +405,32 @@ describe('capability card text in pt-BR', () => {
 
     expect(card.text()).toContain('Loads plugins into the game.')
   })
+
+  it('renders the locale title, not the recipe\'s English display name', async () => {
+    mockedList.mockResolvedValue([
+      { ...CAPABILITY, displayName: 'UE4SS scripting framework', nameKey: 'capabilityNameUe4ss' },
+    ])
+    i18n.global.locale.value = 'pt-BR'
+
+    const card = (await render()).find('.module-card')
+
+    expect(card.text()).toContain(ptBR.capabilityNameUe4ss)
+    expect(card.text()).not.toContain('UE4SS scripting framework')
+  })
+
+  it('keeps a community recipe\'s own title rather than a blank or a key', async () => {
+    // `nameKey` absent, which is what `../service` attaches for an id the
+    // table does not declare. The card still has to name its mod.
+    mockedList.mockResolvedValue([
+      { ...CAPABILITY, id: 'community-authored-mod', displayName: 'Their Mod, their spelling' },
+    ])
+    i18n.global.locale.value = 'pt-BR'
+
+    const card = (await render()).find('.module-card')
+
+    expect(card.text()).toContain('Their Mod, their spelling')
+    expect(card.text()).not.toContain('capabilityName')
+  })
 })
 
 /**

@@ -75,13 +75,17 @@ function blockedCompatibility(state: CapabilityCardState) {
 }
 
 /**
- * UX-21: the card's description and every check label arrive from Rust
- * with the locale key the service layer resolved, or with nothing at
+ * UX-21: the card's title, description and every check label arrive from
+ * Rust with the locale key the service layer resolved, or with nothing at
  * all when the backend string is not a declared id — in which case the
- * recipe's own sentence is what the user reads. `keyed` is that second
- * case made explicit in one place, so neither `ModuleCard` nor this
- * template has to know which strings crossed the boundary.
+ * recipe's own words are what the user reads. `keyed` is that second case
+ * made explicit in one place, so neither `ModuleCard` nor this template
+ * has to know which strings crossed the boundary.
  */
+function nameOf(capability: CapabilitySummaryView): string {
+  return keyed(capability.nameKey, capability.displayName || capability.id)
+}
+
 function descriptionOf(capability: CapabilitySummaryView): string {
   return keyed(capability.descriptionKey, capability.description || capability.id)
 }
@@ -329,7 +333,7 @@ onUnmounted(() => {
         </div>
 
         <ModuleCard
-          :name="capability.displayName"
+          :name="nameOf(capability)"
           :description="descriptionOf(capability)"
           :state="cardState(capability.id)"
           :tag="{ label: originLabel(capability.origin), tone: originTone(capability.origin) }"
@@ -429,7 +433,7 @@ onUnmounted(() => {
     <ConfirmDialog
       v-if="pendingRemoval"
       :title="t('capabilityRemoveConfirmTitle')"
-      :description="t('capabilityRemoveConfirmDescription', { name: pendingRemoval.displayName })"
+      :description="t('capabilityRemoveConfirmDescription', { name: nameOf(pendingRemoval) })"
       :confirm-label="t('actionRemove')"
       :cancel-label="t('actionCancel')"
       :details="[t('capabilityRemoveDetailFiles'), t('capabilityRemoveDetailUndo')]"

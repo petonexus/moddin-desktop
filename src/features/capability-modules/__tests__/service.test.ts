@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import ptBR from '../../../i18n/locales/pt-BR'
+import es from '../../../i18n/locales/es'
 import type { CapabilitySummary } from '../../../types/capability'
 import { toCapabilityCheckView, toCapabilitySummaryView } from '../service'
 
@@ -63,6 +64,39 @@ describe('capability summaries cross the boundary with a locale key', () => {
     expect(card.displayName).toBe('BepInEx')
     expect(card.category).toBe('qol')
     expect(card.origin).toBe('builtIn')
+  })
+})
+
+/**
+ * The card title, which is the last of the capability's three player-facing
+ * fields to cross the boundary. `displayName` is the recipe author's line
+ * and this repository's own recipes write it in English, so before this the
+ * pt-BR and es galleries were a grid of English names above a translated
+ * sentence.
+ */
+describe('capability names cross the boundary with a locale key', () => {
+  it('attaches the name key for a shipped capability, in every locale', () => {
+    const card = toCapabilitySummaryView(summary({ id: 'ue4ss', displayName: 'UE4SS scripting framework' }))
+
+    expect(card.nameKey).toBe('capabilityNameUe4ss')
+    // The wire string is kept; it is the fallback and the search text.
+    expect(card.displayName).toBe('UE4SS scripting framework')
+    // Prose in both translated bundles, and neither of them is the recipe's
+    // English: an English row in pt-BR or es is the defect this asserts.
+    for (const name of [ptBR.capabilityNameUe4ss, es.capabilityNameUe4ss]) {
+      expect(name.trim()).not.toBe('')
+      expect(name).not.toBe('UE4SS scripting framework')
+    }
+  })
+
+  it('attaches nothing for a recipe this table does not declare', () => {
+    const card = toCapabilitySummaryView(
+      summary({ id: 'community-authored-mod', displayName: 'Their Mod, their spelling' }),
+    )
+
+    // The author's own name, not a blank card and not a raw locale key.
+    expect(card.nameKey).toBeUndefined()
+    expect(card.displayName).toBe('Their Mod, their spelling')
   })
 })
 

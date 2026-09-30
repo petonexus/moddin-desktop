@@ -625,6 +625,18 @@ const es = {
   capabilityDescriptionReshade: 'Añade posprocesado a cualquier juego de DirectX: nitidez, brillo, corrección de color y antialiasing.',
   capabilityDescriptionUe4ss: 'Marco de scripts para el motor Unreal: deja que los mods cambien el juego mientras corre.',
   capabilityDescriptionUevr: 'Lleva el renderizado de VR del motor Unreal a los juegos de Unreal en pantalla plana.',
+  // Título de la tarjeta de mod. El nombre del producto (BepInEx, UE4SS,
+  // ReShade, OptiScaler, OFXR Bridge) se queda como lo escribió su autor;
+  // lo que se traduce es la parte que describe qué hace.
+  capabilityNameBepinex: 'BepInEx',
+  capabilityNameCheekyFoveatedDlss: 'Cheeky — DLSS foveado',
+  capabilityNameOfxrBridge: 'OFXR Bridge con generación de fotogramas',
+  capabilityNameOpenxrHelpers: 'Auxiliares del runtime OpenXR',
+  capabilityNameOptiscaler: 'OptiScaler — reescalado DLSS',
+  capabilityNameReframework: 'REFramework — marco de scripts',
+  capabilityNameReshade: 'ReShade en el proceso del juego',
+  capabilityNameUe4ss: 'UE4SS — marco de scripts',
+  capabilityNameUevr: 'UEVR — instalador que reconoce el motor',
   capabilityCheckArchiveReachable: 'Descarga accesible',
   capabilityCheckArchiveSha256: 'La suma coincide',
   capabilityCheckCorePresent: 'Núcleo del framework instalado',
