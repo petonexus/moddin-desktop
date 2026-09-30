@@ -2,9 +2,12 @@
 import { useI18n } from 'vue-i18n'
 import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
 import AiAssistantTrigger from './AiAssistantTrigger.vue'
+import CollectionsPanel from './CollectionsPanel.vue'
 import CommunityPanel from '../../features/community/CommunityPanel.vue'
+import ContributeTrigger from './ContributeTrigger.vue'
 import LocalAiPanel from '../../features/local-ai/LocalAiPanel.vue'
 import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
+import ProfilesPanel from '../../features/profiles/ProfilesPanel.vue'
 
 const { t } = useI18n()
 </script>
@@ -21,6 +24,9 @@ const { t } = useI18n()
     <nav class="nav-section" :aria-label="t('navToolsMods')">
       <OpenXrManager />
       <CommunityPanel />
+      <CollectionsPanel />
+      <ProfilesPanel />
+      <ContributeTrigger />
     </nav>
 
     <span class="nav-label">{{ t('navToolsHelp') }}</span>

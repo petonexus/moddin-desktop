@@ -24,6 +24,7 @@ mod openxr_module;
 mod optiscaler;
 mod optiscaler_module;
 mod process;
+mod profile_files;
 mod steam;
 mod transaction;
 mod uevr;
@@ -118,6 +119,9 @@ pub fn run() {
             capability_authoring::preview_capability_plan,
             capability_authoring::save_capability_yaml,
             capability_authoring::validate_recommendations_yaml,
+            profile_files::write_profile_file,
+            profile_files::read_profile_file,
+            profile_files::reveal_profile_file,
             community_catalog::community_catalog_fetch,
             community_catalog::community_catalog_set_ttl,
             activity::list_action_logs,

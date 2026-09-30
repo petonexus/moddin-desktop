@@ -2,7 +2,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CapabilityModulesSection from '../CapabilityModulesSection.vue'
 import { i18n } from '../../../i18n'
-import type { InstallResult } from '../../../types/capability'
+import type { CapabilitySummary, InstallResult } from '../../../types/capability'
 import type { CapabilityVerificationReport } from '../types'
 import type { TransactionRecord } from '../../../types/transaction'
 
@@ -49,14 +49,19 @@ const mockedVerify = vi.mocked(evaluateCapability)
 
 enableAutoUnmount(afterEach)
 
-const CAPABILITY = {
+const CAPABILITY: CapabilitySummary = {
   id: 'bepinex',
   displayName: 'BepInEx',
   description: 'Loads plugins into the game.',
   category: 'qol',
   status: 'available',
   origin: 'builtIn',
-} as const
+  // These fixtures are about check rendering, not engine gating, so the
+  // capability claims no engine rather than being given one that would
+  // need its own reasoning here.
+  supportedEngines: [],
+  engineMatch: { verdict: 'engineAgnostic' },
+}
 
 beforeEach(() => {
   i18n.global.locale.value = 'en'

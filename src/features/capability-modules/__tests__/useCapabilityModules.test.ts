@@ -69,6 +69,11 @@ function summary(id: string): CapabilitySummary {
     category: 'graphics',
     status: 'available',
     origin: 'builtIn',
+    // Engine-neutral: the engine-filtering tests build their own
+    // capability with a real verdict, and these ones are about the
+    // rest of the card.
+    supportedEngines: [],
+    engineMatch: { verdict: 'engineAgnostic' },
   }
 }
 
