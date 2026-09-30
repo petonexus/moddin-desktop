@@ -1,6 +1,7 @@
 mod activity;
 mod ai_agent_runner;
 mod ai_assistant_setup;
+mod app_update;
 mod archive;
 mod builtin_checks;
 mod builtin_steps;
@@ -99,8 +100,16 @@ fn open_web_url(url: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // The updater plugin owns the endpoint, the pubkey and the
+        // minisign check; `app_update` is the only thing the webview can
+        // ask it to do, and the capability set grants the plugin's own
+        // commands to nobody. See src-tauri/capabilities/app-update.yaml.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             activity::record_ui_action_log,
+            app_update::app_update_status,
+            app_update::app_update_check,
+            app_update::app_update_install,
             capability_runner::capability_install,
             capability_runner::capability_uninstall,
             capability_runner::capability_evaluate,

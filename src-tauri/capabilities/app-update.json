@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app-update",
+  "description": "Deliberately grants the webview no tauri-plugin-updater permission. The plugin's own commands (check / download / download_and_install / install) would let the frontend fetch and start an installer with no user confirmation, which is the one property the updater must not have. Every update action goes through the app_update_* commands in src-tauri/src/app_update.rs — application commands, outside this ACL — which enforce the order instead: the user asks, reads the version, and confirms that version. JSON rather than YAML because the .yaml files in this directory are capability recipes, read by scripts/validate-catalog.mjs, and this is a Tauri ACL entry. See docs/UPDATER.md.",
+  "windows": ["main"],
+  "permissions": []
+}

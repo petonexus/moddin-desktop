@@ -13,6 +13,7 @@ Start here. Every document in this repo, what it is for, and who should read it.
 | [BACKEND-MODULES.md](BACKEND-MODULES.md) | Find out which of `obs.rs` / `obs_module.rs` (and the eight other pairs) is the file to edit. Read this before touching anything under `src-tauri/src/`. |
 | [CAPABILITY-CONTRACT.md](CAPABILITY-CONTRACT.md) | Look up a field: full YAML schema, all 11 step kinds and 6 check kinds, dependencies, compatibility, template rendering, the Tauri command surface. |
 | [FRONTEND.md](FRONTEND.md) | Work in `src/`: component boundaries, state rules, styling, i18n, dialog lifecycle, the architecture guard and its App.vue budget. |
+| [UPDATER.md](UPDATER.md) | Complete the app self-updater: which key goes where, what a release has to publish, and what a failed update leaves behind. Start here before changing anything under `src-tauri/capabilities/app-update.json` or `src/features/app-update/`. |
 | [AGENT-RECIPES.md](AGENT-RECIPES.md) | Understand what the AI agent may and may not do, and why. Carries the repo's real threat model. |
 | [AI-ASSISTANT.md](AI-ASSISTANT.md) | Connect a local AI (Codex, Claude Code, Cursor) to Moddin. *Written in Brazilian Portuguese.* |
 | [CHEEKY-AI-RECIPE-RESEARCH.md](CHEEKY-AI-RECIPE-RESEARCH.md) | Read the research behind AI-assisted Cheeky recipes: evidence ladder, output contract, test protocol. *Portuguese.* |

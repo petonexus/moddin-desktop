@@ -57,6 +57,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "publisher": "Marco Antonio da Silva Junior",
     "category": "Utility",
     "shortDescription": "Moddin Desktop — manage game mods the safe way",
@@ -74,6 +75,17 @@
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY__run `npm run tauri signer generate` and paste the printed `minisign+PUBLIC KEY ...` line here (see docs/UPDATER.md) — every build refuses this value",
+      "endpoints": [
+        "https://github.com/petonexus/moddin-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

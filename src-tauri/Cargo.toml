@@ -31,6 +31,12 @@ serde_yaml = "0.9"
 sevenz-rust = "0.6.1"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
+# Pinned to the 2.11 line on purpose: 2.12+ requires `tauri = "2.12"`,
+# so a wider range here would silently drag the whole graph — and the
+# toolchain that `rust-toolchain.toml` pins — off the version CI verifies.
+# This crate owns the updater's endpoint, pubkey and signature check;
+# the commands in `src/app_update.rs` are the only way to reach them.
+tauri-plugin-updater = "~2.11.0"
 uuid = { version = "1", features = ["v4"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }

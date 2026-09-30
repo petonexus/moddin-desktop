@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
 import AiAssistantTrigger from './AiAssistantTrigger.vue'
+import AppUpdatePanel from '../../features/app-update/AppUpdatePanel.vue'
 import CollectionsPanel from './CollectionsPanel.vue'
 import CommunityPanel from '../../features/community/CommunityPanel.vue'
 import ContributeTrigger from './ContributeTrigger.vue'
@@ -33,6 +34,12 @@ const { t } = useI18n()
     <nav class="nav-section" :aria-label="t('navToolsHelp')">
       <AiAssistantTrigger />
       <LocalAiPanel />
+      <!--
+        The updater sits with the tools rather than the mods because it is
+        about the app itself. It is an entry, not a banner: nothing checks
+        for an update until the user opens it and asks.
+      -->
+      <AppUpdatePanel />
       <ActivityLogPanel />
     </nav>
   </div>
