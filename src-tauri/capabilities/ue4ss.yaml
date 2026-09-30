@@ -2,28 +2,37 @@ id: ue4ss
 displayName: UE4SS scripting framework
 description: Scripting framework for Unreal Engine — lets mods change the game while it is running.
 category: qol
-status: planned
+status: available
 supportedEngines:
   - unreal5
 configSchema:
   - name: downloadUrl
     type: url
     required: true
-    description: HTTPS URL of the pinned UE4SS release archive for the game's engine generation (UE 4.x, UE 5.0-5.4 or 5.5+ builds differ).
+    description: HTTPS URL of the pinned UE4SS release archive. Use the basic-install asset `UE4SS_v<version>.zip`. Upstream v3.0.1 also publishes `zDEV-UE4SS_v<version>.zip` (the developer build, which ships a console and GUI console enabled by default) and a separate `experimental-latest` tag; this recipe expects the basic one. Verified against https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v3.0.1 .
   - name: sha256
     type: sha256
     required: true
-    description: Expected SHA-256 of the archive.
+    description: Expected SHA-256 of the archive. Moddin refuses to install when the download does not match.
   - name: version
     type: string
     required: true
-    description: Upstream UE4SS release tag.
+    description: Upstream UE4SS release tag this URL points at, e.g. `v3.0.1`.
 checks:
+  - id: engine-recognised
+    label: Engine recognised as Unreal
+    kind: file-exists
+    severity: blocker
+    category: global
+    description: UE4SS hooks the Unreal process, so the install refuses to run unless the game directory has the Unreal Binaries/Win64 layout. This gates on structure only; it makes no claim about which Unreal version a given build supports.
+    params:
+      path: Binaries/Win64
   - id: archive-reachable
     label: UE4SS archive reachable
     kind: archive-reachable
     severity: warning
     category: modulespecific
+    description: Confirms the pinned release URL responds before anything is written to the game folder.
     params:
       urlField: downloadUrl
   - id: archive-sha256
@@ -31,10 +40,43 @@ checks:
     kind: archive-sha256
     severity: blocker
     category: modulespecific
+    description: Downloads the archive and compares it against the declared digest.
     params:
       urlField: downloadUrl
       expectedField: sha256
+install:
+  - kind: download-file
+    description: Fetch the pinned UE4SS release into Moddin's download cache, verifying its digest before the archive is opened.
+    params:
+      urlField: downloadUrl
+      expectedField: sha256
+      target: ue4ss.zip
+  - kind: extract-zip
+    description: Unpack UE4SS next to the game executable. Upstream calls this "Method #1 - Basic Install" and describes it as dropping the whole basic-install archive into the game executable directory (https://docs.ue4ss.com/dev/installation-guide.html); the archive is already rooted at that layout, so it lands in the right place without reshuffling.
+    params:
+      archivePath: ue4ss.zip
+verify:
+  - id: proxy-present
+    label: UE4SS proxy installed
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    description: dwmapi.dll is the proxy the game loads; without it UE4SS.dll beside it is inert.
+    params:
+      path: dwmapi.dll
+  - id: core-present
+    label: UE4SS core present
+    kind: file-exists
+    severity: blocker
+    category: modulespecific
+    description: UE4SS.dll is the module the proxy resolves, next to the game executable.
+    params:
+      path: UE4SS.dll
 safetyNotes:
-  - Not installable yet. This spec records the intended recipe; the engine-generation matrix still has to be pinned before an install step can be trusted.
+  - The install layout is verified, not assumed. The v3.0.1 basic archive at https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip is rooted at the install layout — 46 entries, with dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Changelog.md, README.md and Mods/** all at the top level — so the whole archive belongs next to the game executable and nothing has to be moved afterwards. `extract-zip` writes every member, so Changelog.md and README.md land in the game folder too; they are inert and Undo removes them with the rest.
+  - The same verified listing is why the old "engine-generation matrix" caveat is gone. v3.0.1 ships exactly one UE4SS runtime archive; it is not split per Unreal version, so there is no generation to pin. Which Unreal builds v3.0.1 actually runs against is a property of the build at runtime, not something this recipe can resolve, and it is deliberately not asserted here.
+  - Installing over an existing UE4SS 3.x replaces UE4SS-settings.ini, which upstream's own upgrade note says to preserve when you have custom config. `extract-zip` has no skip-one-file option, so it always overwrites. Every extracted member is in the transaction rollback set, so Undo restores your previous settings — back up the file yourself if you would rather not rely on that.
+  - UE4SS 2.x installed a proxy named xinput1_3.dll, which v3.0 no longer ships; upstream's v3.0.1 notes warn that a leftover xinput1_3.dll crashes the game. This recipe cannot delete a file it did not create, so remove it by hand if you are upgrading from 2.x.
+  - There is no `uninstall` block on purpose. An empty uninstall makes the runner roll back the install transaction, which restores the game folder to its pre-install state — correct here, because the install is exactly one extraction into that folder.
   - UE4SS injects into the Unreal process. Close the game and any existing UEVR/ERVR injector first.
   - Scripting mods load from UE4SS/Mods and are separate downloads from the framework itself.
