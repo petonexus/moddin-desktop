@@ -361,9 +361,31 @@ reasoning is what the next person needs:
       never been compiled. *Still open:* whether `module.rs` should survive once the adapters
       go, and the Rust-command/YAML-capability duplication for `ofxr-bridge`, `optiscaler`,
       `openxr-helpers` and `uevr` — both are live, and which one is right is a product call.
-- [ ] **Decide `App.vue`'s fate.** — `O-10`
-      It is at 109,687 bytes against the guard's 115,000 budget, so ~5 KB of headroom. The
-      decision taken is to decompose rather than raise the budget. Not started.
+- [x] **Decide `App.vue`'s fate, and do it.** — `O-10`
+      Decomposed, not the budget raised. **110,278 → 73,213 bytes** on disk; the guard
+      measures 107,739 → 71,488 after CRLF→LF normalisation, so headroom went from ~7 KB to
+      ~43.5 KB with the 115,000 budget untouched.
+
+      The seams were found before the sizes, and the largest one was the per-module action
+      table — the `if (module.id === ...)` chain running through preview, remove, update and
+      verify. That became a module the app *imports* rather than a branch it runs, and it now
+      has 23 tests holding it against the three things it claims to mirror: the catalogue, the
+      backend's `invoke_handler`, and the services that actually invoke each command. Two
+      module ids have already been dead cards in this repo's history — `reshade` and
+      `ofxr-framegen` — and both were found by a catalogue validator rather than by the guard.
+      That test is what makes the next one a build failure instead of a support ticket.
+
+      It was proven by mutation, not asserted: dropping `ofxr-bridge` from the
+      capability-backed list fails with all five games that would have rendered a dead card.
+      And it caught a case while being written — `kharvox-vr` and `cheeky-foveated-dlss-uevr`
+      are `planned`, so their cards are disabled rather than dead, which is *why* the
+      assertion is on `available` modules and not on every id.
+
+      Four behaviour bugs were found and left alone, which is the right call for a refactor
+      whose value is being reviewable: the hero progress bar counts modules the grid never
+      verifies so it cannot reach its total; UEVR never self-verifies; the update path writes
+      an untranslated detail string; and `updateModule` sets a `configured` flag nothing reads.
+
 - [ ] **Extract `feat/agent-mcp`, then delete the merged branches.** — `O-04`, corrected
       The roadmap said the branch was "partly cherry-picked". It is not. `feat/agent-mcp`
       holds **~1,500 lines that never reached main**: Collections (tab, install dialog,
@@ -403,13 +425,30 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
 
 # Later
 
-- [ ] **App self-updater** — `F-04`, `P0-4` · M
-      Blocked on a key the maintainer holds. The audit's record of the last time this was
-      needed is the reason it is worth doing carefully: *"users downloaded a knowingly broken
-      installer"*, because the signing key was a Rust constant and rotation meant shipping a
-      binary. A working updater that trusts a key in the repo would repeat that. The
-      deliverable is a correctly wired updater with a marked placeholder and a build that
-      fails loudly while the placeholder is in place.
+- [-] **App self-updater** — `F-04`, `P0-4` · wired, waiting on one key
+      The code is done and it **refuses to install anything** while the signing key is a
+      placeholder. Verified by running it: `cargo check --release --lib` fails with E0080 and a
+      message naming the command and the document. The guard is gated on
+      `not(debug_assertions)` on purpose — an always-on version would leave the two blocking
+      gates permanently red, and a permanently red guard gets deleted.
+
+      Three more refusals back it: both commands return `not-configured` before any network
+      call, the install re-checks and refuses if the release moved from the version the user
+      confirmed, and the error mapping is keyed on the plugin's error *variants* rather than
+      their strings, so upstream rewording cannot reclassify a signature failure into
+      something that looks recoverable.
+
+      `release.yml` throws rather than skipping when the payload is incomplete. That step was
+      written to skip gracefully first, on the reasoning that a release before the updater is
+      configured should still produce an installer — the reasoning was wrong, and the skip
+      branch would have published a release whose update check could never succeed.
+
+      **Left for the maintainer, in `docs/UPDATER.md`:** the pubkey in `tauri.conf.json`, and
+      the `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository
+      secrets. A valid-but-wrong key is undetectable at build time, so the dry-run tag is the
+      guard. There is deliberately **no** build check against reusing the community keyring —
+      duplicating those private consts would create exactly the drifting list this repo keeps
+      getting bitten by.
 - [ ] **A second community capability that is signed**, so the trust chain is exercised in
       production. — `F-11`
 - [ ] **UE4SS and REFramework specs** (currently `status: planned`, no install block). — `F-10` · M
