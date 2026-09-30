@@ -16,23 +16,25 @@
 id: vr-cyberpunk-2077-stack
 displayName: Cyberpunk 2077 VR performance stack
 description: >-
-  The two capabilities that make Cyberpunk 2077 hold up in VR: DLSS Super
-  Resolution through OptiScaler for the flat view the headset is tethered
-  to, and optical-flow frame generation streamed into the headset through
-  OpenXR. Close Cyberpunk 2077 and the OFXR tray before applying — both
-  recipes write into the game folder, and a running game holds the file
-  the runner needs to replace.
+  DLSS Super Resolution through OptiScaler for the flat view the headset is
+  tethered to. Close Cyberpunk 2077 before applying — the recipe writes into
+  the game folder, and a running game holds the file the runner needs to
+  replace.
 category: vr
 status: available
 targetGame: cyberpunk-2077
 requiredEngines:
   - redengine
-# Two authoring decisions worth keeping in the file rather than in a
+# Three authoring decisions worth keeping in the file rather than in a
 # doc nobody reads:
 #
-# 1. OptiScaler ships a frame-generation mode of its own. OFXR Bridge is
-#    the one doing the frame generation in this set; running both is the
-#    configuration neither recipe tests.
+# 1. OFXR Bridge is deliberately absent, and it was a member here until the
+#    `ofxr-bridge` recipe went `planned`. Its chain promoted a runtime
+#    manifest that no published release ships; the tray generates and
+#    registers that manifest itself at arm time, which is an interactive
+#    step a capability chain cannot express. Naming a planned member
+#    advertises something the runner turns down, which is the same mistake
+#    the `feat/agent-mcp` branch's own collections made.
 # 2. Cheeky Foveated DLSS is deliberately absent. It is a ReShade add-on,
 #    and ReShade's dxgi.dll proxy collides with OptiScaler's unless the
 #    two are pinned to different files — a decision about one user's
@@ -44,8 +46,6 @@ capabilities:
       DLSS Super Resolution for the flat view. The Cyberpunk catalogue pins
       the release and its checksum, so this is the same OptiScaler the
       game page installs.
-  - id: ofxr-bridge
-    required: true
-    note: >-
-      Optical-flow frame generation delivered inside the headset through
-      OpenXR, on top of the upscaled image OptiScaler produces.
+# 3. OptiScaler ships a frame-generation mode of its own, so with OFXR
+#    Bridge gone there is no second frame generator here to conflict with
+#    it. If OFXR Bridge comes back, this is the note to read first.

@@ -871,7 +871,11 @@ mod tests {
         write_collection(
             &local,
             "b-pair.yaml",
-            &collection_yaml("local-pair", "  - id: ofxr-bridge\n    required: true\n"),
+            // `reshade`, not `ofxr-bridge`: this test is about the
+            // duplicate id, and a second file that also trips a different
+            // refusal (ofxr-bridge is `planned`) would make the issue
+            // count mean two things at once.
+            &collection_yaml("local-pair", "  - id: reshade\n    required: true\n"),
         );
 
         let (registry, report) = CollectionRegistry::load_with_local_dir(&capabilities, &local);
@@ -1038,7 +1042,11 @@ mod tests {
             .iter()
             .find(|summary| summary.id == "vr-cyberpunk-2077-stack")
             .expect("shipped collection listed");
-        assert_eq!(cyberpunk.preset.capabilities.len(), 2);
+        // One member, not two. `ofxr-bridge` was dropped from the shipped
+        // collections when that recipe went `planned`: a collection naming
+        // a planned member advertises something the runner turns down, and
+        // this assertion is the thing that noticed.
+        assert_eq!(cyberpunk.preset.capabilities.len(), 1);
         assert_eq!(
             cyberpunk.preset.blocked,
             vec![CollectionBlocker {
