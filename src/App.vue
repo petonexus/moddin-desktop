@@ -4,24 +4,21 @@ import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
 import { findCatalogGameByInstalledGame, gameCatalog, getMissingDependenciesForModule } from './services/catalog'
 import { localeOptions } from './i18n'
-import type { InstalledGame, ModuleCategory, ToolModuleDefinition } from './types/game'
+import type { InstalledGame, ToolModuleDefinition } from './types/game'
 import type { GameEnvironmentInspection } from './types/inspection'
 import type { ObsVrPreview, ObsVrRequest } from './types/obs'
 import type { OptiScalerPreview, OptiScalerRequest } from './types/optiscaler'
-import type { OfxrPreview, OfxrRequest, OfxrResult } from './types/ofxr'
-import type { CheekyFoveatedDlssPreview, CheekyFoveatedDlssRequest, CheekyFoveatedDlssResult } from './types/cheeky'
-import type { UevrBackend, UevrBackendCompatibility, UevrPreview, UevrRequest, UevrResult } from './types/uevr'
+import type { OfxrPreview, OfxrRequest } from './types/ofxr'
+import type { CheekyFoveatedDlssPreview, CheekyFoveatedDlssRequest } from './types/cheeky'
+import type { UevrBackend, UevrBackendCompatibility, UevrPreview, UevrRequest } from './types/uevr'
 import type { TransactionRecord } from './types/transaction'
-import type { VrIniPatch, VrLaunchPreview, VrLaunchRequest, VrLaunchResult, VrRecommendation } from './types/vr-launch'
+import type { VrLaunchPreview, VrLaunchRequest } from './types/vr-launch'
 import DesktopShortcutDialog from './features/desktop-shortcut/DesktopShortcutDialog.vue'
 import AiAssistantDialog from './components/shell/AiAssistantDialog.vue'
 import AiGameSuggestions from './components/shell/AiGameSuggestions.vue'
 import AiTopbarMenu from './components/shell/AiTopbarMenu.vue'
 import { useAiTopbarActions } from './composables/useAiTopbarActions'
 import { useDesktopShortcut } from './features/desktop-shortcut/useDesktopShortcut'
-import type { ModuleVerification, ModuleVerificationCheck } from './types/module-verification'
-import type { ModuleUpdate } from './types/module-update'
-import type { CompatibilityReport, CompatibilityStatus } from './types/compatibility'
 import { version as appVersion } from '../package.json'
 import AppIcon from './components/ui/AppIcon.vue'
 import BaseDialog from './components/ui/BaseDialog.vue'
@@ -30,13 +27,47 @@ import EmptyState from './components/ui/EmptyState.vue'
 import ToastStack from './components/ui/ToastStack.vue'
 import GlobalTools from './components/shell/GlobalTools.vue'
 import GameList from './features/library/GameList.vue'
-import ModuleCard, { type ModuleCardState, type ModuleCardUpdate } from './features/library/ModuleCard.vue'
+import ModuleCard from './features/library/ModuleCard.vue'
 import HistoryView from './features/history/HistoryView.vue'
 import CapabilityModulesSection from './features/capability-modules/CapabilityModulesSection.vue'
+import {
+  configureObsVr,
+  installCheekyFoveatedDlss,
+  installOfxr,
+  installOptiScaler,
+  installUevr,
+  launchVrGame as launchVrGameCommand,
+  previewOptiScaler,
+  rollbackLatestModuleTransaction,
+} from './features/modules/service'
+import {
+  buildOfxrRequest,
+  cheekyCompatibilityNote,
+  configList,
+  libraryModuleEntry,
+  libraryOwnedModules,
+  moduleDescriptionKey,
+  moduleNameKey,
+  moduleStateKey,
+  moduleTransactionKind,
+  type ModuleRequestContext,
+} from './features/modules/module-registry'
+import {
+  availableModuleCategories,
+  countModulesInCategory,
+  moduleActionLabel,
+  moduleActionsBlocked,
+  moduleCardView,
+  selectModuleGroups,
+  summariseModuleProgress,
+  type ModuleCardViewInput,
+  type ModuleFilter,
+} from './features/modules/module-card-view'
+import { useModuleVerification } from './features/modules/useModuleVerification'
+import { COMPATIBILITY_STATUSES, useCompatibilityReports } from './features/compatibility/useCompatibilityReports'
 
 type ViewName = 'library' | 'history'
 type CheekyResearchState = 'experimental' | 'prerequisite'
-type ModuleFilter = 'all' | ModuleCategory
 
 interface CheekyResearchGuide {
   state: CheekyResearchState
@@ -64,20 +95,10 @@ const selectedAppId = ref<string | null>(null)
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
 const busyModuleId = ref<string | null>(null)
-const verificationBusyKey = ref<string | null>(null)
-const verificationBusyKeys = ref(new Set<string>())
 const rollbackBusyId = ref<string | null>(null)
-const moduleVerifications = ref<Record<string, ModuleVerification>>({})
-const updateBusyKeys = ref(new Set<string>())
-const moduleUpdates = ref<Record<string, ModuleUpdate>>({})
-const compatibilityReports = ref<Record<string, CompatibilityReport>>({})
 const SELECTION_DEBOUNCE_MS = 180
 const BACKGROUND_TASK_DELAY_MS = 220
 const GAME_STATE_POLL_MS = 3000
-const AUTO_VERIFICATION_TTL_MS = 15_000
-const AUTO_UPDATE_TTL_MS = 10 * 60_000
-const UPDATE_CHECK_TIMEOUT_MS = 35_000
-const BACKGROUND_CONCURRENCY = 2
 let gameStatePoll: number | null = null
 let selectionDebounce: number | null = null
 let selectionBackgroundTimer: number | null = null
@@ -97,22 +118,27 @@ const ofxrDialog = ref<{ request: OfxrRequest; preview: OfxrPreview } | null>(nu
 const cheekyDialog = ref<{ request: CheekyFoveatedDlssRequest; preview: CheekyFoveatedDlssPreview } | null>(null)
 const uevrDialog = ref<{ request: UevrRequest; preview: UevrPreview } | null>(null)
 const cheekyGuideDialog = ref<ToolModuleDefinition | null>(null)
-const compatibilityDialog = ref<{ module: ToolModuleDefinition; gameName: string; version: string } | null>(null)
 /**
  * Set when the user hits Install on a module that declares
  * prerequisites in the catalog. The list is already in install order.
  */
 const dependencyDialog = ref<{ module: ToolModuleDefinition; missing: ToolModuleDefinition[] } | null>(null)
-const compatibilityDraftStatus = ref<CompatibilityStatus>('unverified')
-const compatibilityDraftNote = ref('')
 const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview } | null>(null)
+const uevrBackendSelections = ref<Record<string, UevrBackend>>({})
+
+const { t, locale } = useI18n()
+
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 const desktopShortcut = useDesktopShortcut({
   busy: moduleBusy,
   actionError,
   success,
   onCreated: async (module) => {
     await refreshTransactions()
-    await verifyModule(module, true)
+    await moduleVerification.verifyModule(module, true)
   },
 })
 
@@ -123,19 +149,42 @@ const aiTopbar = useAiTopbarActions({
   selectedGameName: () => selectedGame.value?.catalog?.name ?? null,
   currentError: () => (typeof error.value === 'string' ? error.value : null),
 })
-const uevrBackendSelections = ref<Record<string, UevrBackend>>({})
 
-const compatibilityStatuses: CompatibilityStatus[] = [
-  'unverified',
-  'experimental',
-  'proven',
-  'risky',
-  'not_working',
-]
+/**
+ * What the player recorded about a mod, keyed per game. Its own
+ * vocabulary, its own dialog and its own storage; the library only asks
+ * it what status a module currently has.
+ */
+const compatibility = useCompatibilityReports({
+  t,
+  stateKey: (module) => moduleStateKeyFor(module, selectedAppId.value),
+  gameLabel: () => selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? '',
+  formatDate: formatTransactionDate,
+  success,
+})
+const {
+  dialog: compatibilityDialog,
+  draftStatus: compatibilityDraftStatus,
+  draftNote: compatibilityDraftNote,
+} = compatibility
 
-const moduleCategories: ModuleCategory[] = ['vr', 'graphics', 'qol', 'system']
-
-const { t, locale } = useI18n()
+/**
+ * Verifications and update checks for the selected game. Both run in the
+ * background after a selection settles, so this owns the generation
+ * counter that tells stale work from current work.
+ */
+const moduleVerification = useModuleVerification({
+  t,
+  selectedAppId: () => selectedAppId.value,
+  selectionGeneration: () => selectionGeneration,
+  gameContext: gameContextForAppId,
+  requestContext,
+  stateKey: moduleStateKeyFor,
+  activeTransactionId: (module) => activeModuleTransaction(module)?.id ?? null,
+  desktopShortcutPreview: (module) => desktopShortcut.preview(module, selectedGame.value),
+  actionError,
+  success,
+})
 
 function storeLabel(store: InstalledGame['store']) {
   if (store === 'epic') return t('storeEpic')
@@ -196,21 +245,26 @@ const selectedGameRunning = computed(() => {
   if (gameInspection.value?.gameRunning) return true
 
   const modules = selectedGame.value?.catalog?.modules ?? []
-  return modules.some((module) => moduleVerification(module)?.gameRunning === true)
+  return modules.some((module) => moduleVerification.verificationFor(module)?.gameRunning === true)
 })
 
+/**
+ * The OFXR bridge is armed by the launch, not installed by it, so the
+ * launch dialog shows what is about to happen. It is the one preview the
+ * VR launch request carries along.
+ */
 const selectedOfxrModule = computed(() =>
   selectedGame.value?.catalog?.modules.find((module) => module.id === 'ofxr-framegen') ?? null,
 )
 
 const ofxrLaunchRequest = computed(() => {
   const module = selectedOfxrModule.value
-  return module ? buildOfxrRequest(module) : null
+  return module ? buildOfxrRequest(requestContext(module)) : null
 })
 
 const ofxrReadyForLaunch = computed(() => {
   const module = selectedOfxrModule.value
-  return module ? moduleVerification(module)?.status === 'installed' : true
+  return module ? moduleVerification.verificationFor(module)?.status === 'installed' : true
 })
 
 const primaryModule = computed(() => {
@@ -221,140 +275,77 @@ const primaryModule = computed(() => {
     ?? null
 })
 
-const moduleProgress = computed(() => {
-  const states = (selectedGame.value?.catalog?.modules ?? [])
-    .filter((module) => module.status === 'available')
-    .map(moduleCardState)
-  return {
-    total: states.length,
-    active: states.filter((state) => state === 'active').length,
-    attention: states.filter((state) => state === 'attention').length,
-    checking: states.includes('checking'),
-  }
-})
+/** Every module the selected game declares, and the grid's share of them. */
+const gameModules = computed(() => selectedGame.value?.catalog?.modules ?? [])
+const ownedModules = computed(() => libraryOwnedModules(gameModules.value))
+const categoryTabs = computed(() => availableModuleCategories(gameModules.value))
 
-function moduleCardState(module: ToolModuleDefinition): ModuleCardState {
-  if (module.status !== 'available') return 'planned'
-  const verification = moduleVerification(module)
-  if (!verification) return moduleVerificationPending(module) ? 'checking' : 'unknown'
-  if (verification.status === 'installed') return 'active'
-  if (verification.status === 'ready') return 'available'
-  if (verification.status === 'attention') return 'attention'
-  return 'unknown'
-}
+const moduleProgress = computed(() =>
+  summariseModuleProgress(
+    gameModules.value
+      .filter((module) => module.status === 'available')
+      .map((module) => moduleCardView(moduleCardInput(module)).state),
+  ),
+)
 
-function moduleCardTag(module: ToolModuleDefinition): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } | null {
-  // Show a compatibility chip for any module that carries an explicit
-  // `compatibilityStatus` in its catalog config — not only Cheeky.
-  // Catalog authors can mark research findings as `proven`, `experimental`,
-  // `risky`, or `not_working` per-game; the chip surfaces that for the player.
-  const hasExplicitCompat = Object.prototype.hasOwnProperty.call(module.config ?? {}, 'compatibilityStatus')
-  if (!hasExplicitCompat) {
-    // Legacy path: keep the original Cheeky-only chip behaviour so older
-    // catalog entries (without an explicit compatibilityStatus) still
-    // surface a 'unverified' chip when the engine preset says so.
-    if (module.id !== 'cheeky-foveated-dlss') return null
-  }
-  const status = compatibilityStatus(module)
-  const tone = status === 'proven' ? 'success' : status === 'experimental' ? 'warning' : status === 'unverified' ? 'neutral' : 'danger'
-  return { label: compatibilityStatusLabel(status), tone }
-}
-
-function moduleCardUpdate(module: ToolModuleDefinition): ModuleCardUpdate | null {
-  // Hide the whole update area when the recipe has nowhere to look; showing
-  // "no update source" on every card was noise the user could not act on.
-  if (module.status !== 'available' || !moduleHasUpdateSource(module)) return null
-  const update = moduleUpdate(module)
-  const available = update?.status === 'available'
-  return {
-    hasSource: true,
-    available,
-    summary: available ? t('updateAvailableShort', { version: update?.latestVersion ?? '?' }) : moduleUpdateSummary(module),
-    releaseUrl: update?.releaseUrl ?? null,
-    busy: moduleUpdateBusy(module),
-  }
-}
-
-function moduleRemoveLabel(module: ToolModuleDefinition) {
-  return module.status === 'available' && activeModuleTransaction(module) ? t('actionRemove') : null
-}
-
-const availableModuleCategories = computed(() => {
-  const modules = selectedGame.value?.catalog?.modules ?? []
-  return moduleCategories.filter((category) => modules.some((module) => module.category === category))
-})
+const moduleGroups = computed(() =>
+  selectModuleGroups(gameModules.value, ownedModules.value, activeModuleFilter.value),
+)
 
 /**
- * Catalog modules Moddin installs through the capability pipeline
- * (`src-tauri/capabilities/`) instead of a dedicated Rust installer.
- *
- * They are rendered by the capability section, which already has the
- * config form, the preflight checklist, the compatibility warning and
- * the rollback — so listing them in the library grid too would show the
- * same recipe twice and give the grid a button that can only fail.
- * Keep this list in step with the specs that exist in that folder.
- *
- * `reshade` and `ofxr-bridge` were missing from this list. Both were
- * grid cards whose only backing was a file nothing dispatched to —
- * `reshade.rs` and `ofxr_module.rs` had no caller, so the cards fell
- * through every branch of `configureModule` and threw "no action". A
- * button that advertises an install and cannot perform it is the exact
- * defect this list exists to prevent. Both recipes are registered and
- * available, so the capability section is the path that works and the
- * grid card is the one that had to go.
+ * Everything a module's request builder may read. One place, so a
+ * request can never be built against a different game than the one on
+ * screen.
  */
-const CAPABILITY_BACKED_MODULE_IDS = new Set([
-  'bepinex',
-  'ue4ss',
-  'reframework',
-  'reshade',
-  'ofxr-bridge',
-])
-
-function isCapabilityBackedModule(module: ToolModuleDefinition) {
-  return CAPABILITY_BACKED_MODULE_IDS.has(module.id)
+function requestContext(module: ToolModuleDefinition): ModuleRequestContext {
+  const game = selectedGame.value
+  return {
+    module,
+    // A game the catalog does not know has nothing to build a request
+    // from, and the builders used to each re-check that for themselves.
+    game: game?.catalog ? { installed: game.installed, catalog: game.catalog } : null,
+    t,
+    uevrBackend: selectedUevrBackend,
+  }
 }
 
-/** Catalog modules the library grid still owns (it has an installer). */
-function libraryOwnedModules(): ToolModuleDefinition[] {
-  return (selectedGame.value?.catalog?.modules ?? []).filter(
-    (module) => !isCapabilityBackedModule(module),
-  )
+/** Where a module's verification, update and report state is remembered. */
+function moduleStateKeyFor(module: ToolModuleDefinition, appId: string | null) {
+  return moduleStateKey(module.id, appId, gameContextForAppId(appId)?.catalog.id ?? null)
 }
 
-const moduleGroups = computed(() => {
-  const modules = libraryOwnedModules()
-  return availableModuleCategories.value
-    .filter((category) => activeModuleFilter.value === 'all' || activeModuleFilter.value === category)
-    .map((category) => ({
-      category,
-      modules: modules.filter((module) => module.category === category),
-    }))
-    .filter((group) => group.modules.length > 0)
-})
-
-function moduleCategoryCount(category: ModuleCategory) {
-  return (selectedGame.value?.catalog?.modules ?? []).filter((module) => module.category === category).length
-}
-
-const localizedModuleNames: Record<string, string> = {
-  'vr-launch': 'moduleVrLaunch',
-  'obs-vr': 'moduleObsVr',
-  optiscaler: 'moduleOptiScaler',
-  'ofxr-framegen': 'moduleOfxr',
-  'cheeky-foveated-dlss': 'moduleCheeky',
-  uevr: 'moduleUevr',
-  openxr: 'moduleOpenXr',
-  'desktop-shortcut': 'moduleDesktopShortcut',
+/** What the card needs to know about one module, right now. */
+function moduleCardInput(module: ToolModuleDefinition): ModuleCardViewInput {
+  return {
+    module,
+    verification: moduleVerification.verificationFor(module),
+    verifying: moduleVerification.isVerifying(module),
+    loading: inspectionLoading.value,
+    busy: moduleBusy.value,
+    actionBusy: busyModuleId.value === module.id,
+    gameRunning: selectedGameRunning.value,
+    blockedReason: blockedReason.value,
+    installed: Boolean(activeModuleTransaction(module)),
+    update: moduleVerification.updateFor(module),
+    updateBusy: moduleVerification.isUpdateBusy(module),
+    hasUpdateSource: moduleVerification.hasUpdateSource(module),
+    updateSummary: moduleVerification.updateSummary(module),
+    compatibility: compatibility.statusFor(module),
+    t,
+    formatDate: formatTransactionDate,
+  }
 }
 
 function moduleNameById(id: string, fallback = id) {
-  const key = localizedModuleNames[id]
-  return key ? t(key) : fallback
+  return t(moduleNameKey(id, fallback))
 }
 
 function moduleName(module: ToolModuleDefinition) {
   return moduleNameById(module.id, module.name)
+}
+
+function moduleDescription(module: ToolModuleDefinition) {
+  return t(moduleDescriptionKey(module))
 }
 
 function gameNameById(gameId: string) {
@@ -367,73 +358,22 @@ function transactionBlockedReason(transaction: TransactionRecord) {
     : undefined
 }
 
-function moduleDescription(module: ToolModuleDefinition) {
-  if (module.id === 'vr-launch') return t('moduleVrLaunchDescription')
-  if (module.id === 'obs-vr') return t('moduleObsVrDescription')
-  if (module.id === 'optiscaler') return t('moduleOptiScalerDescription')
-  if (module.id === 'ofxr-framegen') return t('moduleOfxrDescription')
-  if (module.id === 'cheeky-foveated-dlss') return t('moduleCheekyDescription')
-  if (module.id === 'uevr') return t('moduleUevrDescription')
-  if (module.id === 'openxr') return t('moduleOpenXrDescription')
-  return module.description
-}
-
 function categoryLabel(category: ToolModuleDefinition['category']) {
   return t(`category${category.charAt(0).toUpperCase()}${category.slice(1)}`)
 }
 
-function moduleKey(module: ToolModuleDefinition) {
-  return moduleKeyForApp(module, selectedAppId.value)
-}
-
-function moduleKeyForApp(module: ToolModuleDefinition, appId: string | null) {
-  const game = gameContextForAppId(appId)
-  return `${game?.catalog.id ?? appId ?? 'unknown'}:${module.id}`
-}
-
-function moduleVerification(module: ToolModuleDefinition) {
-  return moduleVerifications.value[moduleKey(module)]
-}
-
-function moduleVerificationBusy(module: ToolModuleDefinition) {
-  const key = moduleKey(module)
-  return verificationBusyKey.value === key || verificationBusyKeys.value.has(key)
-}
-
-function moduleVerificationPending(module: ToolModuleDefinition) {
-  return module.status === 'available'
-    && !moduleVerification(module)
-    && (inspectionLoading.value || moduleVerificationBusy(module))
-}
-
-function isCompatibilityStatus(value: unknown): value is CompatibilityStatus {
-  return typeof value === 'string' && compatibilityStatuses.includes(value as CompatibilityStatus)
-}
-
-function defaultCompatibilityStatus(module: ToolModuleDefinition): CompatibilityStatus {
-  const configured = module.config?.compatibilityStatus
-  return isCompatibilityStatus(configured) ? configured : 'unverified'
-}
-
-function moduleVersion(module: ToolModuleDefinition) {
-  return typeof module.config?.version === 'string' ? module.config.version : '?'
-}
-
-function compatibilityReport(module: ToolModuleDefinition) {
-  const report = compatibilityReports.value[moduleKey(module)]
-  return report?.testedVersion === moduleVersion(module) ? report : undefined
-}
-
-function compatibilityStatus(module: ToolModuleDefinition): CompatibilityStatus {
-  return compatibilityReport(module)?.status ?? defaultCompatibilityStatus(module)
-}
-
-function compatibilityStatusLabel(status: CompatibilityStatus) {
-  if (status === 'experimental') return t('compatibilityExperimental')
-  if (status === 'proven') return t('compatibilityProven')
-  if (status === 'risky') return t('compatibilityRisky')
-  if (status === 'not_working') return t('compatibilityNotWorking')
-  return t('compatibilityUnverified')
+/**
+ * The applied transaction for this module, if one is still on record. A
+ * card with one offers "Remove", and only a card with one can be
+ * removed.
+ */
+function activeModuleTransaction(module: ToolModuleDefinition) {
+  const gameId = selectedGame.value?.catalog?.id
+  const kind = moduleTransactionKind(module.id)
+  if (!gameId || !kind) return null
+  return transactions.value.find((transaction) =>
+    transaction.status === 'applied' && transaction.gameId === gameId && transaction.kind === kind,
+  ) ?? null
 }
 
 function cheekyResearchStateLabel(state: CheekyResearchState) {
@@ -477,7 +417,7 @@ function cheekyResearchGuide(module: ToolModuleDefinition): CheekyResearchGuide 
 }
 
 function compatibilityStatusSummary(module: ToolModuleDefinition) {
-  const report = compatibilityReport(module)
+  const report = compatibility.reportFor(module)
   if (report) {
     const recordedAt = t('compatibilityRecordedAt', {
       date: formatTransactionDate(report.updatedAt),
@@ -490,100 +430,12 @@ function compatibilityStatusSummary(module: ToolModuleDefinition) {
     return t('cheekyGuideEldenDecision')
   }
 
-  return `${t('compatibilityUpstreamEvidence')} ${cheekyGameCompatibilityNote(module)}`
-}
-
-function cheekyCompatibilityEvidence() {
-  return `${t('compatibilityKnownWorking')} ${t('compatibilityKnownIssues')}`
-}
-
-function cheekyGameCompatibilityNote(module: ToolModuleDefinition) {
-  if (module.id !== 'cheeky-foveated-dlss') return ''
-  const gameId = selectedGame.value?.catalog?.id
-  if (gameId === 'cyberpunk-2077') return t('cheekyNoteCyberpunk')
-  if (gameId === 'elden-ring') return t('cheekyNoteEldenRing')
-  if (gameId === 'stalker-2') return t('cheekyNoteStalker2')
-  return ''
+  return `${t('compatibilityUpstreamEvidence')} ${cheekyCompatibilityNote(module, selectedGame.value?.catalog?.id, t)}`
 }
 
 function openCompatibilityReport(module: ToolModuleDefinition) {
   cheekyGuideDialog.value = null
-  const version = moduleVersion(module)
-  const report = compatibilityReport(module)
-  compatibilityDraftStatus.value = report?.status ?? defaultCompatibilityStatus(module)
-  compatibilityDraftNote.value = report?.note ?? ''
-  compatibilityDialog.value = {
-    module,
-    gameName: selectedGame.value?.catalog?.name ?? selectedGame.value?.installed.name ?? '',
-    version,
-  }
-}
-
-function saveCompatibilityReport() {
-  const dialog = compatibilityDialog.value
-  if (!dialog) return
-
-  const key = moduleKey(dialog.module)
-  const nextReports = { ...compatibilityReports.value }
-  if (compatibilityDraftStatus.value === 'unverified') {
-    delete nextReports[key]
-  } else {
-    nextReports[key] = {
-      status: compatibilityDraftStatus.value,
-      note: compatibilityDraftNote.value.trim(),
-      testedVersion: dialog.version,
-      updatedAt: Date.now(),
-    }
-  }
-  compatibilityReports.value = nextReports
-  compatibilityDialog.value = null
-  success.value = t('compatibilityTestSaved')
-}
-
-function loadCompatibilityReports() {
-  try {
-    const raw = window.localStorage.getItem('moddin-compatibility-reports')
-    if (!raw) return
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const validReports: Record<string, CompatibilityReport> = {}
-    for (const [key, value] of Object.entries(parsed)) {
-      if (!value || typeof value !== 'object') continue
-      const report = value as Partial<CompatibilityReport>
-      if (!isCompatibilityStatus(report.status) || typeof report.note !== 'string' || typeof report.testedVersion !== 'string' || typeof report.updatedAt !== 'number') continue
-      validReports[key] = {
-        status: report.status,
-        note: report.note,
-        testedVersion: report.testedVersion,
-        updatedAt: report.updatedAt,
-      }
-    }
-    compatibilityReports.value = validReports
-  } catch {
-    // Ignore unavailable or malformed local storage.
-  }
-}
-
-function moduleUpdate(module: ToolModuleDefinition) {
-  return moduleUpdates.value[moduleKey(module)]
-}
-
-function moduleUpdateSource(module: ToolModuleDefinition): string | null {
-  const config = module.config ?? {}
-  const configured = config.updateUrl
-  if (typeof configured === 'string' && configured.trim()) return configured.trim()
-
-  if (module.id === 'uevr') {
-    const backend = selectedUevrBackend(module)
-    const sourceKey = backend === 'afw' || backend === 'joey-afw' ? 'afwReleaseApiUrl' : 'releaseApiUrl'
-    const source = config[sourceKey]
-    return typeof source === 'string' && source.trim() ? source.trim() : null
-  }
-
-  return null
-}
-
-function moduleHasUpdateSource(module: ToolModuleDefinition) {
-  return Boolean(moduleUpdateSource(module))
+  compatibility.openRecord(module)
 }
 
 async function openRelease(url: string | null) {
@@ -594,278 +446,7 @@ async function openRelease(url: string | null) {
   } catch (err) {
     // Keep the link useful when the UI is running directly in a browser.
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
-    if (!opened) actionError.value = err instanceof Error ? err.message : String(err)
-  }
-}
-
-function moduleUpdateBusy(module: ToolModuleDefinition) {
-  return updateBusyKeys.value.has(moduleKey(module))
-}
-
-function moduleUpdateSummary(module: ToolModuleDefinition) {
-  const update = moduleUpdate(module)
-  if (!moduleHasUpdateSource(module)) return t('updateNoSource')
-  if (!update) return t('updateNotChecked')
-  if (update.status === 'available') {
-    return t('updateAvailableSummary', { version: update.latestVersion ?? '?' })
-  }
-  if (update.status === 'current') {
-    return t('updateCurrentSummary', { version: update.latestVersion ?? update.currentVersion ?? '?' })
-  }
-  if (update.status === 'unavailable') return t('updateNoSource')
-  if (update.status === 'error') return t('updateFailed')
-  if (update.status === 'unknown' && update.latestVersion) {
-    return t('updateUnknownLocalSummary', { version: update.latestVersion })
-  }
-  return t('updateUnknownLocal')
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs)
-    promise.then(resolve, reject).finally(() => window.clearTimeout(timer))
-  })
-}
-
-function moduleActionsBlocked(module: ToolModuleDefinition) {
-  return module.status !== 'available'
-    || moduleBusy.value
-    || inspectionLoading.value
-    || selectedGameRunning.value
-}
-
-function moduleActionLabel(module: ToolModuleDefinition) {
-  if (module.status !== 'available') return t('statePlanned')
-  if (busyModuleId.value === module.id) return t('actionOpening')
-  if (module.id === 'vr-launch') return t('actionLaunchVr')
-  if (module.id === 'desktop-shortcut') return t('actionCreateShortcut')
-  if (moduleVerification(module)?.status === 'installed') {
-    return module.id === 'optiscaler' || module.id === 'uevr' ? t('actionReinstall') : t('actionApplyAgain')
-  }
-  return t('actionInstall')
-}
-
-function moduleActionPrimary(module: ToolModuleDefinition) {
-  // Once a mod is active, re-running it is a secondary gesture.
-  return module.id === 'vr-launch' || moduleVerification(module)?.status !== 'installed'
-}
-
-function moduleTransactionKind(module: ToolModuleDefinition) {
-  if (module.id === 'obs-vr') return 'obs-vr'
-  if (module.id === 'optiscaler') return 'optiscaler'
-  if (module.id === 'ofxr-framegen') return 'ofxr-framegen'
-  if (module.id === 'cheeky-foveated-dlss') return 'cheeky-foveated-dlss'
-  if (module.id === 'uevr') return 'uevr'
-  if (module.id === 'vr-launch') return 'vr-launch'
-  if (module.id === 'desktop-shortcut') return 'desktop-shortcut'
-  return null
-}
-
-function activeModuleTransaction(module: ToolModuleDefinition) {
-  const gameId = selectedGame.value?.catalog?.id
-  const kind = moduleTransactionKind(module)
-  if (!gameId || !kind) return null
-  return transactions.value.find((transaction) =>
-    transaction.status === 'applied' && transaction.gameId === gameId && transaction.kind === kind,
-  ) ?? null
-}
-
-function check(label: string, passed: boolean, detail?: string): ModuleVerificationCheck {
-  return { label, passed, detail }
-}
-
-function saveModuleVerification(
-  module: ToolModuleDefinition,
-  status: ModuleVerification['status'],
-  summary: string,
-  checks: ModuleVerificationCheck[],
-  gameRunning: boolean,
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-) {
-  if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-  moduleVerifications.value[moduleKeyForApp(module, expectedAppId)] = {
-    status,
-    summary,
-    checks,
-    gameRunning,
-    checkedAt: Date.now(),
-    activeTransactionId: activeModuleTransaction(module)?.id ?? null,
-  }
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-) {
-  let nextIndex = 0
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const item = items[nextIndex]
-      nextIndex += 1
-      if (item !== undefined) await worker(item)
-    }
-  })
-  await Promise.all(runners)
-}
-
-async function refreshGames() {
-  loading.value = true
-  error.value = null
-  try {
-    installedGames.value = await invoke<InstalledGame[]>('detect_installed_games')
-    if (!supportedInstalledGames.value.length) supportedOnly.value = false
-    if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
-      selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
-    } else {
-      await inspectSelectedGame()
-    }
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function inspectSelectedGame(
-  silent = false,
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-) {
-  const game = gameContextForAppId(expectedAppId)
-  if (!game) {
-    if (!silent && selectedAppId.value === expectedAppId) inspectionLoading.value = false
-    return
-  }
-
-  if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-    inspectionLoading.value = true
-    inspectionError.value = null
-  }
-
-  const requestKey = `${expectedAppId}:${game.installed.installDir}:${game.catalog.executable}`
-  let request = inspectionRequests.get(requestKey)
-  if (!request) {
-    request = invoke<GameEnvironmentInspection>('inspect_game_environment', {
-      installDir: game.installed.installDir,
-      executable: game.catalog.executable,
-    }).finally(() => {
-      if (inspectionRequests.get(requestKey) === request) inspectionRequests.delete(requestKey)
-    })
-    inspectionRequests.set(requestKey, request)
-  }
-
-  const previousGameRunning = gameInspection.value?.gameRunning
-  try {
-    const nextInspection = await request
-    if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-    gameInspection.value = nextInspection
-    if (silent && previousGameRunning !== undefined && previousGameRunning !== nextInspection.gameRunning) {
-      void verifyAvailableModules(expectedAppId, expectedGeneration, true)
-    }
-  } catch (err) {
-    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      inspectionError.value = err instanceof Error ? err.message : String(err)
-    }
-  } finally {
-    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      inspectionLoading.value = false
-    }
-  }
-}
-
-async function refreshTransactions() {
-  transactionsLoading.value = true
-  try {
-    transactions.value = await invoke<TransactionRecord[]>('list_transactions')
-  } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    transactionsLoading.value = false
-  }
-}
-
-function buildObsRequest(module: ToolModuleDefinition): ObsVrRequest | null {
-  if (module.id !== 'obs-vr' || !selectedGame.value?.catalog) return null
-
-  const config = module.config ?? {}
-  const executableName = typeof config.executableName === 'string'
-    ? config.executableName
-    : selectedGame.value.catalog.executable.split(/[\\/]/).pop()
-  if (!executableName) return null
-
-  return {
-    gameId: selectedGame.value.catalog.id,
-    gameName: selectedGame.value.catalog.name,
-    collectionName: typeof config.collectionName === 'string' ? config.collectionName : t('unnamedCollection'),
-    sceneName: typeof config.sceneName === 'string' ? config.sceneName : 'vr',
-    sourceName: typeof config.sourceName === 'string' ? config.sourceName : `${selectedGame.value.catalog.name} VR`,
-    executableName,
-  }
-}
-
-function optiScalerSafetyNotes(gameId: string): string[] {
-  const notes = [t('optiSafetyOnline')]
-  if (gameId === 'elden-ring') notes.push(t('optiSafetyEldenRing'))
-  if (gameId === 'stalker-2') notes.push(t('optiSafetyStalker2'))
-  return notes
-}
-
-function buildOptiScalerRequest(module: ToolModuleDefinition): OptiScalerRequest | null {
-  const game = selectedGame.value
-  if (module.id !== 'optiscaler' || !game?.catalog) return null
-
-  const config = module.config ?? {}
-  const version = typeof config.version === 'string' ? config.version : null
-  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
-  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
-  if (!version || !downloadUrl || !sha256) return null
-
-  const proxyCandidates = configList(config, 'proxyCandidates')
-
-  if (!proxyCandidates.length) return null
-
-  return {
-    gameId: game.catalog.id,
-    gameName: game.catalog.name,
-    installDir: game.installed.installDir,
-    executable: game.catalog.executable,
-    version,
-    downloadUrl,
-    sha256,
-    proxyCandidates,
-    safetyNotes: optiScalerSafetyNotes(game.catalog.id),
-  }
-}
-
-function cheekySafetyNotes(): string[] {
-  return [t('cheekySafetyReshade'), t('cheekySafetyOpenXr'), t('cheekySafetyOneIntegration'), t('cheekySafetyEnableDlss')]
-}
-
-function buildCheekyRequest(module: ToolModuleDefinition): CheekyFoveatedDlssRequest | null {
-  const game = selectedGame.value
-  if (module.id !== 'cheeky-foveated-dlss' || !game?.catalog) return null
-
-  const config = module.config ?? {}
-  const version = typeof config.version === 'string' ? config.version : null
-  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
-  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
-  const addonFile = typeof config.addonFile === 'string'
-    ? config.addonFile
-    : 'CheekyFoveatedDLSS.addon64'
-  if (!version || !downloadUrl || !sha256 || !addonFile) return null
-
-  return {
-    gameId: game.catalog.id,
-    gameName: game.catalog.name,
-    installDir: game.installed.installDir,
-    executable: game.catalog.executable,
-    version,
-    downloadUrl,
-    sha256,
-    addonFile,
-    safetyNotes: [...cheekySafetyNotes(), cheekyGameCompatibilityNote(module)].filter(Boolean),
+    if (!opened) actionError.value = messageOf(err)
   }
 }
 
@@ -879,7 +460,7 @@ function installedCatalogModuleIds(): Set<string> {
   if (!game) return new Set()
   return new Set(
     game.modules
-      .filter((module) => moduleVerification(module)?.status === 'installed' || activeModuleTransaction(module))
+      .filter((module) => moduleVerification.verificationFor(module)?.status === 'installed' || activeModuleTransaction(module))
       .map((module) => module.id),
   )
 }
@@ -930,69 +511,36 @@ async function installDependency(dependency: ToolModuleDefinition) {
   await configureModule(dependency)
 }
 
+/**
+ * Open the change preview for a module.
+ *
+ * The desktop shortcut owns its own dialog, so it goes first and says so
+ * by handling the card. Everything else asks the registry which command
+ * answers for this id, and the module's own row says which dialog the
+ * answer belongs in.
+ */
 async function openModulePreview(module: ToolModuleDefinition) {
   if (await desktopShortcut.open(module, selectedGame.value)) return
 
-  const vrRequest = buildVrLaunchRequest(module)
-  if (vrRequest) {
-    moduleBusy.value = true
-    try {
-      const preview = await invoke<VrLaunchPreview>('preview_vr_launch', { request: vrRequest })
-      vrLaunchDialog.value = { request: vrRequest, preview }
-    } catch (err) {
-      actionError.value = err instanceof Error ? err.message : String(err)
-    } finally {
-      moduleBusy.value = false
-    }
-    return
-  }
-
+  const entry = libraryModuleEntry(module.id)
   moduleBusy.value = true
   try {
-    if (module.id === 'obs-vr') {
-      const request = buildObsRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
-      obsDialog.value = { request, preview }
-      return
-    }
+    if (!entry) throw new Error(t('moduleNoAction', { module: module.id }))
+    // A fresh OptiScaler preview must not inherit the previous
+    // "replace anyway".
+    if (entry.dialog === 'optiscaler') optiAllowReplaceUnknown.value = false
 
-    if (module.id === 'optiscaler') {
-      const request = buildOptiScalerRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      optiAllowReplaceUnknown.value = false
-      const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
-      optiScalerDialog.value = { request, preview }
-      return
+    const opened = await entry.openPreview(requestContext(module))
+    switch (opened.dialog) {
+      case 'vr-launch': vrLaunchDialog.value = opened; break
+      case 'obs-vr': obsDialog.value = opened; break
+      case 'optiscaler': optiScalerDialog.value = opened; break
+      case 'ofxr': ofxrDialog.value = opened; break
+      case 'cheeky': cheekyDialog.value = opened; break
+      case 'uevr': uevrDialog.value = opened; break
     }
-
-    if (module.id === 'ofxr-framegen') {
-      const request = buildOfxrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
-      ofxrDialog.value = { request, preview }
-      return
-    }
-
-    if (module.id === 'cheeky-foveated-dlss') {
-      const request = buildCheekyRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
-      cheekyDialog.value = { request, preview }
-      return
-    }
-
-    if (module.id === 'uevr') {
-      const request = buildUevrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<UevrPreview>('preview_uevr', { request })
-      uevrDialog.value = { request, preview }
-      return
-    }
-
-    throw new Error(t('moduleNoAction', { module: module.id }))
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1011,18 +559,14 @@ async function launchVrGame() {
   moduleBusy.value = true
   try {
     const request = vrLaunchDialog.value.request
-    const ofxrRequest = ofxrLaunchRequest.value
-    const result = await invoke<VrLaunchResult>('launch_vr_game', {
-      request,
-      ofxrRequest,
-    })
+    const result = await launchVrGameCommand(request, ofxrLaunchRequest.value)
     vrLaunchDialog.value = null
     success.value = t('vrLaunchSuccess', { game: request.gameName })
     if (result.transaction) success.value += ` ${t('vrConfigSaved')}`
     await refreshTransactions()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1041,15 +585,13 @@ async function applyObsConfiguration() {
   moduleBusy.value = true
   try {
     const configuredSource = obsDialog.value.request.sourceName
-    const transaction = await invoke<TransactionRecord>('configure_obs_vr', {
-      request: obsDialog.value.request,
-    })
+    await configureObsVr(obsDialog.value.request)
     obsDialog.value = null
     success.value = t('installSuccess', { name: configuredSource })
     await refreshTransactions()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1068,10 +610,10 @@ async function setOptiReplaceUnknown(allow: boolean) {
   moduleBusy.value = true
   try {
     const request: OptiScalerRequest = { ...optiScalerDialog.value.request, allowReplaceUnknown: allow }
-    const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
+    const preview = await previewOptiScaler(request)
     optiScalerDialog.value = { request: { ...request, resolution: preview.resolution }, preview }
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1094,14 +636,14 @@ async function applyOptiScaler() {
       allowReplaceUnknown: optiAllowReplaceUnknown.value,
       resolution: optiScalerDialog.value.preview.resolution,
     }
-    const transaction = await invoke<TransactionRecord>('install_optiscaler', { request })
+    await installOptiScaler(request)
     optiScalerDialog.value = null
     success.value = t('installSuccess', { name: `OptiScaler ${request.version}` })
     await refreshTransactions()
     await inspectSelectedGame()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1120,16 +662,16 @@ async function applyOfxr() {
   moduleBusy.value = true
   try {
     const request = ofxrDialog.value.request
-    const result = await invoke<OfxrResult>('install_ofxr', { request })
+    const result = await installOfxr(request)
     if (!result.armed) throw new Error(t('ofxrActivationFailed'))
     ofxrDialog.value = null
     success.value = result.transaction
       ? t('installSuccess', { name: moduleNameById('ofxr-framegen') })
       : t('ofxrReadyForLaunch')
     await refreshTransactions()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1147,14 +689,13 @@ async function applyCheeky() {
   success.value = null
   moduleBusy.value = true
   try {
-    const request = cheekyDialog.value.request
-    const transaction = await invoke<CheekyFoveatedDlssResult>('install_cheeky_foveated_dlss', { request })
+    await installCheekyFoveatedDlss(cheekyDialog.value.request)
     cheekyDialog.value = null
     success.value = t('installSuccess', { name: moduleNameById('cheeky-foveated-dlss') })
     await refreshTransactions()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1173,13 +714,50 @@ async function applyUevr() {
   moduleBusy.value = true
   try {
     const request = uevrDialog.value.request
-    const transaction = await invoke<UevrResult>('install_uevr', { request })
+    const result = await installUevr(request)
     uevrDialog.value = null
-    success.value = t('installSuccess', { name: `${uevrBackendLabel(request.backend)} ${transaction.metadata?.version ?? ''}`.trim() })
+    success.value = t('installSuccess', { name: `${uevrBackendLabel(request.backend)} ${result.metadata?.version ?? ''}`.trim() })
     await refreshTransactions()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
+  } finally {
+    moduleBusy.value = false
+  }
+}
+
+/**
+ * Undo a module. Most have a command of their own; the rest are undone by
+ * rolling their last transaction back, which is the whole of what they
+ * recorded.
+ */
+async function removeModule(module: ToolModuleDefinition) {
+  if (selectedGameRunning.value) {
+    actionError.value = t('gameRunningActionBlocked')
+    return
+  }
+
+  const gameId = selectedGame.value?.catalog?.id
+  const kind = moduleTransactionKind(module.id)
+  if (!gameId || !kind || !activeModuleTransaction(module)) {
+    actionError.value = t('noModuleTransaction')
+    return
+  }
+
+  actionError.value = null
+  success.value = null
+  moduleBusy.value = true
+  try {
+    const entry = libraryModuleEntry(module.id)
+    if (entry?.remove) await entry.remove(requestContext(module))
+    else await rollbackLatestModuleTransaction(gameId, kind)
+
+    success.value = t('moduleRemoved', { module: moduleName(module) })
+    await refreshTransactions()
+    await inspectSelectedGame()
+    await moduleVerification.verifyModule(module, true)
+  } catch (err) {
+    actionError.value = messageOf(err)
   } finally {
     moduleBusy.value = false
   }
@@ -1199,9 +777,9 @@ async function rollback(transaction: TransactionRecord) {
     success.value = t('rolledBack', { label: transaction.label })
     await refreshTransactions()
     await inspectSelectedGame()
-    await verifyAvailableModules()
+    await moduleVerification.verifyAvailableModules()
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    actionError.value = messageOf(err)
   } finally {
     rollbackBusyId.value = null
   }
@@ -1218,19 +796,6 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function configList(config: ToolModuleDefinition['config'], key: string): string[] {
-  const value = config?.[key]
-  if (Array.isArray(value)) return value
-  if (typeof value !== 'string' || !value.trim()) return []
-  return value.split(',').map((item) => item.trim()).filter(Boolean)
-}
-
-function configBool(config: ToolModuleDefinition['config'], key: string, fallback = false): boolean {
-  const value = config?.[key]
-  if (typeof value !== 'string') return fallback
-  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
 }
 
 interface UevrBackendOption {
@@ -1278,8 +843,7 @@ function uevrBackendCompatibilityLabel(status: UevrBackendCompatibility) {
 function selectedUevrBackend(module: ToolModuleDefinition): UevrBackend {
   const options = uevrBackendOptions(module)
   const usableOptions = options.filter((option) => option.compatibility !== 'not_working')
-  const key = moduleKey(module)
-  const selected = uevrBackendSelections.value[key]
+  const selected = uevrBackendSelections.value[moduleStateKeyFor(module, selectedAppId.value)]
   if (selected && usableOptions.some((option) => option.id === selected)) return selected
   const preferred = usableOptions.find((option) => option.compatibility === 'preferred')
   if (preferred) return preferred.id
@@ -1292,8 +856,8 @@ function selectedUevrBackend(module: ToolModuleDefinition): UevrBackend {
 
 function setUevrBackend(module: ToolModuleDefinition, value: string) {
   if (!isUevrBackend(value) || !uevrBackendOptions(module).some((option) => option.id === value && option.compatibility !== 'not_working')) return
-  uevrBackendSelections.value = { ...uevrBackendSelections.value, [moduleKey(module)]: value }
-  void verifyModule(module, true)
+  uevrBackendSelections.value = { ...uevrBackendSelections.value, [moduleStateKeyFor(module, selectedAppId.value)]: value }
+  void moduleVerification.verifyModule(module, true)
 }
 
 function onUevrBackendChange(module: ToolModuleDefinition, event: Event) {
@@ -1301,436 +865,79 @@ function onUevrBackendChange(module: ToolModuleDefinition, event: Event) {
   if (target instanceof HTMLSelectElement) setUevrBackend(module, target.value)
 }
 
-function buildUevrRequest(module: ToolModuleDefinition): UevrRequest | null {
-  const game = selectedGame.value
-  if (module.id !== 'uevr' || !game?.catalog) return null
-
-  const config = module.config ?? {}
-  const backend = selectedUevrBackend(module)
-  const versionPolicy = config.versionPolicy === 'pinned' ? 'pinned' : 'latest'
-  const releaseApiUrl = backend === 'afw' || backend === 'joey-afw'
-    ? (typeof config.afwReleaseApiUrl === 'string'
-      ? config.afwReleaseApiUrl
-      : 'https://api.github.com/repos/PureDark/UEVR/releases/latest')
-    : (typeof config.releaseApiUrl === 'string'
-      ? config.releaseApiUrl
-      : 'https://api.github.com/repos/praydog/UEVR-nightly/releases/latest')
-  const backendReleaseApiUrl = typeof config.backendReleaseApiUrl === 'string'
-    ? config.backendReleaseApiUrl
-    : null
-  const releaseTag = typeof config.releaseTag === 'string' && config.releaseTag.trim()
-    ? config.releaseTag
-    : null
-  const backendReleaseTag = typeof config.backendReleaseTag === 'string' && config.backendReleaseTag.trim()
-    ? config.backendReleaseTag
-    : null
-
-  return {
-    gameId: game.catalog.id,
-    gameName: game.catalog.name,
-    installDir: game.installed.installDir,
-    executable: game.catalog.executable,
-    backend,
-    versionPolicy,
-    releaseApiUrl,
-    releaseTag,
-    backendReleaseApiUrl,
-    backendReleaseTag,
-    safetyNotes: configList(config, 'safetyNotes'),
-  }
-}
-
-function buildOfxrRequest(module: ToolModuleDefinition): OfxrRequest | null {
-  const game = selectedGame.value
-  if (module.id !== 'ofxr-framegen' || !game?.catalog) return null
-
-  const config = module.config ?? {}
-  const version = typeof config.version === 'string' ? config.version : null
-  const implementationVersion = typeof config.implementationVersion === 'string'
-    ? Number(config.implementationVersion)
-    : null
-  const downloadUrl = typeof config.downloadUrl === 'string' ? config.downloadUrl : null
-  const sha256 = typeof config.sha256 === 'string' ? config.sha256 : null
-  const backend = typeof config.backend === 'string' ? config.backend : 'fidelityfx'
-  const nvidiaPreset = typeof config.nvidiaPreset === 'string' ? config.nvidiaPreset : 'medium'
-  const nvidiaInputScale = typeof config.nvidiaInputScale === 'string' ? Number(config.nvidiaInputScale) : 50
-  if (!version || !implementationVersion || !downloadUrl || !sha256 || !Number.isFinite(nvidiaInputScale)) return null
-
-  return {
-    gameId: game.catalog.id,
-    gameName: game.catalog.name,
-    installDir: game.installed.installDir,
-    executable: game.catalog.executable,
-    version,
-    implementationVersion,
-    downloadUrl,
-    sha256,
-    backend,
-    nvidiaPreset,
-    nvidiaInputScale,
-    nvidiaBidirectional: configBool(config, 'nvidiaBidirectional'),
-    safetyNotes: configList(config, 'safetyNotes'),
-  }
-}
-
-function buildVrLaunchRequest(module: ToolModuleDefinition): VrLaunchRequest | null {
-  if (module.id !== 'vr-launch' || !selectedGame.value?.catalog) return null
-
-  const config = module.config ?? {}
-  const configPath = typeof config.configPath === 'string' ? config.configPath : null
-  const configPatches: VrIniPatch[] = configList(config, 'configPatches').flatMap((value) => {
-    const [section, key, ...parts] = value.split('|')
-    if (!section || !key || !parts.length) return []
-    return [{ section, key, value: parts.join('|') }]
-  })
-  const recommendations: VrRecommendation[] = configList(config, 'recommendations').map((value) => {
-    const separator = value.indexOf('=')
-    if (separator < 0) return { label: value, value: '' }
-    return { label: value.slice(0, separator), value: value.slice(separator + 1) }
-  })
-
-  return {
-    gameId: selectedGame.value.catalog.id,
-    gameName: selectedGame.value.catalog.name,
-    installDir: selectedGame.value.installed.installDir,
-    executable: selectedGame.value.catalog.executable,
-    arguments: configList(config, 'arguments'),
-    requiredFiles: configList(config, 'requiredFiles'),
-    configPath,
-    configPatches,
-    recommendations,
-    safetyNotes: configList(config, 'safetyNotes'),
-  }
-}
-
-function verificationSummary(status: ModuleVerification['status']) {
-  if (status === 'installed') return t('verificationSummaryInstalled')
-  if (status === 'ready') return t('verificationSummaryReady')
-  if (status === 'attention') return t('verificationSummaryAttention')
-  return t('verificationSummaryUnknown')
-}
-
-async function verifyModule(
-  module: ToolModuleDefinition,
-  silent = false,
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-) {
-  if (module.status !== 'available') return
-  if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-
-  const key = moduleKeyForApp(module, expectedAppId)
-  const busyKeys = new Set(verificationBusyKeys.value)
-  busyKeys.add(key)
-  verificationBusyKeys.value = busyKeys
-  if (!silent) verificationBusyKey.value = key
-  if (!silent) actionError.value = null
-
+async function refreshGames() {
+  loading.value = true
+  error.value = null
   try {
-    if (module.id === 'obs-vr') {
-      const request = buildObsRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<ObsVrPreview>('preview_obs_vr', { request })
-      const installed = preview.installed
-      saveModuleVerification(module, installed ? 'installed' : preview.canApply ? 'ready' : 'attention', verificationSummary(installed ? 'installed' : preview.canApply ? 'ready' : 'attention'), [
-        check(t('checkObsCollection'), Boolean(preview.collectionFile)),
-        check(t('checkObsScene'), preview.sceneFound),
-        check(t('checkObsSource'), preview.sourceExists),
-        check(t('checkObsTarget'), preview.sourceTargetMatches),
-        check(t('checkObsSceneLink'), preview.sourceInScene),
-        check(t('checkGameClosed'), !preview.gameRunning),
-      ], preview.gameRunning, expectedAppId, expectedGeneration)
-    } else if (module.id === 'optiscaler') {
-      const request = buildOptiScalerRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<OptiScalerPreview>('preview_optiscaler', { request })
-      const installed = preview.installed && preview.installedVersion === request.version
-      const status: ModuleVerification['status'] = installed
-        ? 'installed'
-        : preview.canApply
-          ? 'ready'
-          : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.executableExists),
-        check(t('checkGameClosed'), !preview.gameRunning),
-        check(t('checkManagedInstall'), !preview.manualInstallDetected),
-        check(t('checkProxyAvailable'), Boolean(preview.selectedProxy)),
-        check(t('checkVersion'), installed, preview.installed ? t('installedVersion', { version: preview.installedVersion }) : undefined),
-      ], preview.gameRunning, expectedAppId, expectedGeneration)
-    } else if (module.id === 'vr-launch') {
-      const request = buildVrLaunchRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<VrLaunchPreview>('preview_vr_launch', { request })
-      const filesPresent = preview.missingFiles.length === 0
-      const configMatches = !request.configPath
-        || (preview.configExists && preview.settings.every((setting) => !setting.willChange))
-      const status: ModuleVerification['status'] = filesPresent && configMatches
-        ? 'installed'
-        : preview.canLaunch
-          ? 'ready'
-          : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.executableExists),
-        check(t('checkVrFiles'), filesPresent),
-        check(t('checkVrConfig'), configMatches),
-        check(t('checkOpenXrRuntime'), Boolean(preview.activeOpenXrRuntime)),
-        check(t('checkGameClosed'), !preview.gameRunning),
-      ], preview.gameRunning, expectedAppId, expectedGeneration)
-    } else if (module.id === 'desktop-shortcut') {
-      const preview = await desktopShortcut.preview(module, selectedGame.value)
-      const status: ModuleVerification['status'] = preview.canApply ? 'ready' : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.canApply),
-      ], false, expectedAppId, expectedGeneration)
-    } else if (module.id === 'ofxr-framegen') {
-      const request = buildOfxrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<OfxrPreview>('preview_ofxr', { request })
-      const installed = preview.installed && preview.configured && preview.trayRunning && preview.armed
-      const status: ModuleVerification['status'] = installed
-        ? 'installed'
-        : preview.canApply && preview.executableExists
-          ? 'ready'
-          : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.executableExists),
-        check(t('checkOfxrInstalled'), preview.installed && preview.trayInstalled),
-        check(t('checkVersion'), preview.installed && preview.installedVersion === request.version, preview.installedVersion ? t('installedVersion', { version: preview.installedVersion }) : undefined),
-        check(t('checkOfxrConfig'), preview.configured),
-        check(t('checkOfxrTray'), preview.trayRunning),
-        check(t('checkOfxrArmed'), preview.armed),
-        check(t('checkGameClosed'), !preview.gameRunning),
-        ], preview.gameRunning, expectedAppId, expectedGeneration)
-    } else if (module.id === 'cheeky-foveated-dlss') {
-      const request = buildCheekyRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request })
-      const installed = preview.installed && preview.installedVersion === request.version
-      const status: ModuleVerification['status'] = installed
-        ? 'installed'
-        : preview.canApply
-          ? 'ready'
-          : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.executableExists),
-        check(t('checkGameClosed'), !preview.gameRunning),
-        check(t('checkManagedInstall'), !preview.manualInstallDetected),
-        check(t('checkCheekyAddon'), preview.installed),
-        check(t('checkVersion'), installed, preview.installed ? t('installedVersion', { version: preview.installedVersion }) : undefined),
-      ], preview.gameRunning, expectedAppId, expectedGeneration)
-    } else if (module.id === 'uevr') {
-      const request = buildUevrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      const preview = await invoke<UevrPreview>('preview_uevr', { request })
-      const installed = preview.installed
-        && preview.installedBackend === request.backend
-        && preview.selectedVersion !== null
-        && preview.installedVersion === preview.selectedVersion
-      const status: ModuleVerification['status'] = installed
-        ? 'installed'
-        : preview.canApply
-          ? 'ready'
-          : 'attention'
-      saveModuleVerification(module, status, verificationSummary(status), [
-        check(t('checkExecutable'), preview.executableExists),
-        check(t('checkUevrEngine'), preview.engine === 'Unreal Engine', preview.engine ?? t('uevrUnknownEngine')),
-        check(t('checkUevrBackend'), preview.selectedVersion !== null, preview.backendLabel),
-        check(t('checkGameClosed'), !preview.gameRunning && !preview.uevrRunning),
-        check(t('checkManagedInstall'), !preview.manualInstallDetected),
-        check(t('checkVersion'), installed, preview.installedVersion ? t('installedVersion', { version: preview.installedVersion }) : undefined),
-      ], preview.gameRunning || preview.uevrRunning, expectedAppId, expectedGeneration)
-    }
-
-    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      success.value = t('verificationCompleted', { module: moduleName(module) })
-    }
-  } catch (err) {
-    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      actionError.value = err instanceof Error ? err.message : String(err)
-    }
-  } finally {
-    const nextBusyKeys = new Set(verificationBusyKeys.value)
-    nextBusyKeys.delete(key)
-    verificationBusyKeys.value = nextBusyKeys
-    if (!silent && verificationBusyKey.value === key) verificationBusyKey.value = null
-  }
-}
-
-async function verifyAvailableModules(
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-  force = false,
-) {
-  const game = gameContextForAppId(expectedAppId)
-  if (!game || selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-  const now = Date.now()
-  const modules = game.catalog.modules.filter((module) => {
-    if (module.status !== 'available' || module.id === 'uevr') return false
-    const previous = moduleVerifications.value[moduleKeyForApp(module, expectedAppId)]
-    return force || !previous || now - previous.checkedAt > AUTO_VERIFICATION_TTL_MS
-  })
-  await runWithConcurrency(modules, BACKGROUND_CONCURRENCY, async (module) => {
-    await verifyModule(module, true, expectedAppId, expectedGeneration)
-  })
-}
-
-async function checkModuleUpdate(
-  module: ToolModuleDefinition,
-  silent = false,
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-) {
-  if (module.status !== 'available') return
-  if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-
-  const key = moduleKeyForApp(module, expectedAppId)
-  if (updateBusyKeys.value.has(key)) return
-  const config = module.config ?? {}
-  const updateUrl = moduleUpdateSource(module)
-  const configuredVersion = typeof config.version === 'string' ? config.version : null
-  if (!updateUrl) {
-    moduleUpdates.value[key] = {
-      status: 'unavailable',
-      currentVersion: configuredVersion,
-      latestVersion: null,
-      releaseUrl: null,
-      checkedAt: Date.now(),
-      detail: 'This module recipe does not define an update source.',
-    }
-    return
-  }
-
-  const busyKeys = new Set(updateBusyKeys.value)
-  busyKeys.add(key)
-  updateBusyKeys.value = busyKeys
-  let currentVersion = configuredVersion
-
-  try {
-    if (module.id === 'optiscaler') {
-      const request = buildOptiScalerRequest(module)
-      if (request) {
-        const preview = await withTimeout(
-          invoke<OptiScalerPreview>('preview_optiscaler', { request }),
-          UPDATE_CHECK_TIMEOUT_MS,
-          t('updateFailed'),
-        )
-        currentVersion = preview.installedVersion ?? request.version
-      }
-    }
-    if (module.id === 'ofxr-framegen') {
-      const request = buildOfxrRequest(module)
-      if (request) {
-        const preview = await withTimeout(
-          invoke<OfxrPreview>('preview_ofxr', { request }),
-          UPDATE_CHECK_TIMEOUT_MS,
-          t('updateFailed'),
-        )
-        currentVersion = preview.installedVersion ?? request.version
-      }
-    }
-    if (module.id === 'cheeky-foveated-dlss') {
-      const request = buildCheekyRequest(module)
-      if (request) {
-        const preview = await withTimeout(
-          invoke<CheekyFoveatedDlssPreview>('preview_cheeky_foveated_dlss', { request }),
-          UPDATE_CHECK_TIMEOUT_MS,
-          t('updateFailed'),
-        )
-        currentVersion = preview.installedVersion ?? request.version
-      }
-    }
-    if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-
-    const result = await withTimeout(invoke<ModuleUpdate>('check_module_update', {
-      request: { currentVersion, updateUrl },
-    }), UPDATE_CHECK_TIMEOUT_MS, t('updateFailed'))
-    if (selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      moduleUpdates.value[key] = { ...result, checkedAt: Date.now() }
-    }
-  } catch (err) {
-    if (selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
-      moduleUpdates.value[key] = {
-        status: 'error',
-        currentVersion,
-        latestVersion: null,
-        releaseUrl: null,
-        checkedAt: Date.now(),
-        detail: err instanceof Error ? err.message : String(err),
-      }
-      if (!silent) actionError.value = err instanceof Error ? err.message : String(err)
-    }
-  } finally {
-    const nextBusyKeys = new Set(updateBusyKeys.value)
-    nextBusyKeys.delete(key)
-    updateBusyKeys.value = nextBusyKeys
-  }
-}
-
-async function checkAvailableModuleUpdates(
-  expectedAppId = selectedAppId.value,
-  expectedGeneration = selectionGeneration,
-) {
-  const game = gameContextForAppId(expectedAppId)
-  if (!game || selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
-  const now = Date.now()
-  const modules = game.catalog.modules.filter((module) => {
-    if (module.status !== 'available' || !moduleHasUpdateSource(module)) return false
-    const previous = moduleUpdates.value[moduleKeyForApp(module, expectedAppId)]
-    return !previous || now - previous.checkedAt > AUTO_UPDATE_TTL_MS
-  })
-  await runWithConcurrency(modules, BACKGROUND_CONCURRENCY, async (module) => {
-    await checkModuleUpdate(module, true, expectedAppId, expectedGeneration)
-  })
-}
-
-async function removeModule(module: ToolModuleDefinition) {
-  if (selectedGameRunning.value) {
-    actionError.value = t('gameRunningActionBlocked')
-    return
-  }
-
-  const gameId = selectedGame.value?.catalog?.id
-  const kind = moduleTransactionKind(module)
-  if (!gameId || !kind || !activeModuleTransaction(module)) {
-    actionError.value = t('noModuleTransaction')
-    return
-  }
-
-  actionError.value = null
-  success.value = null
-  moduleBusy.value = true
-  try {
-    if (module.id === 'obs-vr') {
-      const request = buildObsRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      await invoke<TransactionRecord>('uninstall_obs_vr', { request })
-    } else if (module.id === 'optiscaler') {
-      const request = buildOptiScalerRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      await invoke<TransactionRecord>('uninstall_optiscaler', { request })
-    } else if (module.id === 'ofxr-framegen') {
-      const request = buildOfxrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      await invoke<TransactionRecord>('uninstall_ofxr', { request })
-    } else if (module.id === 'cheeky-foveated-dlss') {
-      const request = buildCheekyRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      await invoke<TransactionRecord>('uninstall_cheeky_foveated_dlss', { request })
-    } else if (module.id === 'uevr') {
-      const request = buildUevrRequest(module)
-      if (!request) throw new Error(t('moduleNoAction', { module: module.id }))
-      await invoke<TransactionRecord>('uninstall_uevr', { request })
+    installedGames.value = await invoke<InstalledGame[]>('detect_installed_games')
+    if (!supportedInstalledGames.value.length) supportedOnly.value = false
+    if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
+      selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
     } else {
-      await invoke<TransactionRecord>('rollback_latest_module_transaction', { gameId, kind })
+      await inspectSelectedGame()
     }
-    success.value = t('moduleRemoved', { module: moduleName(module) })
-    await refreshTransactions()
-    await inspectSelectedGame()
-    await verifyModule(module, true)
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : String(err)
+    error.value = messageOf(err)
   } finally {
-    moduleBusy.value = false
+    loading.value = false
+  }
+}
+
+async function inspectSelectedGame(
+  silent = false,
+  expectedAppId = selectedAppId.value,
+  expectedGeneration = selectionGeneration,
+) {
+  const game = gameContextForAppId(expectedAppId)
+  if (!game) {
+    if (!silent && selectedAppId.value === expectedAppId) inspectionLoading.value = false
+    return
+  }
+
+  if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
+    inspectionLoading.value = true
+    inspectionError.value = null
+  }
+
+  const requestKey = `${expectedAppId}:${game.installed.installDir}:${game.catalog.executable}`
+  let request = inspectionRequests.get(requestKey)
+  if (!request) {
+    request = invoke<GameEnvironmentInspection>('inspect_game_environment', {
+      installDir: game.installed.installDir,
+      executable: game.catalog.executable,
+    }).finally(() => {
+      if (inspectionRequests.get(requestKey) === request) inspectionRequests.delete(requestKey)
+    })
+    inspectionRequests.set(requestKey, request)
+  }
+
+  const previousGameRunning = gameInspection.value?.gameRunning
+  try {
+    const nextInspection = await request
+    if (selectedAppId.value !== expectedAppId || selectionGeneration !== expectedGeneration) return
+    gameInspection.value = nextInspection
+    if (silent && previousGameRunning !== undefined && previousGameRunning !== nextInspection.gameRunning) {
+      void moduleVerification.verifyAvailableModules(expectedAppId, expectedGeneration, true)
+    }
+  } catch (err) {
+    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
+      inspectionError.value = messageOf(err)
+    }
+  } finally {
+    if (!silent && selectedAppId.value === expectedAppId && selectionGeneration === expectedGeneration) {
+      inspectionLoading.value = false
+    }
+  }
+}
+
+async function refreshTransactions() {
+  transactionsLoading.value = true
+  try {
+    transactions.value = await invoke<TransactionRecord[]>('list_transactions')
+  } catch (err) {
+    actionError.value = messageOf(err)
+  } finally {
+    transactionsLoading.value = false
   }
 }
 
@@ -1767,8 +974,8 @@ function scheduleSelectedGameWork() {
 
     selectionBackgroundTimer = window.setTimeout(() => {
       selectionBackgroundTimer = null
-      void verifyAvailableModules(expectedAppId, expectedGeneration)
-      void checkAvailableModuleUpdates(expectedAppId, expectedGeneration)
+      void moduleVerification.verifyAvailableModules(expectedAppId, expectedGeneration)
+      void moduleVerification.checkAvailableModuleUpdates(expectedAppId, expectedGeneration)
     }, BACKGROUND_TASK_DELAY_MS)
   }, SELECTION_DEBOUNCE_MS)
 }
@@ -1802,17 +1009,9 @@ watch(locale, (value) => {
   }
 })
 
-watch(compatibilityReports, (value) => {
-  try {
-    window.localStorage.setItem('moddin-compatibility-reports', JSON.stringify(value))
-  } catch {
-    // Ignore unavailable storage, such as privacy-restricted browser contexts.
-  }
-}, { deep: true })
-
 onMounted(async () => {
   appUnmounted = false
-  loadCompatibilityReports()
+  compatibility.load()
   await Promise.all([refreshGames(), refreshTransactions()])
   scheduleGameStatePoll()
 })
@@ -1935,12 +1134,12 @@ onUnmounted(() => {
                     class="btn btn-primary btn-lg"
                     :class="{ 'is-loading': busyModuleId === primaryModule.id }"
                     type="button"
-                    :disabled="moduleActionsBlocked(primaryModule)"
+                    :disabled="moduleActionsBlocked(moduleCardInput(primaryModule))"
                     :title="blockedReason"
                     @click="configureModule(primaryModule)"
                   >
                     <AppIcon v-if="busyModuleId !== primaryModule.id" name="play" />
-                    {{ moduleActionLabel(primaryModule) }}
+                    {{ moduleActionLabel(moduleCardInput(primaryModule)) }}
                   </button>
                 </div>
               </header>
@@ -1966,18 +1165,18 @@ onUnmounted(() => {
                       <h2>{{ t('modsTitle') }}</h2>
                       <p>{{ t('modsSubtitle') }}</p>
                     </div>
-                    <div v-if="availableModuleCategories.length > 1" class="segmented" role="group" :aria-label="t('modsTitle')">
+                    <div v-if="categoryTabs.length > 1" class="segmented" role="group" :aria-label="t('modsTitle')">
                       <button type="button" :aria-pressed="activeModuleFilter === 'all'" @click="activeModuleFilter = 'all'">
                         {{ t('filterAllMods') }}
                       </button>
                       <button
-                        v-for="category in availableModuleCategories"
+                        v-for="category in categoryTabs"
                         :key="category"
                         type="button"
                         :aria-pressed="activeModuleFilter === category"
                         @click="activeModuleFilter = category"
                       >
-                        {{ categoryLabel(category) }} <span class="count">{{ moduleCategoryCount(category) }}</span>
+                        {{ categoryLabel(category) }} <span class="count">{{ countModulesInCategory(gameModules, category) }}</span>
                       </button>
                     </div>
                   </div>
@@ -1988,31 +1187,18 @@ onUnmounted(() => {
                       <ModuleCard
                         v-for="module in group.modules"
                         :key="module.id"
-                        :name="moduleName(module)"
-                        :description="moduleDescription(module)"
-                        :state="moduleCardState(module)"
-                        :tag="moduleCardTag(module)"
-                        :action-label="moduleActionLabel(module)"
-                        :action-primary="moduleActionPrimary(module)"
-                        :action-busy="busyModuleId === module.id"
-                        :action-disabled="moduleActionsBlocked(module)"
-                        :blocked-reason="blockedReason"
-                        :verification="moduleVerification(module)"
-                        :checked-at-label="moduleVerification(module) ? t('checkedAt', { date: formatTransactionDate(moduleVerification(module)!.checkedAt) }) : undefined"
-                        :verify-busy="moduleVerificationBusy(module)"
-                        :remove-label="moduleRemoveLabel(module)"
-                        :update="moduleCardUpdate(module)"
+                        v-bind="moduleCardView(moduleCardInput(module))"
                         @action="configureModule(module)"
-                        @verify="verifyModule(module)"
+                        @verify="moduleVerification.verifyModule(module)"
                         @remove="removeModule(module)"
-                        @check-update="checkModuleUpdate(module)"
-                        @open-release="openRelease(moduleUpdate(module)?.releaseUrl ?? null)"
+                        @check-update="moduleVerification.checkModuleUpdate(module)"
+                        @open-release="openRelease(moduleVerification.updateFor(module)?.releaseUrl ?? null)"
                       >
                         <template v-if="module.id === 'cheeky-foveated-dlss'" #details>
                           <section class="detail-block">
                             <h5 class="detail-title">{{ t('compatibilityStatus') }}</h5>
                             <p class="detail-copy">{{ cheekyResearchGuide(module).decision }}</p>
-                            <p v-if="compatibilityReport(module)" class="detail-copy text-faint">{{ compatibilityStatusSummary(module) }}</p>
+                            <p v-if="compatibility.reportFor(module)" class="detail-copy text-faint">{{ compatibilityStatusSummary(module) }}</p>
                             <div class="detail-row">
                               <button class="btn btn-sm" type="button" @click="cheekyGuideDialog = module">{{ t('viewCompatibilityGuide') }}</button>
                               <button class="btn btn-ghost btn-sm" type="button" @click="openCompatibilityReport(module)">{{ t('recordTest') }}</button>
@@ -2063,7 +1249,7 @@ onUnmounted(() => {
                   :install-dir="selectedGame.installed.installDir"
                   :executable-dir="gameInspection?.executableDirectory ?? null"
                   :engine="selectedGame.catalog.enginePreset ?? null"
-                  :exclude-ids="libraryOwnedModules().map((module) => module.id)"
+                  :exclude-ids="ownedModules.map((module) => module.id)"
                   :transactions="transactions"
                   @refresh-request="refreshTransactions"
                 />
@@ -2410,7 +1596,7 @@ onUnmounted(() => {
       <label class="field">
         <span>{{ t('compatibilityTestStatus') }}</span>
         <select v-model="compatibilityDraftStatus" class="select">
-          <option v-for="status in compatibilityStatuses" :key="status" :value="status">{{ compatibilityStatusLabel(status) }}</option>
+          <option v-for="status in COMPATIBILITY_STATUSES" :key="status" :value="status">{{ compatibility.statusLabel(status) }}</option>
         </select>
       </label>
       <label class="field">
@@ -2420,7 +1606,7 @@ onUnmounted(() => {
       </label>
       <template #footer>
         <button class="btn" type="button" @click="compatibilityDialog = null">{{ t('cancel') }}</button>
-        <button class="btn btn-primary" type="button" @click="saveCompatibilityReport">{{ t('saveTestResult') }}</button>
+        <button class="btn btn-primary" type="button" @click="compatibility.save()">{{ t('saveTestResult') }}</button>
       </template>
     </BaseDialog>
 
