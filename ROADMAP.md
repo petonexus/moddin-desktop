@@ -1,15 +1,37 @@
 # Roadmap
 
-Last rewritten on 2026-09-30, after a third pass. The previous two rewrites are preserved in
+Last rewritten on 2026-09-30, after a fourth pass. The previous three are preserved in
 git history; the evidence lives in [docs/AUDIT-2026-09-29.md](docs/AUDIT-2026-09-29.md), and
 every item below cites the audit ID it comes from.
 
-The two passes after the audit had one finding in common worth stating once, at the top,
+The passes after the audit have one finding in common worth stating once, at the top,
 because it is the thing that kept happening: **the guards this project writes are usually
 right about the class and wrong about the inventory.** The step-kind guard compared four of
 five lists and the fifth had already drifted. The engine vocabulary now lives in five places
 and the guard compares five. A baseline file in a validator is a sixth place a defect can be
 named. Each time, the omission was found by a human reading the source, not by a tool.
+
+The fourth pass is the sharpest instance, and it is worth reading as a method rather than an
+anecdote. Generalising two spec invariants — "a step may not reference an undeclared config
+field" and "a check may only inspect what its recipe writes" — from one hand-picked recipe to
+all nine cost three false positives before the guard was right, and every one of them was the
+same mistake:
+
+- `ofxr-bridge` was reported as declaring `sha256` for nothing, while its `archive-sha256`
+  **check** reads exactly that field. The first version scanned steps and not checks.
+- `bepinex` was reported as checking a file no step writes, when `extract-zip` is what puts
+  it there. An extracted archive is the one artifact whose whole tree is the product.
+- The sibling rule, "every declared field is consumed", turned out to be **unstatable from
+  where the guard sits**: `configSchema` is the union of three consumers in three languages —
+  the chain, `src/features/modules/module-registry.ts` for the typed module commands, and
+  `build_metadata`, which records `version` on the transaction. Six of six available recipes
+  looked broken.
+
+That last one is the general form. **A guard that names a whole category as broken on the day
+you write it does not get read the second time**, so the rule that can be stated honestly is
+the one that ships, and the rule that cannot is written down as a known gap instead. The
+lesson generalises to the three previous cases: find the whole inventory before writing the
+check, not after it fails.
 
 ## How to read this
 
@@ -111,14 +133,17 @@ reasoning is what the next person needs:
       kill switch is consulted before the signature, deliberately — a tampered list can only
       add refusals, never remove one. A revoked capability stays visible with the maintainers'
       reason rather than silently vanishing.
-- [ ] **Sign `revoked-ids.json`, or fold it into the signed catalogue.** — `F-03`, new
-      The revocation list is fetched over a verified connection but is **not itself signed**.
-      An attacker who can intercept that one GET can suppress a revocation until the TTL
-      expires. The cache re-verification added in this pass does not help: the list is
-      trusted precisely when it is stale. Moving the revocations into the already-signed
-      `catalog.json` closes it without a second signature to manage.
-      *Done when:* a revoked id cannot be suppressed by intercepting one unauthenticated
-      request.
+- [x] **Sign `revoked-ids.json`, or fold it into the signed catalogue.** — `F-03`, new
+      The revocation list was fetched over a verified connection but was **not itself signed**:
+      an attacker who can intercept that one GET could suppress a revocation until the TTL
+      expired, and the cache re-verification added in this pass does not help, because the list
+      is trusted precisely when it is stale. The revocations now live **inside** the
+      already-signed `catalog.json`, which closes it without a second signature to manage. The
+      "kill switch before the signature" ordering was deliberately kept even though both are
+      verified in the same read now: a tampered catalogue can only add refusals, never remove
+      one, and a revocation that is visible to an attacker who can suppress it is not a
+      revocation. *Consequence, by hand:* the published `catalog.json` now fails the drift
+      check until the maintainer regenerates and signs it — see `docs/UPDATER.md`.
 
 ### Two broken user paths
 
@@ -449,25 +474,58 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       guard. There is deliberately **no** build check against reusing the community keyring —
       duplicating those private consts would create exactly the drifting list this repo keeps
       getting bitten by.
-- [ ] **A second community capability that is signed**, so the trust chain is exercised in
-      production. — `F-11`
-- [ ] **UE4SS and REFramework specs** (currently `status: planned`, no install block). — `F-10` · M
+- [-] **A second community capability, signed** — `F-11`
+      `community-specialk-tweak-profile` is authored, validated by the community validator and
+      exercises a transactional path (`write-text-file` + `move-file`) no first-party recipe
+      touches. It is **not** signed, and cannot be: signing is the maintainer's key. The recipe
+      is therefore refused at load time inside a collection, and installable only from the
+      Community panel with the signature gate in front of it. That is the intended shape for an
+      unsigned recipe, not a defect — but the trust chain is still not exercised in production
+      until a signed entry exists. *Blocked on the same key as the catalogue.*
+- [-] **UE4SS and REFramework specs** — `F-10`
+      Split, and the split is the finding. **UE4SS is `available`**: its old blocker was the
+      "engine-generation matrix", which was wrong — v3.0.1 ships one runtime archive, verified by
+      downloading and listing the real release rather than trusting the docs. **REFramework is
+      still `planned`, now for a specific reason**: its layout is verified, but v1.5.9.1's
+      release note requires non-VR users to extract *only* `dinput8.dll`, and `extract-zip`
+      writes every member with no include/exclude param and no conditional step. Staging plus
+      `move-file` installs the flat-screen case correctly and silently gives a VR user no OpenXR
+      support and no autorun scripts. *Done when:* `extract-zip` can filter its members —
+      see the runner gap below.
+- [ ] **A member filter on `extract-zip`.** — new, found while closing `F-10`
+      The named runner gap blocking REFramework, and a general capability rather than a
+      one-off: an archive that ships a superset of what a given game wants is the normal case
+      for injected-DLL frameworks. A step-level `include`/`exclude` over archive members is the
+      honest fix. *Deliberately not worked around*, because a workaround that installs the
+      wrong subset is worse than a refusal.
 - [ ] **Per-game flat profiles.** No `flat` key exists anywhere in the catalogue yet. · M
 - [ ] **Nexus integration** where permitted. Still genuinely open — no code, no URL.
-- [ ] **Collections need content.** The loader exists; `feat/agent-mcp` shipped it with zero
-      built-in collection YAML, so the panel renders an empty state until someone authors
-      one. The branch's 1,127-line session runner is deliberately not ported: the frontend
-      drives the existing `community_capability_install`, so porting it would reintroduce the
-      second install path this pass removed.
-- [ ] **Let the Community panel install a recipe with required config fields.** — new, found
-      while closing `UX-06`. The game page has a config form; the Community panel installs with
-      an empty config and has no way to collect one, so any recipe declaring required fields
-      cannot be installed from there at all. That is a missing feature, not a refactor, and
-      the field labels it needs are a separate item.
+- [x] **Collections need content.** Two shipped collections with real members, and a test that
+      reads the published files rather than a fixture — `every_built_in_collection_fits_the_game_it_targets`.
+      `feat/agent-mcp` had shipped the loader with zero collection YAML. The branch's 1,127-line
+      session runner stays unported on purpose: the frontend drives the existing
+      `capability_install`, so porting it would reintroduce the second install path this pass
+      removed.
+- [x] **Let the Community panel install a recipe with required config fields.** — found
+      while closing `UX-06`. The panel renders the entry's own `configSchema` as a form and
+      installs with resolved values. Resolving went further than the item asked: the catalogue
+      `config:` block is now the source for both the panel and collections, through one shared
+      precedence rule in `src/features/capability-modules/config.ts`, and a required field with
+      no value is refused **before** any install call instead of failing inside the first step
+      the run had already begun.
 - [ ] **Translate `safetyNotes`, `configSchema[].description` and `displayName`.** — new
       The localization boundary covers the four backend-authored identifiers and the card
       description. These four are still English in pt-BR and es. `check.detail` deliberately
-      stays as-is: it is data with an embedded version, not prose.
+      stays as-is: it is data with an embedded version, not prose. The three new collection
+      and check labels added in this pass were written by hand in all three locales; the
+      `configSchema[].description` strings in the recipes are the remaining bulk.
+- [ ] **A real Save-As in the profile import/export.** — new
+      The profiles feature has a storage layer and a YAML shape, but there is no file dialog,
+      so export writes nothing the user can reach. `tauri-plugin-dialog` is the missing
+      piece. Not started: it needs `Cargo.toml`, which serialises against the self-updater
+      work. *Note the correction:* an earlier revision of this file claimed the storage layer
+      "already exists" and implied only a dialog was missing. The layer exists and has **zero
+      callers**.
 - [ ] **Resolve the eight baselined catalogue defects.** — new
       `scripts/validate-catalog.mjs` found them; they are reported by name rather than
       suppressed. One is fixed (`cyberpunk-2077` offering `uevr` as `available` against a
@@ -475,6 +533,21 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       render as planned — or product calls: `dawnwalker` offering a REDengine `uevr` recipe,
       and `doom-2016` offering `kharvox-vr` that the idtech preset explicitly excludes.
       *A baseline is a sixth place a defect can be named. Read every line in it as a bug.*
+- [ ] **OpenXR per-game runtime binding** — new, and deliberately not faked
+      The `openxr-helpers` recipe was `available` and wrote
+      `HKCU\...\OpenXR\1\per-game\{gameExecutable}\ActiveRuntime`, described as binding a runtime
+      for one game. The OpenXR loader specification puts `ActiveRuntime` under a single
+      machine-level key and states that runtime selection is handled external to the loader;
+      **there is no per-game registry key in it.** The recipe was writing a key no loader reads,
+      so it is `planned` with an empty chain and the evidence cited in its safety notes. The
+      two mechanisms that really do scope a runtime to one game — `XR_RUNTIME_JSON` per process,
+      and Moddin's own `%LOCALAPPDATA%\Moddin\profiles\openxr\<gameId>.json` — are both outside
+      what a step can express: no step expands environment variables, and `write-text-file` has
+      no JSON escaping, so a Windows path rendered into the preference document is invalid JSON
+      and `read_game_preference` silently returns `None`. *Done when:* a step can expand an
+      environment variable and write JSON with escaping. **This is the second time a recipe
+      claimed an effect with no mechanism behind it, which is why it is an item and not a
+      footnote.**
 
 ---
 

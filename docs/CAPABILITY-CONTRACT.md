@@ -169,8 +169,22 @@ Built-in step kinds (extend `builtin_steps.rs` to register more):
 | `move-file`       | Renames / moves a file inside the executable directory (used for picking a proxy DLL among the candidates). |
 | `spawn-process`   | Starts `executable` (resolved against the game dir).         |
 | `kill-process`    | Runs `taskkill /IM <name> /T` (optionally `/F`) so an install can stop the previous instance. |
-| `registry-write`  | Runs `reg.exe add <key> /v <name> /t <type> [/d <data>] /f`. Windows-only; capability loader skips this kind on non-Windows. |
-| `registry-delete` | Runs `reg.exe delete <key> [/v <name>] /f`. Windows-only.     |
+| `registry-write`  | Runs `reg.exe add <key> /v <name> /t <type> [/d <data>] /f`. `key`, `value` and `data` are rendered as templates, so `{configField}` reads a field. `dataField` names a config field to take the payload from, and accepts a non-string field — a `number` field is how a `REG_DWORD` gets a value. `/d` is passed only when there is a payload. Windows-only; capability loader skips this kind on non-Windows. |
+| `registry-delete` | Runs `reg.exe delete <key> [/v <name>] /f`. `key` and `value` are rendered as templates. Idempotent: reg.exe exits 1 both for "nothing to delete" and for a real failure, and the message that tells them apart is localised, so a non-zero exit is resolved by asking `reg query` whether the target is still there. Windows-only. |
+
+There is no `keyField` / `nameField` / `typeField` on these steps. The
+param names are the literals above and a field is read by templating it
+(`key: '{myKey}'`) or, for the payload, by `dataField`. A step naming a
+`*Field` param for the key is not read by the runner and fails with
+"registry-write: key is required".
+
+**A registry write is not a file operation.** `plan_step_targets` plans no
+target for these steps, so a registry-only install records no transaction:
+it is outside Undo, and `is_capability_installed` cannot see it. And no
+check kind can address a registry value — the check vocabulary is
+processes, paths inside the game folder, and archive URLs — so a recipe
+that writes one should say what it did in `safetyNotes` rather than
+declare a check that cannot pass.
 
 `uninstall` follows the same shape. If it is empty the runner falls
 back to rolling back the latest transaction recorded for the
