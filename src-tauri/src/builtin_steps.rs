@@ -16,7 +16,7 @@ use crate::{
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     fs::{self, File},
     io::{Cursor, Read, Write as IoWrite},
     path::{Path, PathBuf},
@@ -236,11 +236,13 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
     // name: a recipe is free to stage a `.7z` as `something.zip`, and
     // the OptiScaler release it comes from ships no zip at all.
     //
-    // Both formats extract every member of the archive into the target
-    // root after sanitising the member path. Members that match the
-    // recipe's declared payload DLL take the recipe's chosen proxy name
-    // (only when `proxyField` resolves to a non-empty string); a recipe
-    // that names no payload falls back to the ReShade-era defaults.
+    // Both formats extract their members into the target root after
+    // sanitising the member path, narrowed first by the step's
+    // `include` / `exclude` filter when it declared one. Members that
+    // match the recipe's declared payload DLL take the recipe's chosen
+    // proxy name (only when `proxyField` resolves to a non-empty
+    // string); a recipe that names no payload falls back to the
+    // ReShade-era defaults.
     let bytes: Vec<u8> = if let Some(field) = param_string(step, "archiveBytesField") {
         return Err(format!(
             "extract-zip: archiveBytesField '{field}' requires the runner to \
@@ -274,8 +276,11 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
     // Every member, named once, so the executor and the transaction
     // planner resolve the same targets for both formats.
     let names = archive_member_names(&bytes, format)?;
-    let payload = declared_payload_member(step, context, &names)?;
-    let members = archive_member_targets(&names, proxy.as_deref(), payload.as_deref())?;
+    // The filter runs first, so `payload` and the proxy rename act on
+    // the members this step is actually going to write.
+    let selection = select_archive_members(step, &names)?;
+    let payload = declared_payload_member(step, context, &selection.names)?;
+    let members = archive_member_targets(&selection.names, proxy.as_deref(), payload.as_deref())?;
 
     let mut affected = Vec::new();
     for member in &members {
@@ -290,8 +295,11 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
             let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))
                 .map_err(|error| format!("extract-zip: could not open zip: {error}"))?;
             // `members` was built from the same walk — every non-directory
-            // entry, in order — so one cursor keeps the two aligned.
+            // entry, in order, minus whatever the filter dropped — so one
+            // cursor keeps the two aligned. A filtered-out member is
+            // stepped over without consuming a planned member.
             let mut cursor = 0usize;
+            let mut seen = 0usize;
             for index in 0..archive.len() {
                 let mut entry = archive
                     .by_index(index)
@@ -300,6 +308,14 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
                     continue;
                 }
                 let name = entry.name().to_owned();
+                let planned = match &selection.ordinals {
+                    Some(ordinals) => ordinals.binary_search(&seen).is_ok(),
+                    None => true,
+                };
+                seen += 1;
+                if !planned {
+                    continue;
+                }
                 // `members` came from the same walk, so this cannot run
                 // out — and if it somehow did, writing less than the
                 // transaction was promised is not a success.
@@ -316,6 +332,10 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
             // The 7z reader hands its entries over in block order, which
             // is not always the order the header lists them, so targets
             // are looked up by the member's own name.
+            let planned: BTreeSet<&str> = members
+                .iter()
+                .map(|member| member.safe_name.as_str())
+                .collect();
             let mut pending: HashMap<String, VecDeque<String>> = HashMap::new();
             for member in &members {
                 pending
@@ -342,6 +362,19 @@ fn run_extract_zip(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
                     stopped = Some(format!("extract-zip: unsafe archive member '{name}'."));
                     return Ok(false);
                 };
+                if !planned.contains(safe_name.as_str()) {
+                    // With no filter every member is planned, so this is
+                    // the reader disagreeing with the header and has to
+                    // stop. With one it is a member the filter dropped,
+                    // which is the step working as declared.
+                    if selection.ordinals.is_none() {
+                        stopped = Some(format!(
+                            "extract-zip: the archive yielded a member '{name}' that was not planned."
+                        ));
+                        return Ok(false);
+                    }
+                    return Ok(true);
+                }
                 let Some(relative) = pending.get_mut(&safe_name).and_then(VecDeque::pop_front)
                 else {
                     // Not a member this step planned; the transaction was
@@ -565,21 +598,296 @@ struct ArchiveMember {
     target: String,
 }
 
+/// The `include` / `exclude` member filter an `extract-zip` step
+/// declared, or `None` when it declared neither.
+///
+/// An archive that ships a superset of what one game wants is the normal
+/// case for an injected-DLL framework: REFramework v1.5.9.1 ships the
+/// flat-screen injector and the VR payload together and its own release
+/// note says a player with no headset must extract only `dinput8.dll`. A
+/// step that writes every member cannot express that, and a workaround
+/// that installs the wrong subset is worse than a refusal.
+struct MemberFilter {
+    /// Selects. Empty means "every member", so a recipe can declare
+    /// `exclude` alone.
+    include: Vec<String>,
+    /// Removes from the selection.
+    exclude: Vec<String>,
+}
+
+impl MemberFilter {
+    /// Read the filter off a step. A param that is not an array of
+    /// strings is an authoring error and is refused rather than ignored:
+    /// a filter that silently did nothing would install the superset the
+    /// recipe was written to avoid.
+    fn from_step(step: &StepSpec) -> Result<Option<Self>, String> {
+        let include = member_patterns(step, "include")?;
+        let exclude = member_patterns(step, "exclude")?;
+        if include.is_empty() && exclude.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self { include, exclude }))
+    }
+
+    /// Does this member survive the filter? `name` is the member's path
+    /// normalised to forward slashes.
+    fn selects(&self, name: &str) -> bool {
+        let included = self.include.is_empty()
+            || self
+                .include
+                .iter()
+                .any(|pattern| member_pattern_matches(pattern, name));
+        included
+            && !self
+                .exclude
+                .iter()
+                .any(|pattern| member_pattern_matches(pattern, name))
+    }
+}
+
+/// The string patterns a step declared under `name`, or an empty list
+/// when it declared none.
+fn member_patterns(step: &StepSpec, name: &str) -> Result<Vec<String>, String> {
+    let Some(value) = param(step, name) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(format!(
+            "extract-zip: {name} is {value}, not an array of glob patterns."
+        ));
+    };
+    let mut patterns = Vec::with_capacity(values.len());
+    for (index, entry) in values.iter().enumerate() {
+        let Some(pattern) = entry.as_str() else {
+            return Err(format!(
+                "extract-zip: {name}[{index}] is {entry}, not a string."
+            ));
+        };
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return Err(format!("extract-zip: {name}[{index}] is empty."));
+        }
+        patterns.push(pattern.to_ascii_lowercase());
+    }
+    Ok(patterns)
+}
+
+/// Does one `include` / `exclude` pattern name this archive member?
+///
+/// - Matching is case-insensitive, because the filesystem the members
+///   land on is.
+/// - `*` matches any run of characters inside one path segment and `**`
+///   matches any number of segments, so `*` does not cross a `/` and
+///   `**` does.
+/// - A pattern with no `/` in it is a basename and matches at any depth,
+///   which is what makes `dinput8.dll` the obvious way to say "the
+///   injector, wherever the archive puts it".
+/// - Nothing else is a wildcard. A Windows member name cannot contain
+///   `?`, `[` or `]`, so treating them as literals cannot silently
+///   exclude a member the recipe meant to install.
+fn member_pattern_matches(pattern: &str, normalised_name: &str) -> bool {
+    let pattern = pattern.trim().to_ascii_lowercase();
+    let name = normalised_name.to_ascii_lowercase();
+    if pattern.contains('/') {
+        let pattern_segments: Vec<&str> = pattern.split('/').collect();
+        let name_segments: Vec<&str> = name.split('/').collect();
+        segments_match(&pattern_segments, &name_segments)
+    } else {
+        match name.rsplit('/').next() {
+            Some(basename) => segment_matches(&pattern, basename),
+            None => false,
+        }
+    }
+}
+
+/// `**` in one segment position against the member's segments.
+fn segments_match(pattern: &[&str], name: &[&str]) -> bool {
+    let Some((head, rest)) = pattern.split_first() else {
+        return name.is_empty();
+    };
+    if *head == "**" {
+        // Any number of segments, including none: `reframework/**`
+        // matches `reframework/autorun/mod/scripts/x.lua` and
+        // `reframework/autorun` alike.
+        return (0..=name.len()).any(|skip| segments_match(rest, &name[skip..]));
+    }
+    match name.split_first() {
+        Some((first, tail)) if segment_matches(head, first) => segments_match(rest, tail),
+        _ => false,
+    }
+}
+
+/// One path segment, where `*` matches any run of characters.
+///
+/// Classic backtracking match: on a mismatch, the last `*` is stretched
+/// by one character and the match resumes after it. Segments contain no
+/// `/`, so a `*` here cannot escape its segment.
+fn segment_matches(pattern: &str, name: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let (mut pattern_index, mut name_index) = (0usize, 0usize);
+    let mut star: Option<(usize, usize)> = None;
+    while name_index < name.len() {
+        if pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+            star = Some((pattern_index, name_index));
+            pattern_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == name[name_index] {
+            pattern_index += 1;
+            name_index += 1;
+        } else if let Some((star_index, star_name)) = star {
+            pattern_index = star_index + 1;
+            name_index = star_name + 1;
+            star = Some((star_index, star_name + 1));
+        } else {
+            return false;
+        }
+    }
+    pattern[pattern_index..]
+        .iter()
+        .all(|character| *character == '*')
+}
+
+/// The members an `extract-zip` step will actually write, after its
+/// `include` / `exclude` filter and in archive order.
+struct MemberSelection {
+    /// Sanitised member names, in archive order. When a filter is
+    /// declared this is the filtered subset; otherwise it is every
+    /// member, unchanged.
+    names: Vec<String>,
+    /// Ordinals into the archive walk, for the members the filter kept.
+    /// `None` means every member is planned, so a reader that hands the
+    /// members over in a different order (7z does) can look a member up
+    /// by name instead.
+    ordinals: Option<Vec<usize>>,
+}
+
+/// Apply the step's member filter to the archive's member list.
+///
+/// Shared by the executor and by [`plan_step_targets`] so the files a
+/// step is about to write and the files the transaction is handed cannot
+/// disagree about which members those are.
+///
+/// The filter runs before the payload lookup and the proxy rename, so
+/// `payload` and `proxy` name members of the *filtered* set: narrowing
+/// the archive cannot quietly turn the surviving member into a bundled
+/// sample.
+fn select_archive_members(step: &StepSpec, names: &[String]) -> Result<MemberSelection, String> {
+    let Some(filter) = MemberFilter::from_step(step)? else {
+        return Ok(MemberSelection {
+            names: names.to_vec(),
+            ordinals: None,
+        });
+    };
+
+    let mut selection = MemberSelection {
+        names: Vec::new(),
+        ordinals: Some(Vec::new()),
+    };
+    for (ordinal, name) in names.iter().enumerate() {
+        // Sanitised before it is matched, not after: a member that
+        // walks out of the target root is refused outright, and a filter
+        // must not be able to hide one by excluding it.
+        let Some(safe_name) = sanitize_archive_member(name) else {
+            return Err(format!("extract-zip: unsafe archive member '{name}'."));
+        };
+        if filter.selects(&safe_name) {
+            selection.names.push(safe_name);
+            if let Some(ordinals) = selection.ordinals.as_mut() {
+                ordinals.push(ordinal);
+            }
+        }
+    }
+
+    if selection.names.is_empty() {
+        // Refusing is the point. Extracting nothing and reporting
+        // success is the worst outcome available: the mod is gone and
+        // the user has been told it installed.
+        return Err(format!(
+            "extract-zip: the include/exclude filter selected none of the archive's {} members \
+             (include: {}; exclude: {}). A filter that matches nothing is an authoring error or \
+             an archive that has changed shape — a workaround that installs the wrong subset is \
+             worse than a refusal.",
+            names.len(),
+            describe_patterns(&filter.include),
+            describe_patterns(&filter.exclude),
+        ));
+    }
+    Ok(selection)
+}
+
+/// A pattern list as it appears in a refusal message, so a recipe
+/// author can see which of their patterns matched nothing.
+fn describe_patterns(patterns: &[String]) -> String {
+    if patterns.is_empty() {
+        "none".to_owned()
+    } else {
+        patterns
+            .iter()
+            .map(|pattern| format!("'{pattern}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 /// Resolve every member of an archive to the path it is written to, in
 /// the same order as `names`, after sanitising and the optional proxy
 /// rename.
+///
+/// Two different members that resolve to one destination are refused
+/// rather than raced: the proxy rename maps every member basenamed
+/// `reshade64.dll` or `dxgi.dll` onto a single path when the recipe
+/// names no payload, so an archive holding both would otherwise install
+/// whichever the reader happened to enumerate last.
 fn archive_member_targets(
     names: &[String],
     proxy: Option<&str>,
     payload: Option<&str>,
 ) -> Result<Vec<ArchiveMember>, String> {
     let mut members = Vec::with_capacity(names.len());
+    // Destination (compared case-insensitively, as the Windows
+    // filesystem compares it) to the members claiming it, and the
+    // contested destination, to the members claiming it. A `BTreeMap`
+    // plus a `BTreeSet` in it is what makes the refusal the same string
+    // whichever order the reader produced the members in.
+    let mut claims: BTreeMap<String, (String, BTreeSet<String>)> = BTreeMap::new();
     for name in names {
         let Some(safe_name) = sanitize_archive_member(name) else {
             return Err(format!("extract-zip: unsafe archive member '{name}'."));
         };
         let target = archive_member_target(&safe_name, proxy, payload);
+        let claim = claims
+            .entry(target.to_ascii_lowercase())
+            .or_insert_with(|| (target.clone(), BTreeSet::new()));
+        // The lowest-spelled destination wins the message, so two
+        // spellings of one Windows path still read the same way twice.
+        if target < claim.0 {
+            claim.0 = target.clone();
+        }
+        claim.1.insert(safe_name.clone());
         members.push(ArchiveMember { safe_name, target });
+    }
+
+    if let Some((target, claimants)) = claims
+        .into_values()
+        .find(|(_, claimants)| claimants.len() > 1)
+    {
+        let names: Vec<&str> = claimants.iter().map(String::as_str).collect();
+        let mut listed = names
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>();
+        if listed.len() > 2 {
+            let extra = listed.len() - 2;
+            listed.truncate(2);
+            listed.push(format!("and {extra} more"));
+        }
+        return Err(format!(
+            "extract-zip: two archive members both resolve to '{target}' ({}). Two members cannot \
+             install to one path, and picking a winner would be a coin flip. Declare the `payload` \
+             param with the member that should take the proxy name, and narrow the archive with \
+             `include` / `exclude` if the rest of it is not wanted.",
+            listed.join(" and ")
+        ));
     }
     Ok(members)
 }
@@ -1153,17 +1461,50 @@ fn run_file_delete(step: &StepSpec, context: &StepContext<'_>) -> Result<StepRes
     })
 }
 
+/// Write a text file from a template.
+///
+/// `format: json` makes the step render for a document that something
+/// else will parse. A `path`-typed config value rendered into JSON
+/// unescaped produces a file no JSON parser will read, and a consumer
+/// that returns `None` on a parse failure turns that into a silent
+/// no-op — the override was written and the override did nothing. So in
+/// that mode the placeholder is inserted as escaped JSON string
+/// content, the recipe supplies the punctuation, and the rendered result
+/// is parsed before a single byte is written.
 fn run_write_text_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
     let path = path_param(step, context.config, "pathField", "path")?;
     let resolved = resolve_write_target(step, context.executable_directory, &path)?;
+    let template = param(step, "template")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let format = param_string(step, "format").unwrap_or("text");
+    let rendered = match format {
+        "text" => render_template(template, context.config),
+        "json" => render_json_template(template, context.config),
+        other => {
+            return Err(format!(
+                "write-text-file: format '{other}' is not a format this step knows. Use 'text' \
+                 (the default) or 'json'."
+            ))
+        }
+    };
+    if format == "json" {
+        // Refused before the write, not after: a file that exists and
+        // does not parse is worse than one that does not exist, because
+        // nothing downstream can tell the difference from a working one.
+        if let Err(error) = serde_json::from_str::<JsonValue>(&rendered) {
+            return Err(format!(
+                "write-text-file: the rendered template is not valid JSON ({error}), so '{path}' \
+                 was not written. A `path`-typed value inserted into a JSON string has to be \
+                 escaped for JSON — declare `format: json`, keep the surrounding quotes in the \
+                 template, and make sure every `{{name}}` in it names a declared config field."
+            ));
+        }
+    }
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("write-text-file: could not create parent dir: {error}"))?;
     }
-    let template = param(step, "template")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    let rendered = render_template(template, context.config);
     fs::write(&resolved, rendered)
         .map_err(|error| format!("write-text-file: could not write '{path}': {error}"))?;
     Ok(StepResult {
@@ -1519,40 +1860,190 @@ fn config_scalar(value: &JsonValue) -> Option<String> {
     }
 }
 
+/// How a `{name}` substitution is inserted into a rendered template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Substitution {
+    /// The config value, as it stands. What every existing step means
+    /// by a placeholder.
+    Verbatim,
+    /// The config value as the *content* of a JSON string — every
+    /// backslash, quote and control character escaped, with no
+    /// surrounding quotes, because the recipe supplied those.
+    JsonStringContent,
+}
+
+/// Render a step template: `{name}` from config, then `%NAME%` from the
+/// process environment.
+///
+/// The order is the documented one and matters in both directions. A
+/// config value that is itself `%LOCALAPPDATA%\…` is expanded, and a
+/// config value that names a path containing a `{` is not re-scanned,
+/// because the expansion pass runs over the substituted text rather than
+/// over the template.
 fn render_template(template: &str, config: &ResolvedConfig) -> String {
+    expand_env_vars(&substitute_placeholders(
+        template,
+        config,
+        Substitution::Verbatim,
+    ))
+}
+
+/// [`render_template`] for a `format: json` step: the same two passes,
+/// with the placeholder inserted JSON-escaped.
+fn render_json_template(template: &str, config: &ResolvedConfig) -> String {
+    expand_env_vars(&substitute_placeholders(
+        template,
+        config,
+        Substitution::JsonStringContent,
+    ))
+}
+
+/// `{name}` substitution alone, with no environment pass.
+///
+/// A `{` whose run to the next `}` does not name a declared config
+/// field is left as text and scanning resumes *inside* the braces,
+/// rather than consuming the run and putting it back. The rendered
+/// result is the same either way for a template that is nothing but
+/// placeholders, and it is the only way a document with braces of its
+/// own survives: a JSON object opens with a `{` whose run to the first
+/// `}` is `"key": "{value"`, and a scanner that consumed it would eat
+/// the placeholder the recipe meant to fill in.
+fn substitute_placeholders(
+    template: &str,
+    config: &ResolvedConfig,
+    substitution: Substitution,
+) -> String {
+    let characters: Vec<char> = template.chars().collect();
     let mut output = String::with_capacity(template.len());
-    let mut chars = template.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character == '{' && chars.peek() == Some(&'}') {
-            chars.next();
-            // Empty placeholder — leave as is.
-            output.push_str("{}");
+    let mut index = 0usize;
+    while index < characters.len() {
+        if characters[index] != '{' {
+            output.push(characters[index]);
+            index += 1;
             continue;
         }
-        if character == '{' {
-            let mut name = String::new();
-            for next in chars.by_ref() {
-                if next == '}' {
-                    break;
+        let close = characters[index + 1..]
+            .iter()
+            .position(|character| *character == '}')
+            .map(|offset| index + 1 + offset);
+        let Some(close) = close else {
+            // No closing brace anywhere after this one.
+            output.push('{');
+            index += 1;
+            continue;
+        };
+        let name: String = characters[index + 1..close].iter().collect();
+        match config.get(&name).and_then(config_scalar) {
+            Some(value) => {
+                match substitution {
+                    Substitution::Verbatim => output.push_str(&value),
+                    Substitution::JsonStringContent => {
+                        output.push_str(&json_string_content(&value))
+                    }
                 }
-                name.push(next);
+                index = close + 1;
             }
-            if let Some(value) = config.get(&name).and_then(config_scalar) {
-                output.push_str(&value);
-            } else {
+            None => {
                 output.push('{');
-                output.push_str(&name);
-                output.push('}');
+                index += 1;
             }
-            continue;
         }
-        output.push(character);
     }
     output
 }
 
+/// The body of a JSON string, escaped, without the quotes around it.
+///
+/// Exactly what `serde_json` writes inside a string: a backslash, a quote
+/// and the two-character escapes for `\n`, `\r`, `\t`, `\b` and `\f` are
+/// spelled out, and any other control character becomes `\u00xx`. A
+/// Windows path is nothing but backslashes, so this is the difference
+/// between a preference document `read_game_preference` can parse and
+/// one it silently returns `None` for.
+fn json_string_content(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '\u{8}' => output.push_str("\\b"),
+            '\u{c}' => output.push_str("\\f"),
+            control if (control as u32) < 0x20 => {
+                output.push_str(&format!("\\u{:04x}", control as u32));
+            }
+            other => output.push(other),
+        }
+    }
+    output
+}
+
+/// Expand `%NAME%` from the process environment.
+///
+/// `NAME` is `[A-Za-z_][A-Za-z0-9_]*`, the shape Windows itself accepts.
+/// A variable the process does not have is left **literal**: a template
+/// that is prose, or a file's content, can contain a `%` for reasons that
+/// have nothing to do with the environment, and quietly deleting it
+/// would corrupt a value the recipe never meant to expand. There is no
+/// `${VAR}` form — this is a Windows app, and `%LOCALAPPDATA%` is the
+/// case that has to work.
+fn expand_env_vars(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            // Copy one whole character, so a multi-byte one is not split.
+            let rest = &text[index..];
+            let character = rest.chars().next().unwrap_or('\u{fffd}');
+            output.push(character);
+            index += character.len_utf8();
+            continue;
+        }
+        match env_var_span(&text[index..]) {
+            Some((name, consumed)) => {
+                match std::env::var_os(name) {
+                    Some(value) => output.push_str(&value.to_string_lossy()),
+                    None => output.push_str(&text[index..index + consumed]),
+                }
+                index += consumed;
+            }
+            None => {
+                output.push('%');
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
+/// The variable name in a leading `%NAME%`, and how many bytes it spans.
+/// `None` when the text at this `%` is not a complete `%NAME%`.
+fn env_var_span(text: &str) -> Option<(&str, usize)> {
+    let rest = text.strip_prefix('%')?;
+    let end = rest.find('%')?;
+    let name = &rest[..end];
+    let mut characters = name.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_');
+    valid.then_some((name, end + 2))
+}
+
+/// Resolve a path a step reads or writes, expanding `%NAME%` first so a
+/// value that becomes absolute by expansion is treated as absolute.
+///
+/// The expanded path then goes through the caller's own check —
+/// [`resolve_write_target`] for anything a step writes — so reaching a
+/// location outside the install root needs the same `path`-typed config
+/// field it always did, and no new exemption is granted for having come
+/// from the environment.
 fn resolve_path(base: &Path, candidate: &str) -> PathBuf {
-    let path = Path::new(candidate);
+    let expanded = expand_env_vars(candidate);
+    let path = Path::new(&expanded);
     if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -1602,6 +2093,12 @@ fn archive_member_target(safe_name: &str, proxy: Option<&str>, payload: Option<&
 /// transaction store separately refuses to *back up* anything outside
 /// the install root, and the runner reports those paths as not covered
 /// by Undo.
+///
+/// This is also where a `%NAME%`-expanded path lands, because
+/// `path_param` renders through [`render_template`], which expands the
+/// environment. It gets no exemption for that: a value that expands to
+/// an absolute path is an absolute path here, and one that expands to a
+/// `..` walk out of the base is refused by the same walk below.
 fn resolve_write_target(step: &StepSpec, base: &Path, candidate: &str) -> Result<PathBuf, String> {
     let path = Path::new(candidate);
     if path.is_absolute() {
@@ -1703,8 +2200,14 @@ pub fn plan_step_targets(
             let names = archive_member_names(&bytes, format)?;
             let proxy =
                 param_string(step, "proxyField").and_then(|field| context.config.get_string(field));
-            let payload = declared_payload_member(step, context, &names)?;
-            for member in archive_member_targets(&names, proxy.as_deref(), payload.as_deref())? {
+            // The same filter, the same payload lookup and the same
+            // collision refusal the executor applies, so the rollback
+            // set is the set of files the step is about to overwrite.
+            let selection = select_archive_members(step, &names)?;
+            let payload = declared_payload_member(step, context, &selection.names)?;
+            for member in
+                archive_member_targets(&selection.names, proxy.as_deref(), payload.as_deref())?
+            {
                 let target = staging_root.join(&member.target);
                 if !targets.contains(&target) {
                     targets.push(target);
@@ -2385,6 +2888,462 @@ pub(crate) mod tests {
         );
     }
 
+    /// The REFramework shape, which is the reason the filter exists.
+    /// v1.5.9.1 ships the injector, the OpenVR payload, the OpenXR
+    /// loader and the autorun scripts in one archive, and the upstream
+    /// release note tells a player with no headset to extract
+    /// `dinput8.dll` and nothing else — "extracting the other files may
+    /// crash a non-VR game".
+    #[test]
+    fn extract_zip_installs_only_the_members_include_selects() {
+        let tree = TempTree::new("extract-include");
+        let root = tree.0.clone();
+        let archive = root.join("RE8.zip");
+        write_zip(
+            &archive,
+            &[
+                ("dinput8.dll", b"injector"),
+                ("x64/dinput8.dll", b"the 64-bit injector"),
+                ("openvr_api.dll", b"openvr"),
+                ("openxr_loader.dll", b"openxr"),
+                ("reframework/autorun/scripts/demo.lua", b"-- demo"),
+            ],
+        );
+
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("include", json!(["dinput8.dll"])),
+            ],
+        );
+        let config = ResolvedConfig::default();
+
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("the filtered archive installs");
+        // A pattern with no `/` in it is a basename, so it matches at
+        // any depth: both copies of the injector land.
+        assert_eq!(
+            fs::read(root.join("dinput8.dll")).expect("injector"),
+            b"injector"
+        );
+        assert_eq!(
+            fs::read(root.join("x64").join("dinput8.dll")).expect("x64 injector"),
+            b"the 64-bit injector"
+        );
+        for dropped in ["openvr_api.dll", "openxr_loader.dll", "reframework"] {
+            assert!(
+                !root.join(dropped).exists(),
+                "'{dropped}' is not selected by include and must not be written"
+            );
+        }
+        assert_eq!(
+            result.affected_paths,
+            vec!["dinput8.dll".to_owned(), "x64/dinput8.dll".to_owned()],
+            "the transaction is handed the filtered set, not the archive"
+        );
+    }
+
+    #[test]
+    fn extract_zip_exclude_removes_from_the_included_set() {
+        let tree = TempTree::new("extract-exclude");
+        let root = tree.0.clone();
+        let archive = root.join("RE8.zip");
+        write_zip(
+            &archive,
+            &[
+                ("dinput8.dll", b"injector"),
+                ("reframework/reframework.ini", b"[General]\n"),
+                ("reframework/autorun/scripts/new.lua", b"-- new"),
+                ("reframework/autorun/legacy/old.lua", b"-- old"),
+                ("reframework/autorun/legacy/deep/older.lua", b"-- older"),
+                ("openvr_api.dll", b"openvr"),
+            ],
+        );
+
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("include", json!(["dinput8.dll", "reframework/**"])),
+                ("exclude", json!(["reframework/autorun/legacy/*"])),
+            ],
+        );
+        let config = ResolvedConfig::default();
+        execute_step(&spec, &download_context(&config, &root)).expect("the archive installs");
+
+        assert!(root.join("reframework").join("reframework.ini").is_file());
+        assert!(root
+            .join("reframework")
+            .join("autorun")
+            .join("scripts")
+            .join("new.lua")
+            .is_file());
+        assert!(
+            !root
+                .join("reframework")
+                .join("autorun")
+                .join("legacy")
+                .join("old.lua")
+                .exists(),
+            "exclude removed a member the include had selected"
+        );
+        // `*` does not cross a `/`, so the same pattern says nothing
+        // about a member one directory deeper.
+        assert!(
+            root.join("reframework")
+                .join("autorun")
+                .join("legacy")
+                .join("deep")
+                .join("older.lua")
+                .is_file(),
+            "exclude was a single-segment glob, and * must not match past one /"
+        );
+        assert!(!root.join("openvr_api.dll").exists());
+    }
+
+    #[test]
+    fn extract_zip_filters_the_members_of_a_seven_zip_too() {
+        let tree = TempTree::new("extract-7z-include");
+        let root = tree.0.clone();
+        let archive = root.join("optiscaler.7z");
+        write_7z(
+            &archive,
+            &[
+                ("OptiScaler.dll", b"the payload"),
+                ("OptiScaler.ini", b"[Upscaler]\n"),
+                ("docs/readme.md", b"# readme"),
+            ],
+        );
+
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                // Lower-cased on purpose: the filter matches the way the
+                // Windows filesystem it lands on does.
+                ("include", json!(["optiscaler.dll"])),
+            ],
+        );
+        let config = ResolvedConfig::default();
+
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("the filtered 7z installs");
+        // The 7z reader hands its entries over in its own order, so the
+        // filter is keyed on the member's name and not on a position in
+        // a walk.
+        assert_eq!(
+            fs::read(root.join("OptiScaler.dll")).expect("payload"),
+            b"the payload"
+        );
+        assert!(!root.join("OptiScaler.ini").exists());
+        assert!(!root.join("docs").exists());
+        assert_eq!(result.affected_paths, vec!["OptiScaler.dll".to_owned()]);
+    }
+
+    #[test]
+    fn extract_zip_refuses_a_filter_that_selects_no_member() {
+        let tree = TempTree::new("extract-empty-filter");
+        let root = tree.0.clone();
+        let archive = root.join("RE8.zip");
+        write_zip(
+            &archive,
+            &[
+                ("dinput8.dll", b"injector"),
+                ("openvr_api.dll", b"openvr"),
+                ("openxr_loader.dll", b"openxr"),
+            ],
+        );
+
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("include", json!(["reshade64.dll"])),
+                ("exclude", json!(["*.lua"])),
+            ],
+        );
+        let config = ResolvedConfig::default();
+
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a filter that matches nothing is not an empty install");
+        assert!(
+            error.contains("selected none of the archive's 3 members"),
+            "the error counts what the archive actually holds: {error}"
+        );
+        assert!(
+            error.contains("'reshade64.dll'"),
+            "the error names the pattern that matched nothing: {error}"
+        );
+        for written in ["dinput8.dll", "openvr_api.dll", "openxr_loader.dll"] {
+            assert!(
+                !root.join(written).exists(),
+                "a refused install writes nothing: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_zip_refuses_a_filter_that_is_not_a_list_of_patterns() {
+        let tree = TempTree::new("extract-bad-filter");
+        let root = tree.0.clone();
+        let archive = root.join("payload.zip");
+        write_zip(&archive, &[("dinput8.dll", b"injector")]);
+        let config = ResolvedConfig::default();
+
+        for (params, expected) in [
+            (
+                vec![("include", json!("dinput8.dll"))],
+                "not an array of glob patterns",
+            ),
+            (vec![("exclude", json!([7]))], "not a string"),
+            (vec![("exclude", json!(["  "]))], "is empty"),
+        ] {
+            let mut all = vec![("archivePath", json!(archive.to_string_lossy()))];
+            all.extend(params);
+            let error = execute_step(
+                &step_of("extract-zip", &all),
+                &download_context(&config, &root),
+            )
+            .expect_err("a filter that is not a list of patterns is refused");
+            assert!(error.contains(expected), "{error}");
+        }
+        assert!(
+            !root.join("dinput8.dll").exists(),
+            "a refused filter leaves the game folder alone"
+        );
+    }
+
+    #[test]
+    fn the_transaction_plans_the_filtered_members_not_the_whole_archive() {
+        let tree = TempTree::new("extract-include-plan");
+        let root = tree.0.clone();
+        let archive = root.join("RE8.zip");
+        write_zip(
+            &archive,
+            &[
+                ("dinput8.dll", b"injector"),
+                ("openvr_api.dll", b"openvr"),
+                ("openxr_loader.dll", b"openxr"),
+                ("reframework/autorun/scripts/demo.lua", b"-- demo"),
+            ],
+        );
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("include", json!(["dinput8.dll", "reframework/**"])),
+            ],
+        );
+        let config = ResolvedConfig::default();
+
+        let mut planned =
+            plan_step_targets(&spec, &download_context(&config, &root)).expect("planned targets");
+        planned.sort();
+        let mut expected = vec![
+            root.join("dinput8.dll"),
+            root.join("reframework")
+                .join("autorun")
+                .join("scripts")
+                .join("demo.lua"),
+        ];
+        expected.sort();
+        assert_eq!(
+            planned, expected,
+            "preflight has to plan the same members the step writes, or the \
+             rollback set is the archive rather than the install"
+        );
+
+        let result = execute_step(&spec, &download_context(&config, &root)).expect("it installs");
+        let written: Vec<PathBuf> = result
+            .affected_paths
+            .iter()
+            .map(|relative| root.join(relative))
+            .collect();
+        assert_eq!(
+            written, expected,
+            "run and preflight agree member for member"
+        );
+    }
+
+    /// Two members claiming one destination is an authoring error, and
+    /// the step refuses it instead of letting archive order pick.
+    #[test]
+    fn two_members_claiming_the_default_proxy_name_are_refused() {
+        let tree = TempTree::new("extract-proxy-clash");
+        let root = tree.0.clone();
+        let archive = root.join("reshade.zip");
+        write_zip(
+            &archive,
+            &[
+                ("ReShade/ReShade64.dll", b"the injector"),
+                ("ReShade/dxgi.dll", b"the dxgi proxy"),
+                ("ReShade/ReShade.ini", b"[General]\n"),
+            ],
+        );
+
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("proxy".to_owned(), json!("winhttp.dll"));
+        // No payload declared, so the ReShade-era default renames every
+        // member basenamed reshade64.dll or dxgi.dll onto one path.
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+            ],
+        );
+
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("two members cannot install to one path");
+        assert!(error.contains("winhttp.dll"), "{error}");
+        assert!(error.contains("ReShade/ReShade64.dll"), "{error}");
+        assert!(error.contains("ReShade/dxgi.dll"), "{error}");
+        assert!(
+            error.contains("`payload`"),
+            "the error says what the fix is: {error}"
+        );
+        assert!(
+            !root.join("winhttp.dll").exists(),
+            "a refused collision picks no winner: {error}"
+        );
+        assert!(
+            !root.join("ReShade").join("ReShade64.dll").exists(),
+            "a refused collision writes nothing at all: {error}"
+        );
+    }
+
+    /// The same collision, with the members in the opposite order, has
+    /// to produce the same refusal — otherwise "which one won" depends
+    /// on how a reader happened to enumerate the archive.
+    #[test]
+    fn the_collision_refusal_does_not_depend_on_the_member_order() {
+        let tree = TempTree::new("extract-proxy-clash-order");
+        let root = tree.0.clone();
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("proxy".to_owned(), json!("winhttp.dll"));
+
+        let first = root.join("first.zip");
+        write_zip(
+            &first,
+            &[
+                ("ReShade/ReShade64.dll", b"the injector"),
+                ("ReShade/DXGI.dll", b"the dxgi proxy"),
+            ],
+        );
+        let second = root.join("second.zip");
+        write_zip(
+            &second,
+            &[
+                ("ReShade/DXGI.dll", b"the dxgi proxy"),
+                ("ReShade/ReShade64.dll", b"the injector"),
+            ],
+        );
+
+        let refusal = |archive: &Path| -> String {
+            let spec = step_of(
+                "extract-zip",
+                &[
+                    ("archivePath", json!(archive.to_string_lossy())),
+                    ("proxyField", json!("proxy")),
+                ],
+            );
+            execute_step(&spec, &download_context(&config, &root))
+                .expect_err("both archives carry the same authoring error")
+        };
+        assert_eq!(
+            refusal(&first),
+            refusal(&second),
+            "the refusal is deterministic: a coin flip needs a stable \
+             comparison to stop being a coin flip"
+        );
+    }
+
+    /// A member that is already named like the proxy is a collision too:
+    /// the rename would land on top of it.
+    #[test]
+    fn the_default_proxy_rename_refuses_to_land_on_a_member_of_the_same_name() {
+        let tree = TempTree::new("extract-proxy-own-name");
+        let root = tree.0.clone();
+        let archive = root.join("payload.zip");
+        write_zip(
+            &archive,
+            &[
+                ("ReShade/ReShade64.dll", b"the injector"),
+                ("winhttp.dll", b"a real winhttp"),
+            ],
+        );
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("proxy".to_owned(), json!("winhttp.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+            ],
+        );
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("renaming onto an existing member of the archive is refused");
+        assert!(error.contains("'ReShade/ReShade64.dll'"), "{error}");
+        assert!(error.contains("'winhttp.dll'"), "{error}");
+    }
+
+    /// Declaring the payload is the fix the refusal names, and it has to
+    /// work: the default rule is off once a payload is declared, so a
+    /// second `reshade64.dll` keeps its own name and claims nothing.
+    #[test]
+    fn a_declared_payload_leaves_the_other_proxy_named_members_alone() {
+        let tree = TempTree::new("extract-payload-immunity");
+        let root = tree.0.clone();
+        let archive = root.join("payload.zip");
+        write_zip(
+            &archive,
+            &[
+                ("ReShade/ReShade64.dll", b"the payload"),
+                ("ReShade/samples/reshade64.dll", b"a bundled copy"),
+                ("ReShade/dxgi.dll", b"the dxgi the archive ships"),
+            ],
+        );
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("proxy".to_owned(), json!("winhttp.dll"));
+        config
+            .values
+            .insert("payloadDll".to_owned(), json!("ReShade64.dll"));
+        let spec = step_of(
+            "extract-zip",
+            &[
+                ("archivePath", json!(archive.to_string_lossy())),
+                ("proxyField", json!("proxy")),
+                ("payloadField", json!("payloadDll")),
+            ],
+        );
+
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("a declared payload is immune to the collision");
+        assert_eq!(
+            fs::read(root.join("winhttp.dll")).expect("proxy"),
+            b"the payload"
+        );
+        assert_eq!(
+            fs::read(root.join("ReShade").join("dxgi.dll")).expect("shipped dxgi"),
+            b"the dxgi the archive ships"
+        );
+        assert_eq!(
+            fs::read(root.join("ReShade").join("samples").join("reshade64.dll"))
+                .expect("the bundled copy keeps its own name"),
+            b"a bundled copy"
+        );
+        assert_eq!(result.affected_paths.len(), 3);
+    }
+
     #[test]
     fn the_container_is_chosen_by_its_bytes_not_by_its_name() {
         assert_eq!(
@@ -2507,6 +3466,353 @@ pub(crate) mod tests {
             "C:/tools/ofxr/XR_APILAYER_manual.json",
             "a recipe can name a file inside the directory it staged into"
         );
+    }
+
+    /// The glob rules the `include` / `exclude` filter promises, stated
+    /// over the matcher itself rather than over one archive.
+    #[test]
+    fn member_patterns_follow_the_documented_glob_rules() {
+        let matches = |pattern: &str, name: &str| member_pattern_matches(pattern, name);
+
+        // A pattern with no `/` is a basename, and matches at any depth.
+        assert!(matches("dinput8.dll", "dinput8.dll"));
+        assert!(matches("dinput8.dll", "x64/dinput8.dll"));
+        assert!(matches(
+            "dinput8.dll",
+            "reframework/autorun/deep/dinput8.dll"
+        ));
+        assert!(!matches("dinput8.dll", "dinput8.dll.bak"));
+        assert!(
+            !matches("dinput8.dll", "x64/dinput8.dll.bak"),
+            "a basename pattern is the whole basename, not a prefix"
+        );
+
+        // `*` stays inside one segment, `**` crosses them.
+        assert!(matches(
+            "reframework/autorun/*.lua",
+            "reframework/autorun/a.lua"
+        ));
+        assert!(!matches(
+            "reframework/autorun/*.lua",
+            "reframework/autorun/deep/a.lua"
+        ));
+        assert!(matches("reframework/**/*.lua", "reframework/a.lua"));
+        assert!(matches(
+            "reframework/**/*.lua",
+            "reframework/autorun/scripts/a.lua"
+        ));
+        assert!(matches("**", "a/b/c.dll"));
+        assert!(matches("a/**/c", "a/b/c"));
+        assert!(matches("a/**/c", "a/c"));
+        assert!(!matches("a/**/c", "a/b/d"));
+        assert!(matches("*.dll", "x64/OptiScaler.dll"));
+        assert!(matches("optiscaler*.dll", "OptiScaler.dll"));
+        assert!(!matches("optiscaler", "OptiScaler.dll"));
+
+        // Windows comparisons are case-insensitive, and a member name
+        // that differs only in case is the same file to the filesystem
+        // it lands on.
+        assert!(matches("DINPUT8.DLL", "dinput8.dll"));
+        assert!(matches(
+            "reframework/AUTORUN/**",
+            "reframework/autorun/x.lua"
+        ));
+
+        // Nothing else is a wildcard. A Windows member name cannot hold
+        // a `?`, so treating it as a literal cannot exclude a member the
+        // recipe meant to install.
+        assert!(!matches("dinput?.dll", "dinput8.dll"));
+        assert!(matches("dinput?.dll", "dinput?.dll"));
+    }
+
+    /// One environment variable, set for the duration of a test and
+    /// taken back out with it. The name carries a uuid because the suite
+    /// runs its tests in parallel threads inside one process, and a
+    /// shared `MODDIN_TEST_*` name would let one test read another's
+    /// value.
+    struct EnvVar(String);
+
+    impl EnvVar {
+        fn set(label: &str, value: &str) -> Self {
+            let name = format!("MODDIN_TEST_{label}_{}", uuid::Uuid::new_v4().simple());
+            std::env::set_var(&name, value);
+            Self(name)
+        }
+
+        fn name(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl Drop for EnvVar {
+        fn drop(&mut self) {
+            std::env::remove_var(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_template_expands_a_windows_environment_variable() {
+        let local = EnvVar::set("LOCAL", "C:\\Users\\tester\\AppData\\Local");
+        let config = ResolvedConfig::default();
+        // The case the roadmap names: a `path`-typed config field has to
+        // be able to say `%LOCALAPPDATA%` without hard-coding a profile.
+        assert_eq!(
+            render_template(
+                &format!("%{}%\\Moddin\\profiles\\openxr", local.name()),
+                &config
+            ),
+            "C:\\Users\\tester\\AppData\\Local\\Moddin\\profiles\\openxr"
+        );
+
+        // Expansion runs after the `{name}` substitution, so a config
+        // value that is itself a `%VAR%` reference is expanded too.
+        let profiles = EnvVar::set("PROFILES_ROOT", "D:\\profiles");
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "profilesRoot".to_owned(),
+            json!(format!("%{}%", profiles.name())),
+        );
+        assert_eq!(
+            render_template("{profilesRoot}\\prefs.json", &config),
+            "D:\\profiles\\prefs.json"
+        );
+    }
+
+    #[test]
+    fn an_unknown_or_stray_percent_stays_literal() {
+        let config = ResolvedConfig::default();
+        // Prose, a percentage, a shell fragment and file content all
+        // carry `%` and `{}` for their own reasons. A variable the
+        // process does not have is neither an error nor something to
+        // delete.
+        assert_eq!(
+            render_template("100% of the time, %NOT_A_REAL_VARIABLE%, %%", &config),
+            "100% of the time, %NOT_A_REAL_VARIABLE%, %%"
+        );
+        assert_eq!(
+            render_template("${HOME} is bash, not this", &config),
+            "${HOME} is bash, not this"
+        );
+        assert_eq!(render_template("a % b % c", &config), "a % b % c");
+        assert_eq!(
+            render_template("%1 and %PATH:1%", &config),
+            "%1 and %PATH:1%",
+            "a name Windows itself would not accept is left alone"
+        );
+    }
+
+    #[test]
+    fn a_path_that_becomes_absolute_by_expansion_is_absolute() {
+        let outside = EnvVar::set("OUTSIDE", &std::env::temp_dir().to_string_lossy());
+        let base = Path::new("C:\\games\\Some Game");
+        assert_eq!(
+            resolve_path(base, &format!("%{}%\\Moddin\\prefs.json", outside.name()),),
+            std::env::temp_dir().join("Moddin").join("prefs.json"),
+            "a path that is only absolute after expansion is treated as absolute"
+        );
+        // A relative candidate keeps its ordinary meaning.
+        assert_eq!(
+            resolve_path(base, "BepInEx\\core\\winhttp.dll"),
+            base.join("BepInEx").join("core").join("winhttp.dll")
+        );
+    }
+
+    #[test]
+    fn a_step_writes_to_a_location_named_by_an_environment_variable() {
+        let tree = TempTree::new("env-write-path");
+        let root = tree.0.clone();
+        let profiles = root.join("profiles");
+        fs::create_dir_all(&profiles).expect("profiles directory");
+        let env = EnvVar::set("PROFILES", profiles.to_string_lossy().as_ref());
+        let config = ResolvedConfig::default();
+
+        let spec = step_of(
+            "write-text-file",
+            &[
+                (
+                    "path",
+                    json!(format!("%{}%\\openxr\\cyberpunk.json", env.name())),
+                ),
+                ("template", json!("runtime=steamvr")),
+            ],
+        );
+        let result = execute_step(&spec, &download_context(&config, &root))
+            .expect("the step reaches the directory the variable names");
+        let written = profiles.join("openxr").join("cyberpunk.json");
+        assert!(written.is_file(), "{}", written.display());
+        assert_eq!(
+            result.affected_paths,
+            vec![written.to_string_lossy().into_owned()]
+        );
+    }
+
+    /// Reaching outside the install root needs the same `path`-typed
+    /// config field it always did. Expansion is not a new exemption, so
+    /// a variable whose value walks out of the root is refused by the
+    /// same check that refuses `..` in a literal.
+    #[test]
+    fn an_expanded_path_that_walks_out_of_the_root_is_still_refused() {
+        let tree = TempTree::new("env-escape");
+        let root = tree.0.clone();
+        let escape = EnvVar::set("ESCAPE", "..");
+        let config = ResolvedConfig::default();
+
+        let spec = step_of(
+            "write-text-file",
+            &[
+                ("path", json!(format!("%{}%\\hijacked.ini", escape.name()))),
+                ("template", json!("[General]")),
+            ],
+        );
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("expansion does not exempt a path from the install-root rule");
+        assert!(error.contains("escapes the install directory"), "{error}");
+        assert!(
+            !root
+                .parent()
+                .expect("a parent")
+                .join("hijacked.ini")
+                .exists(),
+            "nothing was written outside the root"
+        );
+    }
+
+    #[test]
+    fn write_text_file_in_json_format_escapes_the_path_and_parses() {
+        let tree = TempTree::new("json-write");
+        let root = tree.0.clone();
+        // The OpenXR preference document: a JSON file under
+        // %LOCALAPPDATA% whose one value is a Windows path. Rendered
+        // unescaped it is not JSON, and `read_game_preference` returns
+        // None on a file it cannot parse — a silent no-op override.
+        let mut config = ResolvedConfig::default();
+        config.values.insert(
+            "preferredRuntime".to_owned(),
+            json!("C:\\Program Files\\Moddin\\openxr_runtime.json"),
+        );
+        let spec = step_of(
+            "write-text-file",
+            &[
+                ("path", json!("profiles\\openxr\\cyberpunk.json")),
+                ("format", json!("json")),
+                (
+                    "template",
+                    json!("{\"runtimePath\": \"{preferredRuntime}\", \"enabled\": true}"),
+                ),
+            ],
+        );
+
+        execute_step(&spec, &download_context(&config, &root))
+            .expect("the JSON document is written");
+        let written =
+            fs::read_to_string(root.join("profiles").join("openxr").join("cyberpunk.json"))
+                .expect("the preference document");
+        assert!(
+            written.contains(r"C:\\Program Files"),
+            "the backslashes are escaped: {written}"
+        );
+        let parsed: JsonValue = serde_json::from_str(&written)
+            .expect("the document parses, so nothing downstream returns None");
+        assert_eq!(
+            parsed["runtimePath"].as_str(),
+            Some("C:\\Program Files\\Moddin\\openxr_runtime.json"),
+            "the value round-trips byte for byte"
+        );
+        assert_eq!(parsed["enabled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn write_text_file_in_json_format_refuses_what_it_cannot_parse() {
+        let tree = TempTree::new("json-refuse");
+        let root = tree.0.clone();
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("preferredRuntime".to_owned(), json!("C:\\xr\\steamvr.json"));
+        // A recipe that drops the closing brace, which is exactly what
+        // an unescaped Windows path does to a hand-written document.
+        // Nothing is written: a file that exists and does not parse is
+        // indistinguishable from a working one to whatever reads it.
+        let spec = step_of(
+            "write-text-file",
+            &[
+                ("path", json!("profiles\\openxr\\cyberpunk.json")),
+                ("format", json!("json")),
+                (
+                    "template",
+                    json!("{\"runtimePath\": \"{preferredRuntime}\""),
+                ),
+            ],
+        );
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a document that would not parse is not written");
+        assert!(error.contains("not valid JSON"), "{error}");
+        assert!(
+            !root.join("profiles").exists(),
+            "nothing is created for a refused document: {error}"
+        );
+
+        // The same document without `format: json` is what the roadmap
+        // complained about: written, and silently unreadable.
+        let unescaped = step_of(
+            "write-text-file",
+            &[
+                ("path", json!("profiles\\openxr\\cyberpunk.json")),
+                (
+                    "template",
+                    json!("{\"runtimePath\": \"{preferredRuntime}\""),
+                ),
+            ],
+        );
+        execute_step(&unescaped, &download_context(&config, &root)).expect("plain text writes");
+        let written =
+            fs::read_to_string(root.join("profiles").join("openxr").join("cyberpunk.json"))
+                .expect("the plain-text document");
+        assert!(
+            serde_json::from_str::<JsonValue>(&written).is_err(),
+            "this is the failure the format exists to catch: {written}"
+        );
+    }
+
+    #[test]
+    fn write_text_file_keeps_plain_text_as_the_default() {
+        let tree = TempTree::new("text-default");
+        let root = tree.0.clone();
+        let mut config = ResolvedConfig::default();
+        config
+            .values
+            .insert("note".to_owned(), json!("a \"quoted\" value"));
+
+        // No `format`, so the placeholder is the value verbatim — which
+        // is what every step that shipped before `format: json` means,
+        // and what a file of prose or INI wants.
+        let spec = step_of(
+            "write-text-file",
+            &[
+                ("path", json!("tray.ini")),
+                ("template", json!("note={note}")),
+            ],
+        );
+        execute_step(&spec, &download_context(&config, &root)).expect("plain text still writes");
+        assert_eq!(
+            fs::read_to_string(root.join("tray.ini")).expect("ini"),
+            "note=a \"quoted\" value"
+        );
+
+        // An unknown format is an authoring error, not a silent fallback
+        // to plain text: a recipe that asked for something the step
+        // cannot do has to be told so.
+        let spec = step_of(
+            "write-text-file",
+            &[
+                ("path", json!("tray.ini")),
+                ("format", json!("yaml")),
+                ("template", json!("note: {note}")),
+            ],
+        );
+        let error = execute_step(&spec, &download_context(&config, &root))
+            .expect_err("a format the step does not know is refused");
+        assert!(error.contains("not a format this step knows"), "{error}");
     }
 
     #[test]
@@ -3081,8 +4387,16 @@ pub(crate) mod tests {
     /// Every `{name}` a step param holds, the config fields named by a
     /// `*Field` param, and nothing else a step looks at.
     ///
-    /// Shared with the recipe-wide invariant in `capability_runner`, which
-    /// is about specs rather than about this module's steps.
+    /// The run between the braces has to look like a field name — the
+    /// same `[A-Za-z_][A-Za-z0-9_]*` the community validator accepts.
+    /// A `format: json` template is a document with braces of its own
+    /// (`{"runtimePath": "{preferredRuntime}"}`), and a scanner that
+    /// took everything up to the next `}` would report the first two as
+    /// one undeclared field, failing every recipe the JSON format
+    /// exists to enable.
+    ///
+    /// Shared with the recipe-wide invariant in `capability_runner`,
+    /// which is about specs rather than about this module's steps.
     pub(crate) fn config_fields_a_step_reads(
         spec: &crate::capability::CapabilitySpec,
     ) -> BTreeSet<String> {
@@ -3096,21 +4410,66 @@ pub(crate) mod tests {
                     continue;
                 }
                 if let Some(text) = value.as_str() {
-                    let mut rest = text;
-                    while let Some(start) = rest.find('{') {
-                        rest = &rest[start + 1..];
-                        match rest.find('}') {
-                            Some(end) => {
-                                names.insert(rest[..end].to_owned());
-                                rest = &rest[end + 1..];
-                            }
-                            None => break,
+                    for (index, character) in text.char_indices() {
+                        if character != '{' {
+                            continue;
+                        }
+                        let rest = &text[index + 1..];
+                        let name: String = rest
+                            .chars()
+                            .take_while(|character| {
+                                character.is_ascii_alphanumeric() || *character == '_'
+                            })
+                            .collect();
+                        let is_field_name = name
+                            .chars()
+                            .next()
+                            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
+                        if is_field_name && rest[name.len()..].starts_with('}') {
+                            names.insert(name);
                         }
                     }
                 }
             }
         }
         names
+    }
+
+    /// A JSON template is a document with braces in it, so the scan that
+    /// feeds the recipe-wide invariant has to see the placeholder and
+    /// not the punctuation around it. The same holds for the `{` of a
+    /// `{}` pair and for a `{` with no closing brace.
+    #[test]
+    fn a_json_template_reports_its_placeholders_and_not_its_punctuation() {
+        let spec: crate::capability::CapabilitySpec = serde_yaml::from_str(
+            r#"
+id: json-writer
+displayName: JSON writer
+category: qol
+status: available
+configSchema:
+  - name: preferredRuntime
+    type: path
+    required: true
+install:
+  - kind: write-text-file
+    params:
+      path: prefs.json
+      format: json
+      template: '{"runtimePath": "{preferredRuntime}", "note": "{}", "literal": "{undeclared}" }'
+"#,
+        )
+        .expect("the synthetic spec parses");
+
+        let names = config_fields_a_step_reads(&spec);
+        assert!(
+            names.contains("preferredRuntime"),
+            "the placeholder the runner would fill in: {names:?}"
+        );
+        assert!(
+            !names.contains("{}") && !names.iter().any(|name| name.contains('"')),
+            "JSON punctuation must not be read as a config field: {names:?}"
+        );
     }
 
     /// `openxr-helpers` is `planned` and declares no chain, because the

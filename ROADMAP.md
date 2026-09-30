@@ -35,7 +35,7 @@ check, not after it fails.
 
 ## How to read this
 
-- **Now** — blocks the next beta. All closed; one item needs a maintainer's key.
+- **Now** — blocks the next beta. One item needs a maintainer's key; the rest are closed, and one of them was found by auditing a branch this roadmap had repeatedly deferred closing.
 - **Next** — the current cycle.
 - **Later** — real, but not yet earned.
 - Every item has a **Done when** line. An item is not done until that line is true and reviewable.
@@ -45,8 +45,47 @@ check, not after it fails.
 
 # Now — release blockers
 
-Every P0 and every F-03 remainder is closed. **One thing remains, and it needs a key rather
-than a change.**
+Every P0 and every F-03 remainder is closed. **One thing needs a key rather than a
+change**, and one thing that was a change is now closed too — it was found by
+cross-checking the branch this roadmap keeps postponing, which is the argument for
+closing that item earlier than it wanted.
+
+- [x] **The bundled app had no frontend in it.** — new, found while auditing
+      `feat/agent-mcp`
+      `src-tauri/Cargo.toml` declared `tauri = { version = "2", features = [] }`.
+      Without the `custom-protocol` Cargo feature, `tauri`'s build script takes
+      `let dev = !custom_protocol` and emits `cargo:dev`; `tauri-build` then runs
+      `cfg_alias("dev", is_dev())` for the whole crate; and `Manager::get_app_url`
+      resolves the app URL to `build.devUrl` — `http://127.0.0.1:1420` — instead
+      of the embedded `frontendDist`.
+
+      *This is not a defect that announces itself, which is why it survived
+      forty-seven commits of hardening.* `cargo check` passes, `cargo build
+      --release` passes, `beforeBuildCommand` runs, `dist/` is produced, the
+      installer builds, installs and launches. The only symptom is a blank
+      WebView2 on a user's machine. And it was not a theory: the release build
+      directory on this machine, dated earlier today, records
+      `cargo:rustc-cfg=dev` and has **no `tauri-codegen-assets` directory at
+      all** — the exact state the mechanism predicts. The sibling build from the
+      `feat/agent-mcp` branch, taken a week earlier, records `dev=false` and
+      fifty-six embedded asset files.
+
+      It arrived on `feat/agent-mcp` as `ef9553c` and was never merged, because
+      the roadmap read that branch as "partly cherry-picked" product work rather
+      than as a fix that belonged on this one. **A merge is not the only way a
+      commit reaches a release, and "not in main" is not the same as "not
+      needed".**
+
+      `scripts/check-bundle-features.mjs` now gates the manifest, and it walks
+      for every `Cargo.toml` rather than naming `src-tauri/Cargo.toml`, for the
+      reason at the top of this file: a guard is only as good as its inventory.
+      It declares no dependencies and runs through `node` directly, so it is the
+      first step in CI, before `npm ci`. *The limit is written into the guard
+      itself:* it reads the manifest, not the artifact, and cargo does not
+      re-run a dependency's build script when a feature flips — so a stale
+      target directory can hold the old binary. **The artifact-level proof is
+      the dry-run tag below**, and nothing short of it should be called
+      verification.
 
 - [ ] **Re-sign the community catalogue.** — `F-11`, XS, **by hand only**
       `catalog.json` changed twice today — the revocations moved inside it, and the engine
@@ -492,31 +531,107 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       `move-file` installs the flat-screen case correctly and silently gives a VR user no OpenXR
       support and no autorun scripts. *Done when:* `extract-zip` can filter its members —
       see the runner gap below.
-- [ ] **A member filter on `extract-zip`.** — new, found while closing `F-10`
-      The named runner gap blocking REFramework, and a general capability rather than a
-      one-off: an archive that ships a superset of what a given game wants is the normal case
-      for injected-DLL frameworks. A step-level `include`/`exclude` over archive members is the
-      honest fix. *Deliberately not worked around*, because a workaround that installs the
-      wrong subset is worse than a refusal.
-- [ ] **Environment-variable expansion in `render_template` / `resolve_path`.** — new
-      Two shipped recipes declare `type: path` fields that resolve under `%LOCALAPPDATA%`, and
-      no step can reach them: `render_template` substitutes only a literal `{name}` and
-      `resolve_path` treats anything non-absolute as game-executable-relative. A committed
-      catalogue value would have to be a fabricated `C:\Users\<someone>\…` that breaks for every
-      other user, or an exe-relative path that drops a tray and an OpenXR layer manifest inside
-      the game folder. Four `ofxr-bridge` fields are stuck on this, which is why a collection
-      naming it refuses with `needsConfig` rather than installing something wrong. This is the
-      same gap that keeps `openxr-helpers` open: the preference document it would need to write
-      is a JSON file at a `%LOCALAPPDATA%` path, and rendering a Windows path into JSON also
-      needs string escaping, or `read_game_preference` returns `None` and the override silently
-      does nothing. **Two open items, one missing capability.**
-- [ ] **The default proxy rename collides.** — new, found while fixing `extract-zip`
+
+      **The engine can now filter, and REFramework still does not ship.** The blocker moved
+      from "the runner cannot express this" to authoring, and the remaining work is specific
+      enough to name: a VR/no-VR config field the *user* answers, because the choice is
+      per-user and not per-game, so a `boolean` is the honest shape. Then the `include`
+      patterns have to be verified against a real v1.5.9.1 archive rather than against this
+      roadmap's summary of it — the flat case must be provably `dinput8.dll` alone, and the
+      VR case provably everything including the `reframework/autorun/**` tree, which the
+      release note warns can crash a non-VR game.
+
+      *The shape the engine offers is a flat list, and that is the interesting part: the
+      recipe cannot branch on the answer itself.* It takes one step per case with a
+      conditional, or the collection picks the variant. Choosing between those is a product
+      call, and it is why this is still `planned` rather than a half-built recipe.
+- [x] **A member filter on `extract-zip`.** — new, found while closing `F-10`
+      `include` and `exclude`, arrays of glob patterns over archive members. `include`,
+      when non-empty, selects; `exclude` then removes. `*` stays inside one segment, `**`
+      crosses any number, a pattern with no `/` matches the basename at any depth, and
+      matching is ASCII case-insensitive because the filesystem is. `?` and `[` are
+      **literals**: a Windows member name cannot contain them, so reading them as
+      wildcards could only ever silently drop a member the recipe asked for.
+
+      *The filter runs before `payload` and the proxy rename, not after.* The filtering is
+      the point — a recipe that filters to one DLL still needs `payload` to name it, and the
+      two compose in that order. Both the zip and the 7z branch consume the same selection,
+      one by archive ordinal and one by member name, because a 7z reader hands its entries
+      over in block order. A filter that selects nothing is **refused**, naming both pattern
+      lists and the archive's member count, and nothing is written — a filter that silently
+      installed nothing is the exact failure this item exists to prevent.
+
+      Seven tests, including one that asserts `plan_step_targets` and the run agree
+      member-for-member. **Preflight and the run sharing a function is the part that matters:**
+      they are two code paths, and a transaction that backs up different files than the step
+      writes is a rollback that restores nothing.
+
+- [x] **Environment-variable expansion in `render_template` / `resolve_path`.** — new
+      `%NAME%` for `[A-Za-z_][A-Za-z0-9_]*`, no `${VAR}` — this is a Windows app and
+      `%LOCALAPPDATA%` is the case that has to work. **A variable the process does not have
+      is left literal**, because a template is also prose and a file's content has `%` for
+      reasons that have nothing to do with the environment. `%%`, `%1`, `%PATH:1%` and a
+      trailing `%` all pass through untouched.
+
+      *No new exemption in the install-root rule.* An expanded path lands in
+      `resolve_write_target` and gets exactly the treatment a literal one gets: absolute is
+      honoured, which is the pre-existing `path`-typed-field exception, and a `..` walk out
+      of the root is still refused — pinned by a test whose variable *is* `..`. The obvious
+      wrong fix here was to let expansion bypass the scope check because "the user put it in
+      a config field", and that would have turned the missing capability into a hole.
+
+      `write-text-file` gains `format: json`: each `{param}` is inserted as escaped JSON
+      string **content** and the recipe keeps its own quotes and punctuation, and the
+      rendered result is parsed with `serde_json` **before the parent directory is created**.
+      That last part is the fix, not a nicety — the failure this item exists to end is a
+      Windows path rendered unescaped into a preference document that `read_game_preference`
+      then silently answers `None` for. A refusal beats a silent no-op. An unknown `format`
+      is refused rather than falling back to text.
+
+      **The four stuck `ofxr-bridge` fields are unblocked, and `openxr-helpers`' two named
+      gaps are closed in the runner.** Neither recipe is flipped — see the two items above;
+      the remaining obstacle in both is authoring and a safety call, not a missing step.
+
+      *A behaviour change beyond the item, flagged because the roadmap's own rule asks for
+      it:* `render_template` no longer consumes a `{…}` run it cannot resolve. The old
+      scanner took everything up to the next `}` and put it back, which for a JSON template
+      means the object's opening brace swallows the first placeholder — `{"runtimePath":
+      "{preferredRuntime}"}` rendered the whole `{"runtimePath": "{preferredRuntime` as one
+      unresolvable name. `format: json` is not implementable without the fix. The output is
+      byte-identical for a template that is nothing but placeholders; only the resume point
+      differs. The same reasoning forced a second fix in the recipe-wide field scanner, which
+      would otherwise have reported `{"runtimePath": "{preferredRuntime` as an undeclared
+      field and failed every recipe the JSON format exists to enable.
+
+- [x] **The default proxy rename collides.** — new, found while fixing `extract-zip`
       With no `payload` declared, every archive member basenamed `reshade64.dll` or `dxgi.dll`
-      is renamed onto the same single proxy path, and the **last one wins silently**. A recipe
-      that declares `payload` is immune. The honest fix is to refuse the collision rather than
-      pick a winner: two members claiming one destination is an authoring error, and a
-      deterministic refusal beats a coin flip. Not fixed in the same commit that found it,
-      because the fix is a behaviour change to a shipped rule and deserves its own diff.
+      is renamed onto the same single proxy path, and the **last one wins silently**. Now
+      refused: `archive_member_targets` accumulates a destination → claimants map and returns
+      an error naming the destination, the members claiming it, and the fix (`payload`, or
+      `include`/`exclude` for the rest of the archive).
+
+      *Determinism is the whole point, so it is tested as a property rather than an
+      outcome:* two archives with the same members in opposite order produce a byte-equal
+      message. The map is a `BTreeMap` keyed on the lowercased destination — because Windows
+      compares paths case-insensitively, so `DXGI.dll` and `dxgi.dll` are one destination —
+      with a `BTreeSet` of claimants inside it, and the lowest-spelled spelling kept for the
+      message. It also catches a rename landing on a member already named like the proxy,
+      which is the same defect arriving by a different route. A declared `payload` stays
+      immune, as it was.
+
+- [ ] **`chain_artifacts` does not know about the filter.** — new, found while closing the
+      member filter
+      The invariant that says "a check may only inspect what its recipe writes" reads
+      `extract-zip` params in `capability_runner.rs` and sets `extracts = true` for any
+      `extract-zip` step, recording only `target` and `targetSubdir`. So a recipe that
+      filters, plus a `file-exists` check on a member the filter removed, still passes the
+      guard and then fails its own check at install time. Nothing ships this way today — no
+      recipe uses a filter yet — so it is a latent hole, not a live one.
+
+      Left open deliberately: fixing it means deciding what a *filtered* archive's artifact
+      set is, and that is an authoring-policy question, not a mechanical one. It is the
+      roadmap's own recurring shape — a guard that is right about the class and does not
+      know the inventory — arriving one level up from where the previous ones were found.
 - [ ] **Per-game flat profiles.** No `flat` key exists anywhere in the catalogue yet. · M
 - [ ] **Nexus integration** where permitted. Still genuinely open — no code, no URL.
 - [x] **Collections need content.** Two shipped collections with real members, and a test that
@@ -599,6 +714,21 @@ These were not on the roadmap. All are fixed, each with a test that fails withou
       claimed an effect with no mechanism behind it, which is why it is an item and not a
       footnote.**
 
+      **Both named gaps are now closed in the runner, and the recipe still cannot ship.** Its
+      *Done when* line was written as though the capability were the whole obstacle, and it
+      was not: a step can now write a preference document at `%LOCALAPPDATA%` with a path
+      escaped into valid JSON, and the document still cannot be written. What is missing is
+      `gameId` — the recipe has to know which game's document it is writing — and
+      `run_uninstall` resolves no config, so the uninstall half cannot be expressed in a step
+      at all. Underneath both sits the question the roadmap already refused to guess at:
+      **what Undo does for a file outside the install root**, which the transaction store
+      will not back up. The empty chain is still the honest shape of a `planned` recipe, and
+      that is a better answer than a half-written one.
+
+      *The generalisation is the reason this was worth an item rather than a note:* a recipe
+      that writes outside the install root is the whole difficulty, and until now the engine
+      could not even address such a path. It still cannot offer one for undo.
+
 ---
 
 # Shipped
@@ -612,14 +742,30 @@ catalogue fetch with Ed25519 verification and revocation travelling *inside* the
 catalogue, the AI assistant and MCP agent shell, profile import/export, collections and
 contribute, snapshot create/list/rollback/delete, engine-gated capability lists, a frontend
 architecture guard, a parity guard comparing four vocabularies across five sources including
-param names, a catalogue validator, a frontend test runner, a real CSP, and compile-enforced
+param names, a catalogue validator, a frontend test runner, a real CSP, a guard on the Cargo
+feature a bundled build silently depends on, and compile-enforced
 locale parity across pt-BR / en / es.
 
-**Known not solid:** `fmt` and `clippy` are reported-only gates; the trust chain is exercised
-in production by exactly one signed community capability; the collection loader has no
-content; the catalogue carries eight known data defects; there is no file dialog, so profile
-export writes a named file under `%LOCALAPPDATA%` and reveals it rather than offering Save-As;
-catalogue breadth is still six games, one of which is a near-duplicate stub.
+**Known not solid:** the trust chain is not exercised in production at all right now, because
+the catalogue has not been re-signed and the app is correctly refusing the community fetch;
+the bundled app's frontend embedding was broken until this pass and its guard reads the
+manifest rather than the artifact; catalogue breadth is still six games, one of which
+(`doom-2016`) is a single-module near-duplicate of the `desktop-shortcut` every other game
+carries; and the four UX-20 items the audit raised that this pass closed as *written* left
+real gaps behind them, recorded at each item rather than here.
+
+*This paragraph was four separate lies a moment ago, and every one of them was true when it
+was written.* It said `fmt` and `clippy` were reported-only — they have blocked since the
+quality-gate pass. It said the collection loader had no content — it ships two collections
+with a test that reads the published files. It said the catalogue carried eight known data
+defects — `KNOWN_DEFECTS` is an empty list with the record of the eight kept above it. It
+said there was no file dialog — `tauri-plugin-dialog` landed with a real Save-As this pass.
+**A summary of what is not solid is the first thing to go stale and the last thing anyone
+re-reads**, because nothing makes it false: a defect that gets fixed leaves the sentence
+behind, still true-looking, describing a repository that no longer exists. The items it
+contradicted are all `[x]` above, and the honest rule is the one already written as standing
+constraint 5 — the summary has to be rewritten in the change that moves the code, and the
+change that moves the code is the only moment anyone is looking at it.
 
 ---
 

@@ -11,6 +11,16 @@
 #     `archivePath` — it does NOT accept the URL.
 #   - add a `file-exists` blocker check for at least one critical DLL / EXE
 #     extracted from the archive
+#   - if the archive ships more than this game wants (a superset is the
+#     normal case for an injected-DLL framework), narrow it with
+#     `include` / `exclude` on the extract-zip step rather than moving
+#     files out of a staging directory afterwards: `include` selects,
+#     `exclude` then removes, patterns are matched case-insensitively
+#     against the member path with `/` separators, `*` stays inside one
+#     segment, `**` crosses them, and a pattern with no `/` matches the
+#     basename at any depth (`dinput8.dll` matches `x64/dinput8.dll`).
+#     A filter that matches no member at all is refused, so an
+#     over-narrow filter fails loudly instead of installing nothing.
 #
 # Required config fields (the agent must prompt the user for any missing):
 #   - downloadUrl: HTTPS URL of the archive
