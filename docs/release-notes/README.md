@@ -1,7 +1,7 @@
 # Release notes
 
 Moddin's published release notes, one file per tag. **The current version is
-`v0.1.0-beta.5`** — the newest file below is the current one.
+`v0.1.0-beta.6`** — the newest file below is the current one.
 
 Each file is the body of its GitHub release: the first line is the title, and CI
 appends the installer digest it computed from the artifact it actually built.
@@ -9,7 +9,8 @@ Files are named after the tag they belong to.
 
 | Version | Headline |
 | --- | --- |
-| [v0.1.0-beta.5](.release-notes-v0.1.0-beta.5.md) **— current** | Dependencies between mods, game-build compatibility gating, proxy conflicts that name their owner, the first working `download-file` step, BepInEx / UE4SS / REFramework as recipes, and the Codex `exec` fix |
+| [v0.1.0-beta.6](.release-notes-v0.1.0-beta.6.md) **— current** | The installer finally contains the frontend (it shipped blank before), the first updater-verifiable release, a pinned community keyring, and a stricter install engine |
+| [v0.1.0-beta.5](.release-notes-v0.1.0-beta.5.md) | Dependencies between mods, game-build compatibility gating, proxy conflicts that name their owner, the first working `download-file` step, BepInEx / UE4SS / REFramework as recipes, and the Codex `exec` fix |
 | [v0.1.0-beta.4](.release-notes-v0.1.0-beta.4.md) | The user-facing word "capability" is gone; the app says **mod** |
 | [v0.1.0-beta.3](.release-notes-v0.1.0-beta.3.md) | Redesigned AI surface, errors that say what to do, a smaller per-user installer, community signing-key refresh |
 | [v0.1.0-beta.2](.release-notes-v0.1.0-beta.2.md) | Redesigned interface, no console flashes, two Windows fixes |

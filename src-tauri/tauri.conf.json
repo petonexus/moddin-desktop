@@ -80,7 +80,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY__run `npm run tauri signer generate` and paste the printed `minisign+PUBLIC KEY ...` line here (see docs/UPDATER.md) — every build refuses this value",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzN0RGQzM4MjVGMDM5NzYKUldSMk9mQWxPUHg5ZzdoSzVSZ1I2eXVOWlFUM0YvUVY1MGFhK0dXOUw3VFJyRkxJS1lOdm1abWoK",
       "endpoints": [
         "https://github.com/petonexus/moddin-desktop/releases/latest/download/latest.json"
       ],
