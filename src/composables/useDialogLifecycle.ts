@@ -36,13 +36,16 @@ export function useDialogLifecycle(open: Ref<boolean>) {
     ;(firstFocusable ?? dialog).focus()
   }
 
-  function closeDialog() {
-    if (!open.value) return
-    open.value = false
-
+  function restoreFocus() {
     const target = opener
     opener = null
     if (target) queueMicrotask(() => target.focus())
+  }
+
+  function closeDialog() {
+    if (!open.value) return
+    open.value = false
+    restoreFocus()
   }
 
   function trapTab(event: KeyboardEvent) {
@@ -93,6 +96,10 @@ export function useDialogLifecycle(open: Ref<boolean>) {
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', handleKeydown)
     }
+    // A dialog can also disappear without going through `closeDialog` — a
+    // confirmed action unmounts it — and dropping focus on <body> there
+    // loses the user's place entirely.
+    if (open.value) restoreFocus()
   })
 
   return {

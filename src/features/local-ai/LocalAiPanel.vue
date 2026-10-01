@@ -2,22 +2,56 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
-import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
+import BaseDialog from '../../components/ui/BaseDialog.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
+import ErrorCallout from '../../components/ui/ErrorCallout.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
+import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
+import { useBackendText } from '../../composables/useBackendText'
 import { resolveResourceDir, detectAgents, setupAgent, removeAgent } from './service'
 import type { AiAgent } from './types'
 import { localAiCopyForLocale, formatLocalAiCopy } from './copy'
 
 const { locale } = useI18n()
 const copy = computed(() => localAiCopyForLocale(locale.value))
+const { text } = useBackendText()
+
+/** UX-26: one "Connect" per agent, so the name carries the agent. */
+function agentActionLabel(action: string, name: string): string {
+  return formatLocalAiCopy(copy.value.actionNamed, { action, name })
+}
 
 const open = ref(false)
 const loading = ref(false)
 const error = ref<string | null>(null)
+/** Which action produced `error`; the raw string alone cannot say. */
+const errorContext = ref<string | null>(null)
 const busyAgent = ref<string | null>(null)
+const pendingDisconnect = ref<AiAgent | null>(null)
 const resourceDir = ref<string>('')
 const agents = ref<AiAgent[]>([])
 
-const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
+const errorRules = computed<FriendlyErrorRule[]>(() => {
+  const c = copy.value
+  return [
+    { match: /denied|permission|access|0x80070005|read-only/i, title: c.errorPermissionTitle, why: c.errorPermissionWhy, showRaw: true },
+    { match: /not found|ENOENT|no such file|cannot find/i, context: 'detect', title: c.errorResourceTitle, why: c.errorResourceWhy, showRaw: true },
+    { context: 'detect', title: c.errorDetectTitle, why: c.errorDetectWhy, showRaw: true },
+    { context: 'write', title: c.errorWriteTitle, why: c.errorWriteWhy, showRaw: true },
+  ]
+})
+
+const friendlyError = useFriendlyError({ error, rules: () => errorRules.value, context: errorContext })
+
+// Focus, Escape and focus restore are BaseDialog's job; these only say
+// whether the dialog is on screen.
+function openDialog() {
+  open.value = true
+}
+
+function closeDialog() {
+  open.value = false
+}
 
 const installedAgents = computed(() => agents.value.filter((a) => a.binaryPath))
 const anyConnected = computed(() => agents.value.some((a) => a.state === 'configured'))
@@ -51,6 +85,7 @@ function badgeLabel(state: AiAgent['state']): string {
 async function refresh() {
   loading.value = true
   error.value = null
+  errorContext.value = 'detect'
   try {
     if (!resourceDir.value) resourceDir.value = await resolveResourceDir()
     agents.value = await detectAgents(resourceDir.value)
@@ -71,28 +106,36 @@ async function openPanel() {
 async function connect(agent: AiAgent) {
   busyAgent.value = agent.id
   error.value = null
+  errorContext.value = 'write'
   try {
     const result = await setupAgent(agent.id, resourceDir.value)
     agents.value = agents.value.map((a) => (a.id === agent.id ? result : a))
   } catch (err) {
-    error.value = formatLocalAiCopy(copy.value.connectFailed, {
-      error: err instanceof Error ? err.message : String(err),
-    })
+    error.value = err instanceof Error ? err.message : String(err)
   } finally {
     busyAgent.value = null
   }
 }
 
 async function disconnect(agent: AiAgent) {
+  // Disconnecting rewrites the user's editor config to stop pointing at
+  // the Moddin server. That is reversible, but it edits a file the user
+  // also edits by hand, so it is worth one question.
+  pendingDisconnect.value = agent
+}
+
+async function confirmDisconnect() {
+  const agent = pendingDisconnect.value
+  if (!agent) return
+  pendingDisconnect.value = null
   busyAgent.value = agent.id
   error.value = null
+  errorContext.value = 'write'
   try {
     const result = await removeAgent(agent.id, resourceDir.value)
     agents.value = agents.value.map((a) => (a.id === agent.id ? result : a))
   } catch (err) {
-    error.value = formatLocalAiCopy(copy.value.disconnectFailed, {
-      error: err instanceof Error ? err.message : String(err),
-    })
+    error.value = err instanceof Error ? err.message : String(err)
   } finally {
     busyAgent.value = null
   }
@@ -101,120 +144,120 @@ async function disconnect(agent: AiAgent) {
 
 <template>
   <button class="nav-item" type="button" @click="openPanel">
-    <AppIcon name="ai" />
+    <AppIcon name="terminal" />
     <span>{{ copy.button }}</span>
   </button>
 
   <Teleport to="body">
-    <div v-if="open" class="dialog-backdrop" @click.self="closeDialog">
-      <section
-        ref="dialogElement"
-        class="dialog dialog-lg"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="copy.title"
-        tabindex="-1"
-      >
-        <header class="dialog-header">
-          <div>
-            <h2>{{ copy.title }}</h2>
-            <p class="dialog-description">{{ copy.subtitle }}</p>
-          </div>
-          <button class="btn btn-icon" type="button" :aria-label="copy.close" @click="closeDialog">
-            <AppIcon name="close" :size="18" />
-          </button>
-        </header>
+    <BaseDialog
+      v-if="open"
+      size="lg"
+      :title="copy.title"
+      :description="copy.subtitle"
+      @close="closeDialog"
+    >
+      <p class="callout callout-info">{{ copy.banner }}</p>
 
-        <section class="dialog-body">
-          <p class="callout callout-info">{{ copy.banner }}</p>
+      <div class="agent-toolbar">
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          :class="{ 'is-loading': loading }"
+          :disabled="loading"
+          @click="refresh"
+        >
+          <AppIcon v-if="!loading" name="refresh" :size="14" />
+          {{ copy.refresh }}
+        </button>
+      </div>
 
-          <div class="agent-toolbar">
+      <EmptyState v-if="loading" busy :description="copy.detecting" />
+      <ErrorCallout :error="friendlyError" />
+
+      <ul class="agent-list">
+        <li
+          v-for="agent in agents"
+          :key="agent.id"
+          class="agent-card"
+          :aria-busy="busyAgent === agent.id"
+        >
+          <header>
+            <h3>{{ agent.displayName }}</h3>
+            <span :class="badgeClass(agent.state)">{{ badgeLabel(agent.state) }}</span>
+          </header>
+
+          <dl class="agent-meta">
+            <div v-if="agent.binaryPath">
+              <dt>{{ copy.binaryPath }}</dt>
+              <dd>
+                <code>{{ agent.binaryPath }}</code>
+              </dd>
+            </div>
+            <div v-if="agent.configPath">
+              <dt>{{ copy.configPath }}</dt>
+              <dd>
+                <code>{{ agent.configPath }}</code>
+              </dd>
+            </div>
+            <div v-if="resourceDir">
+              <dt>{{ copy.resourcePath }}</dt>
+              <dd>
+                <code>{{ resourceDir }}</code>
+              </dd>
+            </div>
+          </dl>
+
+          <p v-if="agent.detail" class="agent-detail">{{ text(agent.detail) }}</p>
+
+          <footer>
             <button
+              v-if="agent.state === 'detectedNotConfigured'"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :class="{ 'is-loading': busyAgent === agent.id }"
+              :disabled="busyAgent === agent.id"
+              :aria-label="agentActionLabel(copy.connect, agent.displayName)"
+              @click="connect(agent)"
+            >
+              {{ copy.connect }}
+            </button>
+            <button
+              v-else-if="agent.state === 'configured'"
               type="button"
               class="btn btn-ghost btn-sm"
-              :class="{ 'is-loading': loading }"
-              :disabled="loading"
-              @click="refresh"
+              :disabled="busyAgent === agent.id"
+              :aria-label="agentActionLabel(copy.disconnect, agent.displayName)"
+              @click="disconnect(agent)"
             >
-              <AppIcon v-if="!loading" name="refresh" :size="14" />
-              {{ copy.refresh }}
+              {{ copy.disconnect }}
             </button>
-          </div>
+          </footer>
+        </li>
+      </ul>
 
-          <div v-if="loading" class="empty-state">
-            <span class="spinner" />
-            <span>{{ copy.detecting }}</span>
-          </div>
-          <p v-if="error" class="callout callout-danger" role="alert">{{ error }}</p>
+      <p v-if="!loading && installedAgents.length === 0" class="agent-hint">
+        {{ copy.installCursorHint }}
+      </p>
 
-          <ul class="agent-list">
-            <li v-for="agent in agents" :key="agent.id" class="agent-card">
-              <header>
-                <h3>{{ agent.displayName }}</h3>
-                <span :class="badgeClass(agent.state)">{{ badgeLabel(agent.state) }}</span>
-              </header>
+      <template #footer>
+        <span v-if="anyConnected" class="connected-flag">
+          <AppIcon name="check" :size="14" />
+          {{ copy.configured }}
+        </span>
+        <button type="button" class="btn btn-ghost" @click="closeDialog">{{ copy.close }}</button>
+      </template>
+    </BaseDialog>
 
-              <dl class="agent-meta">
-                <div v-if="agent.binaryPath">
-                  <dt>{{ copy.binaryPath }}</dt>
-                  <dd>
-                    <code>{{ agent.binaryPath }}</code>
-                  </dd>
-                </div>
-                <div v-if="agent.configPath">
-                  <dt>{{ copy.configPath }}</dt>
-                  <dd>
-                    <code>{{ agent.configPath }}</code>
-                  </dd>
-                </div>
-                <div v-if="resourceDir">
-                  <dt>{{ copy.resourcePath }}</dt>
-                  <dd>
-                    <code>{{ resourceDir }}</code>
-                  </dd>
-                </div>
-              </dl>
-
-              <p v-if="agent.detail" class="agent-detail">{{ agent.detail }}</p>
-
-              <footer>
-                <button
-                  v-if="agent.state === 'detectedNotConfigured'"
-                  type="button"
-                  class="btn btn-primary btn-sm"
-                  :class="{ 'is-loading': busyAgent === agent.id }"
-                  :disabled="busyAgent === agent.id"
-                  @click="connect(agent)"
-                >
-                  {{ copy.connect }}
-                </button>
-                <button
-                  v-else-if="agent.state === 'configured'"
-                  type="button"
-                  class="btn btn-ghost btn-sm"
-                  :disabled="busyAgent === agent.id"
-                  @click="disconnect(agent)"
-                >
-                  {{ copy.disconnect }}
-                </button>
-              </footer>
-            </li>
-          </ul>
-
-          <p v-if="!loading && installedAgents.length === 0" class="agent-hint">
-            {{ copy.installCursorHint }}
-          </p>
-        </section>
-
-        <footer class="dialog-footer">
-          <span v-if="anyConnected" class="connected-flag">
-            <AppIcon name="check" :size="14" />
-            {{ copy.configured }}
-          </span>
-          <button type="button" class="btn btn-ghost" @click="closeDialog">{{ copy.close }}</button>
-        </footer>
-      </section>
-    </div>
+    <ConfirmDialog
+      v-if="pendingDisconnect"
+      :title="copy.disconnectConfirmTitle"
+      :description="formatLocalAiCopy(copy.disconnectConfirmDescription, { name: pendingDisconnect.displayName })"
+      :confirm-label="copy.disconnect"
+      :cancel-label="copy.disconnectCancel"
+      :details="[copy.disconnectConfirmDetail]"
+      @close="pendingDisconnect = null"
+      @confirm="confirmDisconnect"
+    />
   </Teleport>
 </template>
 

@@ -1,6 +1,5 @@
 use crate::{
-    ofxr,
-    openxr,
+    ofxr, openxr,
     transaction::{self, TransactionRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -128,9 +127,10 @@ fn validate_request(request: &VrLaunchRequest) -> Result<(), String> {
             return Err("VR INI recipe contains an invalid section, key, or value.".to_owned());
         }
 
-        if request.config_patches[..index].iter().any(|previous| {
-            previous.section == patch.section && previous.key == patch.key
-        }) {
+        if request.config_patches[..index]
+            .iter()
+            .any(|previous| previous.section == patch.section && previous.key == patch.key)
+        {
             return Err(format!(
                 "VR INI recipe declares duplicate patch [{}] {}.",
                 patch.section, patch.key
@@ -275,11 +275,7 @@ fn config_context(
     Ok((Some(path), contents))
 }
 
-fn existing_patches_match(
-    original: &str,
-    written: &str,
-    patches: &[VrIniPatch],
-) -> bool {
+fn existing_patches_match(original: &str, written: &str, patches: &[VrIniPatch]) -> bool {
     patches.iter().all(|patch| {
         let existed = ini_value(original, &patch.section, &patch.key).is_some();
         !existed
@@ -293,8 +289,7 @@ fn effective_openxr_runtime(game_id: &str) -> (Option<String>, bool) {
         return (Some(runtime), true);
     }
 
-    let system = openxr::system_active_runtime()
-        .filter(|runtime| Path::new(runtime).is_file());
+    let system = openxr::system_active_runtime().filter(|runtime| Path::new(runtime).is_file());
     (system, false)
 }
 

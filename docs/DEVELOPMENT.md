@@ -41,6 +41,67 @@ Install Visual Studio Build Tools 2022 and select **Desktop development with C++
 
 Modern Windows 10/11 systems normally already include Microsoft Edge WebView2. Tauri uses it to render the desktop UI.
 
+### Node.js
+
+Needed for the frontend (`npm install`, `npm run tauri dev`) **and** for the
+bundled runtime below, which stages the local-AI agent into the installer.
+
+```powershell
+winget install --id OpenJS.NodeJS.LTS
+node --version
+npm --version
+```
+
+### The bundled runtime is a prerequisite
+
+`src-tauri/tauri.conf.json` declares two bundle resources:
+
+```json
+"resources": [
+  "../moddin-runtime/node.exe",
+  "../moddin-runtime/moddin-agent"
+]
+```
+
+`tauri-build` validates those paths during cargo's **build script**, so they must
+exist before anything native is compiled. On a fresh clone all of these fail with
+an error about a missing resource — not about anything you changed:
+
+```
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test  --manifest-path src-tauri/Cargo.toml
+npm run tauri dev
+npm run tauri build
+```
+
+Create the runtime once per clone:
+
+```powershell
+pwsh -NoProfile -File ./moddin-runtime/bundle-runtime.ps1
+```
+
+`moddin-runtime/` is generated and gitignored; only `bundle-runtime.ps1` and
+`test-integration.ps1` in it are source. The script:
+
+1. downloads portable Node `v20.19.5` and verifies it against the SHA-256
+   `nodejs.org` publishes in `SHASUMS256.txt` next to the archive, aborting on a
+   mismatch rather than extracting it;
+2. stages a production-only copy of `moddin-agent/` with dev dependencies dropped;
+3. installs that copy's production dependencies;
+4. smoke-tests the staged server and writes `moddin-runtime/BUNDLE_OK`.
+
+It needs Node on `PATH` — step 3 runs `npm install` — and network access to
+`nodejs.org` and the npm registry. CI runs the identical step before
+`cargo test` (`.github/workflows/ci.yml`); run it locally, or your Rust checks
+fail for a reason the error message does not explain.
+
+**Known gap.** Step 3 generates a fresh `package.json` with caret ranges and runs
+`npm install --omit=dev`. There is no lockfile for the staged runtime, so that
+part of the shipped bundle is **not** reproducible the way the rest of the repo
+is: CI uses `npm ci` with a committed `package-lock.json` as the dependency
+source of truth. The Node download is digest-verified; the dependency install is
+not. Tracked as `O-06` in [ROADMAP.md](../ROADMAP.md).
+
 ## Run Moddin
 
 ```powershell
@@ -50,6 +111,9 @@ npm run tauri dev
 
 If npm reports that `esbuild` has a pending install script under an `allow-scripts` policy, approve that package according to the command npm prints, then run `npm install` again.
 
+`npm run tauri dev` also needs `moddin-runtime/` to exist — see
+[The bundled runtime is a prerequisite](#the-bundled-runtime-is-a-prerequisite).
+
 ## Validate before committing
 
 Frontend typechecking is part of the production build:
@@ -58,9 +122,12 @@ Frontend typechecking is part of the production build:
 npm run build
 ```
 
-Native validation mirrors CI:
+Native validation mirrors CI — **after** `bundle-runtime.ps1` has run at least
+once, or the resource check in cargo's build script fails before your code is
+even compiled:
 
 ```powershell
+pwsh -NoProfile -File ./moddin-runtime/bundle-runtime.ps1   # once per clone
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 ```

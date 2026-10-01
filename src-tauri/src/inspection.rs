@@ -100,10 +100,7 @@ pub fn classify_proxy_occupant(executable_directory: &Path, name: &str) -> Optio
         return None;
     }
 
-    let size_bytes = path
-        .metadata()
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
+    let size_bytes = path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
     let (managed_by_moddin, held_by) = proxy_occupant_owner(executable_directory, name, &path);
 
     Some(ProxyOccupant {
@@ -117,10 +114,7 @@ pub fn classify_proxy_occupant(executable_directory: &Path, name: &str) -> Optio
 
 fn proxy_occupant_owner(executable_directory: &Path, name: &str, path: &Path) -> (bool, String) {
     if optiscaler_marker_owns_proxy(executable_directory, name) {
-        return (
-            true,
-            "OptiScaler (managed by Moddin)".to_owned(),
-        );
+        return (true, "OptiScaler (managed by Moddin)".to_owned());
     }
 
     if transaction_store_holds_backup(path) {
@@ -130,10 +124,7 @@ fn proxy_occupant_owner(executable_directory: &Path, name: &str, path: &Path) ->
         );
     }
 
-    (
-        false,
-        "another loader (not managed by Moddin)".to_owned(),
-    )
+    (false, "another loader (not managed by Moddin)".to_owned())
 }
 
 fn optiscaler_marker_owns_proxy(executable_directory: &Path, name: &str) -> bool {
@@ -254,7 +245,7 @@ fn contains_ascii_case_insensitive(haystack: &[u8], needle: &str) -> bool {
         window
             .iter()
             .zip(needle)
-            .all(|(left, right)| left.to_ascii_lowercase() == right.to_ascii_lowercase())
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
     })
 }
 
@@ -271,7 +262,7 @@ fn contains_utf16le_case_insensitive(haystack: &[u8], needle: &str) -> bool {
         window
             .iter()
             .zip(&needle)
-            .all(|(left, right)| left.to_ascii_lowercase() == right.to_ascii_lowercase())
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
     })
 }
 
@@ -785,32 +776,43 @@ mod tests {
         let backup = dir.join("backup-dxgi.dll");
         fs::write(&backup, b"original").expect("backup file");
 
-        let record = |status: &str, target: &str, existed_before: bool, backup_path: Option<String>| {
-            crate::transaction::TransactionRecord {
-                id: "1757720000000-0123456789abcdef0123456789abcdef".to_owned(),
-                created_at: 1,
-                kind: "optiscaler".to_owned(),
-                label: "test".to_owned(),
-                game_id: "game".to_owned(),
-                target_path: "target".to_owned(),
-                backup_path: "backup".to_owned(),
-                status: status.to_owned(),
-                files: vec![crate::transaction::TransactionFile {
-                    target_path: target.to_owned(),
-                    backup_path,
-                    existed_before,
-                }],
-                created_directories: Vec::new(),
-                metadata: Default::default(),
-            }
-        };
+        let record =
+            |status: &str, target: &str, existed_before: bool, backup_path: Option<String>| {
+                crate::transaction::TransactionRecord {
+                    id: "1757720000000-0123456789abcdef0123456789abcdef".to_owned(),
+                    created_at: 1,
+                    kind: "optiscaler".to_owned(),
+                    label: "test".to_owned(),
+                    game_id: "game".to_owned(),
+                    target_path: "target".to_owned(),
+                    backup_path: "backup".to_owned(),
+                    status: status.to_owned(),
+                    files: vec![crate::transaction::TransactionFile {
+                        target_path: target.to_owned(),
+                        backup_path,
+                        existed_before,
+                    }],
+                    created_directories: Vec::new(),
+                    metadata: Default::default(),
+                }
+            };
         let backup_string = Some(backup.to_string_lossy().into_owned());
         let needle = Path::new(r"C:\Games\Example\dxgi.dll");
 
-        let hit = record("applied", r"C:\Games\Example\DXGI.dll", true, backup_string.clone());
+        let hit = record(
+            "applied",
+            r"C:\Games\Example\DXGI.dll",
+            true,
+            backup_string.clone(),
+        );
         assert!(transaction_records_holds_backup(&[hit], needle));
 
-        let rolled_back = record("rolled_back", r"C:\Games\Example\dxgi.dll", true, backup_string.clone());
+        let rolled_back = record(
+            "rolled_back",
+            r"C:\Games\Example\dxgi.dll",
+            true,
+            backup_string.clone(),
+        );
         assert!(!transaction_records_holds_backup(&[rolled_back], needle));
 
         let missing_backup = dir.join("missing.dll");
@@ -822,11 +824,19 @@ mod tests {
         );
         assert!(!transaction_records_holds_backup(&[missing], needle));
 
-        let other_path = record("applied", r"C:\Games\Example\winmm.dll", true, backup_string);
+        let other_path = record(
+            "applied",
+            r"C:\Games\Example\winmm.dll",
+            true,
+            backup_string,
+        );
         assert!(!transaction_records_holds_backup(&[other_path], needle));
 
         let not_existed_before = record("applied", r"C:\Games\Example\dxgi.dll", false, None);
-        assert!(!transaction_records_holds_backup(&[not_existed_before], needle));
+        assert!(!transaction_records_holds_backup(
+            &[not_existed_before],
+            needle
+        ));
 
         fs::remove_dir_all(dir).expect("fixture cleanup");
     }

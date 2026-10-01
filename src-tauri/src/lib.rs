@@ -1,37 +1,31 @@
 mod activity;
 mod ai_agent_runner;
 mod ai_assistant_setup;
+mod app_update;
 mod archive;
 mod builtin_checks;
 mod builtin_steps;
 mod capability;
 mod capability_authoring;
 mod capability_runner;
-mod community_catalog;
-mod path_guard;
-mod compat_report;
 mod cheeky;
+mod collection;
+mod community_catalog;
 mod desktop_shortcut;
 mod gog;
 mod inspection;
-mod library_state;
 mod module;
-mod pcgw_cache;
 mod obs;
-mod obs_module;
 mod ofxr;
-mod ofxr_module;
 mod openxr;
-mod openxr_module;
 mod optiscaler;
-mod optiscaler_module;
+mod path_guard;
+mod pcgw_cache;
 mod process;
-mod reshade;
-mod reshade_module;
+mod profile_files;
 mod steam;
 mod transaction;
 mod uevr;
-mod uevr_module;
 mod updates;
 mod vr_launch;
 
@@ -93,8 +87,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 /// specific and github.com-only).
 #[tauri::command]
 fn open_web_url(url: String) -> Result<(), String> {
-    let url = reqwest::Url::parse(url.trim())
-        .map_err(|_| "Link is not a valid URL.".to_owned())?;
+    let url = reqwest::Url::parse(url.trim()).map_err(|_| "Link is not a valid URL.".to_owned())?;
     if url.scheme() != "https" {
         return Err("Only HTTPS links can be opened.".to_owned());
     }
@@ -108,9 +101,23 @@ fn open_web_url(url: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(library_state::LibraryCache::new())
+        // The updater plugin owns the endpoint, the pubkey and the
+        // minisign check; `app_update` is the only thing the webview can
+        // ask it to do, and the capability set grants the plugin's own
+        // commands to nobody. See src-tauri/capabilities/app-update.yaml.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // The file dialog, for the same reason and with the same shape:
+        // `profile_files` opens the two dialogs, and
+        // src-tauri/capabilities/dialog.json grants the webview no
+        // permission on the plugin. A dialog the frontend could raise on
+        // its own would let it read a path the user never chose and write
+        // to one they did.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             activity::record_ui_action_log,
+            app_update::app_update_status,
+            app_update::app_update_check,
+            app_update::app_update_install,
             capability_runner::capability_install,
             capability_runner::capability_uninstall,
             capability_runner::capability_evaluate,
@@ -119,10 +126,21 @@ pub fn run() {
             capability_runner::capability_get,
             capability_runner::capability_reload,
             capability_runner::community_capability_install,
+            // The one collection command. `collection_install`,
+            // `collection_resume`, `collection_abort` and
+            // `collection_save_yaml` belonged to the session runner the
+            // `feat/agent-mcp` branch paired this loader with; they are
+            // not here, and registering them would put a second install
+            // path back next to `community_capability_install`.
+            collection::collection_list,
             capability_authoring::validate_capability_yaml,
             capability_authoring::preview_capability_plan,
             capability_authoring::save_capability_yaml,
             capability_authoring::validate_recommendations_yaml,
+            profile_files::save_profile_file,
+            profile_files::pick_profile_file,
+            profile_files::read_profile_file,
+            profile_files::reveal_profile_file,
             community_catalog::community_catalog_fetch,
             community_catalog::community_catalog_set_ttl,
             activity::list_action_logs,
@@ -133,7 +151,6 @@ pub fn run() {
             desktop_shortcut::preview_desktop_shortcut,
             desktop_shortcut::create_desktop_shortcut,
             steam::detect_installed_games,
-            gog::detect_gog_installed_games,
             inspection::inspect_game_environment,
             ofxr::preview_ofxr,
             ofxr::install_ofxr,
@@ -147,13 +164,11 @@ pub fn run() {
             optiscaler::preview_optiscaler,
             optiscaler::install_optiscaler,
             optiscaler::uninstall_optiscaler,
-            reshade::preview_reshade,
-            reshade::install_reshade,
-            reshade::uninstall_reshade,
-            // UE4SS, BepInEx and REFramework no longer expose dedicated
-            // commands: they are capability specs (src-tauri/capabilities/),
-            // so they install through `capability_install` with the same
-            // checks, preview and rollback as every other recipe.
+            // UE4SS, BepInEx, REFramework and ReShade no longer expose
+            // dedicated commands: they are capability specs
+            // (src-tauri/capabilities/), so they install through
+            // `capability_install` with the same checks, preview and
+            // rollback as every other recipe.
             transaction::list_transactions,
             transaction::rollback_latest_module_transaction,
             transaction::rollback_transaction,
@@ -169,9 +184,6 @@ pub fn run() {
             uevr::uninstall_uevr,
             vr_launch::preview_vr_launch,
             vr_launch::launch_vr_game,
-            compat_report::get_compat_report,
-            library_state::refresh_installed_games_async,
-            library_state::get_cached_installed_games,
             pcgw_cache::lookup_pcgw_summary,
             pcgw_cache::get_pcgw_cache,
             pcgw_cache::clear_pcgw_cache,
@@ -194,9 +206,13 @@ pub mod test_support {
     /// too, or a concurrent env test's temp dir can vanish mid-read.
     pub fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        // Poisoning is recovered from on purpose. A failing test that
+        // held the lock used to make every other env-touching test fail
+        // with "env test lock", hiding the one real failure behind a
+        // dozen fake ones.
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
-            .expect("env test lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -219,10 +235,10 @@ mod tests {
             "http://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4"
         )
         .is_err());
-        assert!(validate_external_release_url(
-            "https://github.com@evil.example/releases/tag/v1"
-        )
-        .is_err());
+        assert!(
+            validate_external_release_url("https://github.com@evil.example/releases/tag/v1")
+                .is_err()
+        );
         assert!(validate_external_release_url(
             "https://user:pass@github.com/owner/repo/releases/tag/v1"
         )

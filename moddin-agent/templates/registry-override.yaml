@@ -1,15 +1,22 @@
 # Pattern: registry-override
 #
 # Use when the mod only needs to write a single per-user (HKCU) registry
-# value — for example redirecting an OpenXR runtime for the current user,
-# or setting a per-game config key.
+# value — for example setting a per-game config key, or registering a
+# protocol handler for the current user.
+#
+# Not for redirecting an OpenXR runtime. An earlier revision of this file
+# suggested exactly that, and it does not work: the OpenXR loader reads
+# `ActiveRuntime` from one machine-level key and defines no per-game key,
+# so there is no registry write that scopes a runtime to one game. See the
+# `openxr-helpers` recipe for that case, and note it is `planned`.
 #
 # The agent should:
 #   - confirm the key is HKCU (HKLM is rejected by Moddin's path_guard and
 #     will fail at install time)
 #   - confirm the value type (REG_SZ, REG_DWORD, REG_BINARY)
-#   - decide whether the value should be removed on uninstall (most cases:
-#     yes)
+#   - decide whether the value can be removed on uninstall. Only if the key
+#     is a literal: `run_uninstall` resolves no config, so a templated
+#     uninstall step renders to nothing and cannot succeed.
 
 id: my-mod-registry  # ⚠ AGENT: replace this with the final kebab-case id before save
 displayName: <Human Readable Name>
@@ -31,26 +38,28 @@ configSchema:
     type: string
     required: true
     description: Value payload. For REG_DWORD pass a decimal number as a string. For REG_BINARY pass a hex string.
-checks:
-  - id: key-exists
-    label: Registry key is reachable
-    kind: file-exists
-    severity: info
-    category: modulespecific
-    description: This check is informational — the registry key may not exist yet on first install.
 install:
   - kind: registry-write
     description: Write the configured value under HKCU.
     params:
-      keyField: registryKey
-      nameField: registryValueName
-      typeField: registryValueType
+      # `key`, `value` and `data` are the literal param names, and all three
+      # are rendered as templates — so a `{registryKey}` placeholder is the
+      # way to read a config field. There is no `keyField` / `nameField` /
+      # `typeField`: an earlier version of this template used them, the
+      # runner never read them, and every recipe copied from it failed with
+      # "registry-write: key is required".
+      key: '{registryKey}'
+      value: '{registryValueName}'
+      type: '{registryValueType}'
+      # The payload, by field. `data:` is the literal alternative.
       dataField: registryValueData
 uninstall:
   - kind: registry-delete
     description: Remove the value on uninstall.
     params:
-      keyField: registryKey
-      nameField: registryValueName
+      key: '{registryKey}'
+      value: '{registryValueName}'
 safetyNotes:
   - This capability only writes under HKCU; it never touches HKLM and does not require administrator rights.
+  - No check is declared, because none can pass honestly. Every check kind addresses a process, a path inside the game folder, or an archive URL — there is no check kind that reads a registry value, and a `file-exists` on a registry path would resolve against the game folder and never match. A note is the honest instrument here; a check that cannot pass is worse than no check.
+  - The uninstall chain names the same templated key, but `run_uninstall` resolves no config, so a `{placeholder}` in an uninstall step renders to nothing. Delete the `uninstall:` block unless the key is a literal — a templated uninstall is a step that cannot succeed.

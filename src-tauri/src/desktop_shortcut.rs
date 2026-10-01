@@ -74,7 +74,10 @@ fn shortcut_stem(game_name: &str) -> Result<String, String> {
     let stem = game_name
         .chars()
         .map(|character| {
-            if matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            ) {
                 ' '
             } else {
                 character
@@ -209,7 +212,9 @@ $shortcut.Save()
     }
 
     if !context.shortcut_path.is_file() {
-        return Err("Windows reported success but the desktop shortcut was not created.".to_owned());
+        return Err(
+            "Windows reported success but the desktop shortcut was not created.".to_owned(),
+        );
     }
 
     Ok(())
@@ -253,7 +258,7 @@ pub fn create_desktop_shortcut(
     );
     let transaction = transaction::begin_file_set_transaction(
         &context.desktop_dir,
-        &[context.shortcut_path.clone()],
+        std::slice::from_ref(&context.shortcut_path),
         "desktop-shortcut",
         &format!("Create desktop shortcut for {}", context.game_name),
         &request.game_id,

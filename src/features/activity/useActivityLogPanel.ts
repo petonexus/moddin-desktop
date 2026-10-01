@@ -1,5 +1,4 @@
 import { computed, ref } from 'vue'
-import { useDialogLifecycle } from '../../composables/useDialogLifecycle'
 import { clearActionLogs, listActionLogs } from './service'
 import type { ActionLogEntry, ActionLogLevel } from './types'
 
@@ -12,14 +11,26 @@ export function useActivityLogPanel() {
   const search = ref('')
   const level = ref<'all' | ActionLogLevel>('all')
   const expanded = ref(new Set<string>())
-  const { dialogElement, openDialog, closeDialog } = useDialogLifecycle(open)
+
+  // Focus, Escape and focus restore are BaseDialog's job; this only has to
+  // say whether the dialog is on screen.
+  function openDialog() {
+    open.value = true
+  }
+
+  function closeDialog() {
+    open.value = false
+  }
 
   const filteredLogs = computed(() => {
     const term = search.value.trim().toLowerCase()
     return logs.value.filter((entry) => {
       if (level.value !== 'all' && entry.level !== level.value) return false
       if (!term) return true
-      return [entry.action, entry.gameId, entry.message, entry.transactionId]
+      // The command name is searched as well as the row's other fields, so
+      // someone who remembers `install_optiscaler` finds the row even
+      // though the row now says "Instalar o OptiScaler".
+      return [entry.action.text, entry.gameId, entry.message, entry.transactionId]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
     })
@@ -66,7 +77,6 @@ export function useActivityLogPanel() {
 
   return {
     open,
-    dialogElement,
     loading,
     clearing,
     error,

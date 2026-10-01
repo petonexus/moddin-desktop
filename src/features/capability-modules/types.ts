@@ -5,6 +5,35 @@ import type {
   ResolvedConfig,
 } from '../../types/capability'
 import type { TransactionRecord } from '../../types/transaction'
+import type { BackendTextKey } from '../../i18n/backendIds'
+
+/**
+ * UX-21 view types: the wire shape plus the locale key the service
+ * layer attached for it.
+ *
+ * The key is *added* rather than substituted for the original string,
+ * which is deliberate. `CapabilitySummary` and `CapabilityCheckOutcome`
+ * are shared with the AI assistant and profile paths, which keep reading
+ * the plain wire fields, so replacing the field would have dragged the
+ * boundary into three places at once. What the card renders is the key
+ * when there is one — see `withDescriptionKey` / `withLabelKey` in
+ * `service.ts`.
+ */
+export type CapabilitySummaryView = CapabilitySummary & {
+  /** Present only for a shipped capability whose title is translated. */
+  nameKey?: BackendTextKey
+  /** Present only for a shipped capability whose description is translated. */
+  descriptionKey?: BackendTextKey
+}
+
+export type CapabilityCheckOutcomeView = CapabilityCheckOutcome & {
+  /** Present only for a check id the UX-21 table declares. */
+  labelKey?: BackendTextKey
+}
+
+export type CapabilityVerificationReportView = Omit<CapabilityVerificationReport, 'checks'> & {
+  checks: CapabilityCheckOutcomeView[]
+}
 
 /** Mirrors Rust `crate::module::VerificationReport` (serde camelCase). */
 export interface CapabilityVerificationReport {
@@ -55,7 +84,7 @@ export interface CapabilityCardState {
   errorKind: 'install' | 'action' | 'validation' | null
   spec: CapabilitySpec | null
   specLoading: boolean
-  verification: CapabilityVerificationReport | null
+  verification: CapabilityVerificationReportView | null
   configValues: Record<string, CapabilityConfigValue>
   /**
    * Result of the spec's `compatibility` probe (`capability_compatibility`).
@@ -63,7 +92,7 @@ export interface CapabilityCardState {
    * is selected, or before the probe ran. A non-null `passed: false`
    * blocks a plain install — the card offers a forced one instead.
    */
-  compatibility: CapabilityCheckOutcome | null
+  compatibility: CapabilityCheckOutcomeView | null
   compatibilityBusy: boolean
   /**
    * Capabilities the backend auto-installed as dependencies of the last

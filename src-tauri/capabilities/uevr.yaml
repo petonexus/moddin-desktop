@@ -1,36 +1,49 @@
 id: uevr
 displayName: UEVR engine-aware installer
+description: Brings Unreal Engine VR rendering to flat-screen Unreal games.
 category: vr
-status: available
+status: planned
 supportedEngines:
   - unreal5
 configSchema:
   - name: pinnedTag
     type: string
     required: true
-    description: UEVR release tag the runner pins (matches the catalog's versionPolicy=pinned).
+    description: UEVR release tag the runner pins (matches the catalog's versionPolicy=pinned). Must be an exact tag, not a branch; the runner refuses anything else.
+  - name: repository
+    type: string
+    required: true
+    description: HTTPS clone URL of the UEVR repository that publishes the selected backend. Must be on the step's host allow-list.
   - name: backend
     type: enum
     enumValues: [nightly, joey, afw, joey-afw]
     required: true
-    description: Which UEVR backend variant to install.
-  - name: extractedDir
+    description: Which UEVR backend variant to install. The repository and build command below have to match this choice.
+  - name: buildCommand
+    type: string
+    required: true
+    description: Build command to run inside the checkout, for the selected backend. A bare name is resolved from PATH; a name with a path component must exist in the checkout.
+  - name: injectorPath
     type: path
     required: true
-    description: Absolute path of the directory where the runner drops the chosen backend's archive before moving files into the game directory.
+    description: Absolute path the build must write the finished UEVRInjector.exe to. The install fails if the build exits cleanly without producing it.
+  - name: sourceDir
+    type: path
+    required: true
+    description: Absolute path of Moddin's per-game tool directory where the tagged source is checked out and built.
   - name: gameId
     type: string
     required: true
     description: Moddin game id used to scope the runner's per-game tool directory.
 checks:
-  - id: archive-reachable
-    label: UEVR archive reachable
+  - id: repository-reachable
+    label: UEVR repository reachable
     kind: archive-reachable
     severity: warning
     category: modulespecific
-    description: Confirms the configured GitHub release URL responds.
+    description: Confirms the configured repository URL responds before any install step runs.
     params:
-      urlField: pinnedTag
+      urlField: repository
   - id: engine-recognised
     label: Engine recognised as Unreal
     kind: file-exists
@@ -45,25 +58,29 @@ install:
     params:
       processName: UEVRInjector.exe
       force: false
-  - kind: extract-zip
-    description: Extract the chosen backend's archive into the staging directory.
+  - kind: git-checkout
+    description: Check the pinned tag out into Moddin's per-game source directory.
     params:
-      archivePathField: pinnedTag
-  - kind: move-file
-    description: Promote the staged UEVR host files into the per-game tool directory.
+      repoField: repository
+      refField: pinnedTag
+      targetField: sourceDir
+  - kind: build-project
+    description: Build the pinned commit for the selected backend and require the injector it says it produces.
     params:
-      fromField: extractedDir
-      toField: pinnedTag
+      directoryField: sourceDir
+      commandField: buildCommand
+      outputs:
+        - '{injectorPath}'
 uninstall:
   - kind: kill-process
     description: Stop UEVRInjector.exe before removing its track.
     params:
       processName: UEVRInjector.exe
       force: true
-  - kind: file-delete
-    description: Remove the staging directory used for this backend.
-    params:
-      pathField: extractedDir
 safetyNotes:
+  - Still `planned`. The engine now has the two step kinds this chain needs — `git-checkout` (HTTPS only, no credentialed URLs, exact tag or full 40-character commit, resolved SHA recorded in the install) and `build-project` (per-backend command, run in the checkout, declared outputs verified) — and the chain below is wired to both. What the chain cannot express yet is the backend matrix. `nightly`, `joey` and `afw` are three different upstream repositories and `joey-afw` combines two of them, so the repository and the build command have to be config fields the user fills in per backend rather than recipe constants. Until that is settled, the game page keeps offering the working UEVR module, which downloads upstream's prebuilt release archives instead of compiling them.
+  - The build command is executed as written with the user's own privileges and no sandbox. A recipe author — or a user filling in `buildCommand` — can run anything the account can run. Only install capabilities whose repository is already in the reviewed catalog.
+  - The checkout is a full working tree under `sourceDir` and is deleted and re-created on every install. `git-checkout` refuses to touch a directory it did not check out itself, so a hand-built tree in that path stops the install instead of being overwritten; delete it first to re-run.
+  - The checkout and the build are not part of the rollback set. Undo removes what the build wrote into the game folder, but leaves `sourceDir` and Moddin's build caches in place.
   - UEVR only injects Unreal Engine games (UE 4.8-5.4). Unity, RE Engine, REDengine, and unknown engines are not eligible; the install aborts before writing files.
   - Close the game AND UEVRInjector.exe before applying or changing a backend. Do not run Steam, UEVR or the game as administrator.

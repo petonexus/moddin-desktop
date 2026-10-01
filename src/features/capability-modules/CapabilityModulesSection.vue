@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
-import ModuleCard from '../library/ModuleCard.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
+import ModuleCard, { type ModuleCardState, type ModuleCardVerification } from '../library/ModuleCard.vue'
 import type { TransactionRecord } from '../../types/transaction'
 import type { CapabilityOrigin, CapabilitySummary } from '../../types/capability'
+import type { ModuleVerificationCheck } from '../../types/module-verification'
+import { useBackendText } from '../../composables/useBackendText'
 import { useCapabilityModules } from './useCapabilityModules'
-import type { CapabilityCardState, CapabilityConfigValue } from './types'
+import type {
+  CapabilityCardState,
+  CapabilityConfigValue,
+  CapabilitySummaryView,
+} from './types'
 
 const props = defineProps<{
   gameId: string | null
@@ -23,6 +31,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { keyed } = useBackendText()
 
 const modules = useCapabilityModules({
   gameId: () => props.gameId,
@@ -37,6 +46,7 @@ const modules = useCapabilityModules({
 
 const {
   visibleCapabilities,
+  loading,
   loadError,
   ensureLoaded,
   stateFor,
@@ -64,6 +74,51 @@ function blockedCompatibility(state: CapabilityCardState) {
   return state.compatibility && !state.compatibility.passed ? state.compatibility : null
 }
 
+/**
+ * UX-21: the card's title, description and every check label arrive from
+ * Rust with the locale key the service layer resolved, or with nothing at
+ * all when the backend string is not a declared id — in which case the
+ * recipe's own words are what the user reads. `keyed` is that second case
+ * made explicit in one place, so neither `ModuleCard` nor this template
+ * has to know which strings crossed the boundary.
+ */
+function nameOf(capability: CapabilitySummaryView): string {
+  return keyed(capability.nameKey, capability.displayName || capability.id)
+}
+
+function descriptionOf(capability: CapabilitySummaryView): string {
+  return keyed(capability.descriptionKey, capability.description || capability.id)
+}
+
+/**
+ * The capability runner reports `detail: null` for checks that carry no
+ * detail; the card's check shape has no null. Everything else (including
+ * the backend's own summary sentence) is left to the card to render.
+ */
+function cardChecks(state: CapabilityCardState): ModuleVerificationCheck[] {
+  return (state.verification?.checks ?? []).map((item) => ({
+    label: keyed(item.labelKey, item.label),
+    passed: item.passed,
+    detail: item.detail ?? undefined,
+  }))
+}
+
+function cardVerification(state: CapabilityCardState): ModuleCardVerification | null {
+  return state.verification ? { checks: cardChecks(state) } : null
+}
+
+/**
+ * Same derivation the catalog cards use in `App.vue`: a check that failed
+ * must not read as a healthy mod. The runner never reports `installed`, so
+ * the transaction history owns the installed half of the state.
+ */
+function cardState(capabilityId: string): ModuleCardState {
+  const state = stateFor(capabilityId)
+  if (state.verifyBusy) return 'checking'
+  if (state.verification && cardChecks(state).some((check) => !check.passed)) return 'attention'
+  return isInstalled(capabilityId) ? 'active' : 'available'
+}
+
 /** Ids auto-installed by the backend as dependencies of the last install. */
 function installedDependencyNames(capabilityId: string): string {
   return stateFor(capabilityId).installedDependencies.join(', ')
@@ -71,6 +126,34 @@ function installedDependencyNames(capabilityId: string): string {
 
 function configValue(state: CapabilityCardState, name: string): CapabilityConfigValue {
   return state.configValues[name] ?? ''
+}
+
+/**
+ * UX-28: the field's real validation state.
+ *
+ * `missingRequiredFields` alone is not it — before the spec loads, every
+ * required field reads as missing, so marking them all `aria-invalid` on
+ * first paint would announce a form full of errors the user has not done
+ * anything about. The state flips when an install is actually refused
+ * for a missing field, which is the moment it became true and the moment
+ * the user needs to hear about it.
+ */
+function fieldInvalid(capabilityId: string, fieldName: string): boolean {
+  return (
+    stateFor(capabilityId).errorKind === 'validation'
+    && missingRequiredFields(capabilityId).includes(fieldName)
+  )
+}
+
+/** The hint and the error share one control's `aria-describedby`. */
+function fieldDescribedBy(capabilityId: string, field: { name: string; description?: string }): string | undefined {
+  const ids = [`${fieldId(capabilityId, field.name)}-hint`]
+  if (fieldInvalid(capabilityId, field.name)) ids.push(`${fieldId(capabilityId, field.name)}-error`)
+  return ids.join(' ')
+}
+
+function fieldId(capabilityId: string, fieldName: string): string {
+  return `capability-field-${capabilityId}-${fieldName}`
 }
 
 function setConfigValue(state: CapabilityCardState, name: string, value: CapabilityConfigValue) {
@@ -114,9 +197,21 @@ async function onInstall(capability: CapabilitySummary, force = false) {
   await install(capability, { force })
 }
 
+const pendingRemoval = ref<CapabilitySummary | null>(null)
+
 async function onRemove(capability: CapabilitySummary) {
   const state = stateFor(capability.id)
   if (state.busy) return
+  // Removing a capability writes into the game folder. The transaction
+  // store can undo it, but "can be undone" is not the same as "asked
+  // first" — so ask first.
+  pendingRemoval.value = capability
+}
+
+async function confirmRemoval() {
+  const capability = pendingRemoval.value
+  if (!capability) return
+  pendingRemoval.value = null
   await uninstall(capability)
 }
 
@@ -146,6 +241,7 @@ onUnmounted(() => {
   <section
     v-if="visibleCapabilities.length > 0 || loadError"
     class="capability-mods"
+    :aria-busy="loading"
   >
     <div class="section-heading">
       <div>
@@ -161,8 +257,25 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <EmptyState
+      v-else-if="loading && !visibleCapabilities.length"
+      busy
+      :description="t('capabilityLoading')"
+    />
+
     <div v-if="visibleCapabilities.length" class="mod-grid">
-      <div v-for="capability in visibleCapabilities" :key="capability.id" class="capability-cell">
+      <!--
+        UX-29: the cell is the region that changes while an install or a
+        check runs, so it is the region that says so. Without this the
+        card silently swaps "Install" for a spinner and the change is
+        only visible.
+      -->
+      <div
+        v-for="capability in visibleCapabilities"
+        :key="capability.id"
+        class="capability-cell"
+        :aria-busy="stateFor(capability.id).busy || stateFor(capability.id).verifyBusy"
+      >
         <div
           v-if="blockedCompatibility(stateFor(capability.id)) && !isInstalled(capability.id)"
           class="callout callout-warning"
@@ -220,15 +333,16 @@ onUnmounted(() => {
         </div>
 
         <ModuleCard
-          :name="capability.displayName"
-          :description="capability.id"
-          :state="isInstalled(capability.id) ? 'active' : 'available'"
+          :name="nameOf(capability)"
+          :description="descriptionOf(capability)"
+          :state="cardState(capability.id)"
           :tag="{ label: originLabel(capability.origin), tone: originTone(capability.origin) }"
           :action-label="isInstalled(capability.id) ? t('actionReinstall') : t('actionInstall')"
           :action-primary="!isInstalled(capability.id)"
           :action-busy="stateFor(capability.id).busy"
           :action-disabled="dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || (!isInstalled(capability.id) && compatibilityBlocks(capability.id))"
           :blocked-reason="blockedReasonText"
+          :verification="cardVerification(stateFor(capability.id))"
           :verify-busy="stateFor(capability.id).verifyBusy"
           :remove-label="isInstalled(capability.id) ? t('actionRemove') : null"
           @action="onInstall(capability)"
@@ -256,7 +370,11 @@ onUnmounted(() => {
                   <select
                     v-if="field.type === 'enum'"
                     class="select"
+                    :id="fieldId(capability.id, field.name)"
                     :value="String(configValue(stateFor(capability.id), field.name))"
+                    :aria-required="field.required ? 'true' : undefined"
+                    :aria-invalid="fieldInvalid(capability.id, field.name) ? 'true' : undefined"
+                    :aria-describedby="fieldDescribedBy(capability.id, field)"
                     @change="setConfigValue(stateFor(capability.id), field.name, ($event.target as HTMLSelectElement).value)"
                   >
                     <option v-for="option in field.enumValues ?? []" :key="option" :value="option">
@@ -267,6 +385,7 @@ onUnmounted(() => {
                     v-else-if="field.type === 'boolean'"
                     type="checkbox"
                     class="capability-checkbox"
+                    :id="fieldId(capability.id, field.name)"
                     :checked="Boolean(configValue(stateFor(capability.id), field.name))"
                     @change="setConfigValue(stateFor(capability.id), field.name, ($event.target as HTMLInputElement).checked)"
                   />
@@ -274,47 +393,54 @@ onUnmounted(() => {
                     v-else-if="field.type === 'number'"
                     type="number"
                     class="input"
+                    :id="fieldId(capability.id, field.name)"
                     :value="Number(configValue(stateFor(capability.id), field.name))"
+                    :aria-required="field.required ? 'true' : undefined"
+                    :aria-invalid="fieldInvalid(capability.id, field.name) ? 'true' : undefined"
+                    :aria-describedby="fieldDescribedBy(capability.id, field)"
                     @input="setNumberValue(stateFor(capability.id), field.name, ($event.target as HTMLInputElement).value)"
                   />
                   <input
                     v-else
                     type="text"
                     class="input"
+                    :id="fieldId(capability.id, field.name)"
                     :value="String(configValue(stateFor(capability.id), field.name))"
+                    :aria-required="field.required ? 'true' : undefined"
+                    :aria-invalid="fieldInvalid(capability.id, field.name) ? 'true' : undefined"
+                    :aria-describedby="fieldDescribedBy(capability.id, field)"
                     @input="setConfigValue(stateFor(capability.id), field.name, ($event.target as HTMLInputElement).value)"
                   />
-                  <small v-if="field.description">{{ field.description }}</small>
+                  <small v-if="field.description" :id="`${fieldId(capability.id, field.name)}-hint`">
+                    {{ field.description }}
+                  </small>
+                  <small
+                    v-if="fieldInvalid(capability.id, field.name)"
+                    :id="`${fieldId(capability.id, field.name)}-error`"
+                    class="capability-field-error"
+                    role="alert"
+                  >
+                    {{ t('capabilityFieldRequired') }}
+                  </small>
                 </label>
               </div>
-            </section>
-
-            <section v-if="stateFor(capability.id).verification" class="capability-detail">
-              <div class="capability-detail-heading">
-                <h5 class="capability-detail-title">{{ t('checklistTitle') }}</h5>
-                <small>{{ stateFor(capability.id).verification?.summary }}</small>
-              </div>
-              <ul v-if="stateFor(capability.id).verification?.checks.length" class="capability-checks">
-                <li
-                  v-for="(check, index) in stateFor(capability.id).verification?.checks ?? []"
-                  :key="check.id ?? `${check.label}-${index}`"
-                  :class="check.passed ? 'ok' : 'fail'"
-                >
-                  <AppIcon :name="check.passed ? 'check' : 'alert'" :size="13" />
-                  <span>
-                    {{ check.label }}
-                    <small v-if="check.detail">{{ check.detail }}</small>
-                  </span>
-                </li>
-              </ul>
-              <p v-else class="capability-hint">
-                {{ stateFor(capability.id).verification?.summary }}
-              </p>
             </section>
           </template>
         </ModuleCard>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingRemoval"
+      :title="t('capabilityRemoveConfirmTitle')"
+      :description="t('capabilityRemoveConfirmDescription', { name: nameOf(pendingRemoval) })"
+      :confirm-label="t('actionRemove')"
+      :cancel-label="t('actionCancel')"
+      :details="[t('capabilityRemoveDetailFiles'), t('capabilityRemoveDetailUndo')]"
+      :footnote="t('capabilityRemoveFootnote')"
+      @close="pendingRemoval = null"
+      @confirm="confirmRemoval"
+    />
   </section>
 </template>
 
@@ -335,15 +461,7 @@ onUnmounted(() => {
 .capability-fields { display: grid; gap: var(--moddin-space-3); }
 .capability-required { margin-left: 2px; color: var(--moddin-danger); font-style: normal; }
 .capability-checkbox { width: 15px; height: 15px; margin-top: 3px; accent-color: var(--moddin-accent); }
-
-.capability-checks { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.capability-checks li { display: flex; align-items: flex-start; gap: var(--moddin-space-2); color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
-.capability-checks li .app-icon { margin-top: 2px; }
-.capability-checks li.ok .app-icon { color: var(--moddin-success); }
-.capability-checks li.fail .app-icon { color: var(--moddin-warning); }
-.capability-checks small { display: block; color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
-
-.capability-hint { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.capability-field-error { color: var(--moddin-danger); }
 
 .capability-compat { display: grid; justify-items: start; gap: var(--moddin-space-2); }
 .capability-compat small { color: var(--moddin-text-soft); font-size: var(--moddin-text-xs); }

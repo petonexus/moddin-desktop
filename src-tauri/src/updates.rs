@@ -90,9 +90,7 @@ fn compare_digit_runs(left: &str, right: &str) -> Ordering {
     let left = if left.is_empty() { "0" } else { left };
     let right = if right.is_empty() { "0" } else { right };
 
-    left.len()
-        .cmp(&right.len())
-        .then_with(|| left.cmp(right))
+    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
 fn compare_prerelease_natural(left: &str, right: &str) -> Ordering {
@@ -218,8 +216,7 @@ pub async fn check_module_update(
         || (!is_latest_endpoint && !is_release_list_endpoint)
     {
         return Err(
-            "Module update sources must use an official GitHub release API endpoint."
-                .to_owned(),
+            "Module update sources must use an official GitHub release API endpoint.".to_owned(),
         );
     }
 

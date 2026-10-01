@@ -61,8 +61,8 @@ const STEP_KINDS = Object.freeze({
     touches: [],
   },
   "extract-zip": {
-    summary: "Extract a zip archive into the game's executable directory. Takes a local path, never a URL — pair it with download-file.",
-    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField"],
+    summary: "Extract an archive into the game's executable directory. The format is read from the archive's magic bytes, not its name, so a 7z staged under a .zip filename still extracts; a format it cannot name is refused. Takes a local path, never a URL — pair it with download-file. `targetSubdir` extracts into a staging subdirectory instead, so a later move-file can promote one named file out of it. `payload` names the archive member that is the main payload DLL, and that member takes the `proxyField` name; without it only members basenamed `reshade64.dll` or `dxgi.dll` are renamed, and two members landing on that one name is refused rather than raced. `include` and `exclude` are arrays of glob patterns over the member path, matched case-insensitively with `/` separators: `*` stays inside one segment, `**` crosses them, and a pattern with no `/` matches the basename at any depth (`dinput8.dll` matches `x64/dinput8.dll`). `include` selects, `exclude` then removes; the filter runs BEFORE `payload` and the proxy rename, and a filter that matches no member at all is an error, never an empty install.",
+    fields: ["archivePath", "archivePathField", "archiveBytesField", "proxyField", "payload", "payloadField", "targetSubdir", "targetSubdirField", "include", "exclude"],
     touches: ["executableDir"],
   },
   "verify-hash": {
@@ -76,8 +76,8 @@ const STEP_KINDS = Object.freeze({
     touches: ["executableDir"],
   },
   "write-text-file": {
-    summary: "Write a text file with `{name}` placeholders rendered from config.",
-    fields: ["pathField", "template"],
+    summary: "Write a text file with `{name}` placeholders rendered from config. Every path and template is also expanded for `%NAME%` environment variables, and a variable the process does not have is left literal; an expanded absolute path is allowed only where an absolute path already was (a `path`-typed config field), and the install-root check is unchanged. `format: json` inserts each `{name}` as the ESCAPED content of a JSON string — the template keeps the surrounding quotes and punctuation — and refuses to write anything if the rendered result does not parse as JSON. Use it for any file something else parses, or a Windows path in it will produce a document its reader silently discards.",
+    fields: ["pathField", "template", "format"],
     touches: ["executableDir"],
   },
   "write-binary-file": {
@@ -101,14 +101,28 @@ const STEP_KINDS = Object.freeze({
     touches: ["process"],
   },
   "registry-write": {
-    summary: "reg.exe add <key> /v <name> /t <type> /d <data> /f. HKCU only.",
-    fields: ["keyField", "nameField", "typeField", "dataField"],
+    summary:
+      "Write a value under a registry key. `key`, `value` and `data` are rendered as templates (`{configField}`); `dataField` names a config field to take the payload from. Omit `data`/`dataField` for the empty-value write.",
+    fields: ["key", "value", "type", "data", "dataField", "force"],
     touches: ["registry"],
   },
   "registry-delete": {
-    summary: "reg.exe delete <key> /v <name> /f. HKCU only.",
-    fields: ["keyField", "nameField"],
+    summary:
+      "Delete a value under a registry key. `key` is rendered as a template, and deleting a value that is already gone succeeds.",
+    fields: ["key", "value", "force"],
     touches: ["registry"],
+  },
+  "git-checkout": {
+    summary:
+      "Clone a repository and check out an exact tag or full commit SHA, for sources that ship no prebuilt archive. A branch name or a short SHA is refused. Use build-project next.",
+    fields: ["repoField", "repo", "refField", "ref", "targetField", "target", "hostAllowlist"],
+    touches: ["executableDir"],
+  },
+  "build-project": {
+    summary:
+      "Run a build command in a checked-out source tree and verify each declared output exists afterwards. Reuses the same process runner as spawn-process.",
+    fields: ["directory", "directoryField", "command", "commandField", "args", "outputs"],
+    touches: ["executableDir", "process"],
   },
 });
 

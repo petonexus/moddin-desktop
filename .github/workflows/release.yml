@@ -1,9 +1,17 @@
 name: Release
 
 # Publishes a GitHub release when a version tag is pushed.
-# The release body comes from `.release-notes-<tag>.md` at the repo root, and
-# its first line (a Markdown H1) becomes the release title. Tags with a
-# pre-release suffix (e.g. v0.1.0-beta.2) are published as pre-releases.
+#
+# The installer is BUILT here, on windows-latest, and the SHA-256 of
+# whatever came out is written back into the release body. That is the
+# whole point: the release notes already tell users to check a digest,
+# and a digest computed by hand on a maintainer's laptop is not
+# evidence of anything. Every installer in this release's history was
+# built outside CI.
+#
+# The body comes from `docs/release-notes/.release-notes-<tag>.md`; its
+# first line (a Markdown H1) becomes the release title. Tags with a
+# pre-release suffix (e.g. v0.1.0-beta.2) publish as pre-releases.
 
 on:
   push:
@@ -13,20 +21,169 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Publish GitHub release
-    runs-on: ubuntu-latest
+  build:
+    name: Build Windows installer
+    runs-on: windows-latest
+    outputs:
+      installer: ${{ steps.package.outputs.installer }}
+      sha256: ${{ steps.package.outputs.sha256 }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check and build frontend
+        run: |
+          npm run check:architecture
+          npm run build
+
+      - name: Setup Rust toolchain
+        shell: pwsh
+        # Same override ci.yml uses: rust-toolchain.toml at the repo root
+        # pins the release, so a tagged build cannot be produced by a
+        # different compiler than the one CI verified.
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      # tauri.conf.json bundles ../moddin-runtime/{node.exe,moddin-agent},
+      # and tauri-build validates those resource paths during cargo's
+      # build script, so the Tauri build fails without them. The script
+      # downloads a digest-verified portable Node and stages the
+      # production agent runtime.
+      - name: Bundle moddin-runtime
+        shell: pwsh
+        run: pwsh -NoProfile -File ./moddin-runtime/bundle-runtime.ps1
+
+      - name: Build installer
+        run: npm run tauri build -- --bundles nsis
+
+      # The updater needs three more things than the installer: the
+      # versioned NSIS zip, its minisign signature, and the latest.json
+      # manifest that names both. This step throws rather than skipping,
+      # deliberately.
+      #
+      # `tauri build` produces the zip whenever the updater plugin is
+      # configured, and the .sig only when TAURI_SIGNING_PRIVATE_KEY is
+      # present. So a release without the secrets yields a zip with no
+      # signature beside it — an updater payload the app would refuse.
+      # Publishing that would be the same failure the audit records from
+      # the last time a release went out wrong, one layer up. The job
+      # stops instead, and the error names the document.
+      #
+      # Note the desktop build already refuses to compile while
+      # tauri.conf.json holds the pubkey placeholder, so a release
+      # cannot reach this step with an unconfigured key anyway. The two
+      # guards are independent on purpose: one stops the build, the other
+      # stops a signed-but-unpublished payload.
+      #
+      # The secrets are the maintainer's to add; see docs/UPDATER.md.
+      - name: Collect updater artifacts
+        id: updater
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $bundle = 'src-tauri\target\release\bundle\nsis'
+          $zip = Get-ChildItem -Path $bundle -Filter '*.nsis.zip' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+          if (-not $zip) {
+            throw "No *.nsis.zip was produced at $bundle. The updater plugin must be configured; see docs/UPDATER.md."
+          }
+          if (-not (Test-Path "$($zip.FullName).sig")) {
+            throw "Found $($zip.Name) with no .sig beside it. A release that ships an unsigned updater payload is the failure the updater was built to prevent; see docs/UPDATER.md for the signing secrets."
+          }
+          if (-not (Test-Path "$bundle\latest.json")) {
+            throw "Found the signed zip but no latest.json at $bundle. Tauri writes it only when the signing secrets are present; check the repository secrets."
+          }
+
+          "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+          "sig=$($zip.FullName).sig" >> $env:GITHUB_OUTPUT
+          "manifest=$bundle\latest.json" >> $env:GITHUB_OUTPUT
+          # The release job gates its download on this, so a build with
+          # no updater payload simply skips the step rather than failing
+          # on a missing artifact.
+          "updater_zip=$($zip.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "updater payload: $($zip.Name) + .sig + latest.json"
+
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: moddin-updater
+          path: |
+            ${{ steps.updater.outputs.zip }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
+          retention-days: 7
+
+      # Pin the exact artifact and its digest so the release job uploads
+      # what it hashed, with no glob left to match something else.
+      - name: Collect and hash the installer
+        id: package
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path 'src-tauri\target\release\bundle\nsis' -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'No NSIS installer was produced at src-tauri\target\release\bundle\nsis\'
+          }
+          $digest = (Get-FileHash -Path $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "installer: $($installer.Name)"
+          Write-Host "sha256:    $digest"
+          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "sha256=$digest" >> $env:GITHUB_OUTPUT
+          Add-Content -Path "$env:GITHUB_STEP_SUMMARY" -Value "| file | sha256 |`n| --- | --- |`n| $($installer.Name) | ``$digest`` |"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: moddin-installer
+          path: ${{ steps.package.outputs.installer }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: moddin-installer
+
+      # The updater payload is always present now — the build step above
+      # throws without it — so this download is unconditional. The `if:`
+      # would only hide a real failure.
+      - name: Download updater payload
+        uses: actions/download-artifact@v4
+        with:
+          name: moddin-updater
+
       - name: Create release from notes file
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
         run: |
-          notes=".release-notes-${TAG}.md"
+          notes="docs/release-notes/.release-notes-${TAG}.md"
           if [ ! -f "$notes" ]; then
             echo "::error::Missing $notes. Commit the release notes before pushing the tag."
             exit 1
@@ -36,8 +193,28 @@ jobs:
           prerelease=()
           case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
 
+          # Append the CI-computed digest so the notes and the artifact
+          # can never disagree about what was published.
+          printf '\n---\n\nBuilt by CI on windows-latest. SHA-256 of the installer:\n\n```\n%s\n```\n' "$SHA256" >> "$notes"
+
+          # `latest.json` is the file the app fetches, so it must sit
+          # at the path the plugin's endpoint names. A prerelease keeps
+          # it out of `releases/latest/download/`, which is why the
+          # panel treats a prerelease as unavailable rather than
+          # offering it — the stable channel is what that endpoint
+          # serves.
+          updater=()
+          if [ -f ./latest.json ] && [ -f ./*.nsis.zip ] && [ -f ./*.nsis.zip.sig ]; then
+            updater=(./latest.json ./*.nsis.zip ./*.nsis.zip.sig)
+            echo "attaching updater payload: $(ls -1 ./*.nsis.zip)"
+          else
+            echo "::notice::No signed updater payload in this build. The installer release is unaffected; the app's update check will report the manifest as missing. See docs/UPDATER.md."
+          fi
+
           gh release create "$TAG" \
             --verify-tag \
             --title "$title" \
             --notes-file "$notes" \
+            ./*.exe \
+            "${updater[@]}" \
             "${prerelease[@]}"

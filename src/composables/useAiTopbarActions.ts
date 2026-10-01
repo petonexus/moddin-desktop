@@ -1,57 +1,43 @@
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useAiAssistantTrigger } from './useAiAssistant'
 import { useAiModuleActions } from './useAiModuleActions'
 
-// Topbar IA split-button actions extracted from App.vue so it stays
-// under its 115 KB byte budget. The split button has two halves: main
-// (contextual default = audit), arrow (dropdown of modes). Each handler
-// closes any open menu implicitly and routes through the existing AI
-// composables so the singleton dialog opens with the right mode + game.
-
+/**
+ * Topbar AI wiring, extracted from App.vue so it stays under its byte
+ * budget.
+ *
+ * The menu used to offer four verbs for the same dialog. There is one
+ * verb now: it opens the assistant with whatever game is selected, and
+ * the dialog's mode picker decides what happens next. The one exception
+ * is `diagnose`, which the library's error callout uses — there the mode
+ * is not a choice, the error *is* the request.
+ */
 export function useAiTopbarActions(deps: {
   selectedAppId: () => string | null
   selectedGameName: () => string | null
   currentError: () => string | null
 }) {
-  const { t } = useI18n()
   const aiModuleActions = useAiModuleActions()
   const trigger = useAiAssistantTrigger()
-  const hasError = computed(() => Boolean(deps.currentError()))
 
-  async function auditLike() {
-    await aiModuleActions.openAiAudit({
+  async function ask() {
+    await trigger.openFor({
+      mode: 'author',
       gameId: deps.selectedAppId(),
       gameName: deps.selectedGameName(),
+      intent: '',
     })
   }
-
-  async function ask() { await auditLike() }
-
-  async function recommend() {
-    const gameId = deps.selectedAppId()
-    if (!gameId) return
-    const gameName = deps.selectedGameName() ?? t('aiAssistantGameBannerAnyGame')
-    await trigger.openAiAssistantRecommendations({
-      gameId,
-      gameName,
-      intent: t('aiAssistantGameBannerIntent', { game: gameName }),
-    })
-  }
-
-  async function audit() { await auditLike() }
 
   function diagnose() {
     const message = deps.currentError()
     if (!message) return
-    aiModuleActions.openDiagnoseWithAi({ message, gameId: deps.selectedAppId(), gameName: deps.selectedGameName(), capabilityId: null })
+    aiModuleActions.openDiagnoseWithAi({
+      message,
+      gameId: deps.selectedAppId(),
+      gameName: deps.selectedGameName(),
+      capabilityId: null,
+    })
   }
 
-  function contribute() {
-    // ContributeDialog is mounted globally; signal it via a window event
-    // so the architecture boundary stays clean.
-    window.dispatchEvent(new CustomEvent('moddin:open-contribute'))
-  }
-
-  return { hasError, ask, recommend, audit, diagnose, contribute }
+  return { ask, diagnose }
 }

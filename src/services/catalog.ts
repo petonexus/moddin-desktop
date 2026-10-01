@@ -140,6 +140,59 @@ export function findCatalogGameByInstalledGame(game: Pick<InstalledGame, 'store'
 }
 
 /**
+ * Inverse of {@link findCatalogGameByInstalledGame}: given a catalog id,
+ * return the installed game it refers to.
+ *
+ * The UI holds a catalog id everywhere (the selected game, the AI
+ * context, the capability card) and only the store scan produces a store
+ * app id. Without this bridge every caller that starts from the catalog
+ * silently fails to find its install directory.
+ */
+export function findInstalledGameForCatalogGame(
+  games: readonly Pick<InstalledGame, 'store' | 'appId' | 'installDir'>[],
+  catalogGameId: string,
+) {
+  const entry = findCatalogGameById(catalogGameId)
+  if (!entry) return undefined
+  return games.find((game) => {
+    const matched = findCatalogGameByInstalledGame(game)
+    return matched?.id === entry.id
+  })
+}
+
+/**
+ * The catalogue's own entry for one module of one game, engine preset
+ * already merged in — the same object the game page's module cards
+ * render, so a caller that finds a module here is looking at the data
+ * the player was shown. `undefined` when the game declares no such
+ * module, which is not an error: the catalogue is per-game and silent
+ * about the capabilities it does not carry.
+ */
+export function findCatalogModule(gameId: string, moduleId: string): ToolModuleDefinition | undefined {
+  return findCatalogGameById(gameId)?.modules.find((module) => module.id === moduleId)
+}
+
+/**
+ * The `config:` values the catalogue holds for `(gameId, capabilityId)`,
+ * keyed by config-field name.
+ *
+ * This is the one place that answers "what values does this recipe need
+ * for this game". It reads the per-game `config:` block out of
+ * `src/catalog/games/*.yaml` — the same block the module's own
+ * configuration dialog is built from — and returns it verbatim. An empty
+ * object means the game declares no such module, or the module declares
+ * no `config:` block; it never invents a value, and a second table beside
+ * a form is exactly the drift this catalogue exists to prevent.
+ */
+export function resolveCatalogConfig(
+  gameId: string | null | undefined,
+  capabilityId: string,
+): Record<string, string | string[]> {
+  if (!gameId) return {}
+  return { ...(findCatalogModule(gameId, capabilityId)?.config ?? {}) }
+}
+
+/**
  * Depth-first collection of the modules that are not installed yet, in
  * dependency order: a dependency always appears before the module that
  * requires it. Already-installed modules are skipped together with their
@@ -202,5 +255,13 @@ export function getMissingDependenciesForModule(
   const declared = new Map(game.modules.map((module) => [module.id, module]))
   const root = declared.get(moduleId)
   if (!root) return []
-  return collectMissing(declared, [root], new Set(installedModuleIds))
+  // `collectMissing` reports every node it visits, and the node it was
+  // called with is one of them. Here the root is the module the caller
+  // already asked about, so its own id is dropped: the question is what
+  // has to be installed *first*, and answering "this module" sends
+  // `configureModule` back to the prerequisite dialog instead of
+  // forward to the install flow.
+  return collectMissing(declared, [root], new Set(installedModuleIds)).filter(
+    (id) => id !== moduleId,
+  )
 }

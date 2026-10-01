@@ -30,7 +30,52 @@ serde_json = "1"
 serde_yaml = "0.9"
 sevenz-rust = "0.6.1"
 sha2 = "0.10"
-tauri = { version = "2", features = [] }
+# `custom-protocol` is not optional. Without it `tauri`'s build script sets
+# `cargo:dev`, `tauri-build` then defines the `dev` cfg alias for this whole
+# crate, and `Manager::get_app_url` resolves the app URL to `devUrl`
+# (http://127.0.0.1:1420) instead of the embedded `frontendDist`. Nothing about
+# that failure is visible at build time: `beforeBuildCommand` still runs,
+# `dist/` is still produced, the installer still installs, and the app opens a
+# blank WebView2. The only honest proof is the built artifact, which is why
+# scripts/check-bundle-features.mjs gates the manifest and the dry-run tag is
+# the artifact-level check.
+tauri = { version = "2", features = ["custom-protocol"] }
+# The one file dialog in the app. Pinned to the 2.7 line because 2.8
+# requires `tauri = "^2.12"` and the lock is on 2.11.5 for the reason the
+# updater pin below gives; nothing here needs 2.8.
+#
+# The webview is granted no permission for it (see
+# `src-tauri/capabilities/dialog.json`): the dialogs are opened from the
+# `profile_files` commands, so a profile can only ever be written to a
+# path the user picked in a native dialog.
+tauri-plugin-dialog = "~2.7.0"
+# Pinned to the 2.11 line on purpose: 2.12+ requires `tauri = "2.12"`,
+# so a wider range here would silently drag the whole graph — and the
+# toolchain that `rust-toolchain.toml` pins — off the version CI verifies.
+# This crate owns the updater's endpoint, pubkey and signature check;
+# the commands in `src/app_update.rs` are the only way to reach them.
+tauri-plugin-updater = "~2.11.0"
 uuid = { version = "1", features = ["v4"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+# Release profile (F-13). The installer ships a 67.8 MB node.exe and a
+# staged agent runtime, so every megabyte the binary gives back is one
+# the bundle does not have to carry.
+#
+# `lto` is "thin", not `true`, on purpose: this crate declares
+# `crate-type = ["staticlib", "cdylib", "rlib"]`, and fat LTO across a
+# crate with more than one linkage is where the classic
+# "relocation R_X86_64_* against undefined symbol" failures live. Thin
+# LTO takes nearly all of the size win on a dependency graph this shape
+# and keeps the build reproducible enough to debug. `codegen-units = 1`
+# is what makes it effective.
+#
+# `strip = "symbols"` drops the symbol table and debug info from the
+# shipped .exe. The PDB stays in target/ for anyone attaching a
+# debugger locally; what stops shipping is the exe growing by several
+# megabytes to carry a symbol table nothing in the product reads.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

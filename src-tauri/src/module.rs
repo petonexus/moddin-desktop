@@ -26,18 +26,33 @@
 //!
 //! ## Adoption
 //!
-//! The current modules do **not** implement this trait yet — adopting it
-//! is an incremental, per-module refactor (see `ROADMAP.md`). The trait
-//! itself is the source of truth for what those refactors need to look
-//! like.
+//! No production module implements this trait. It was a spike that the
+//! YAML capability system (`src-tauri/capabilities/`, `builtin_steps.rs`)
+//! superseded, and the five `*_module.rs` adapters that were its only
+//! implementors have been deleted. What is left here is split in two:
+//!
+//! - `CheckCategory`, `CheckSeverity`, `CheckDefinition`, `CheckOutcome`,
+//!   `VerificationReport` and `ModuleStatus` are **live** — the capability
+//!   check engine returns them to the UI.
+//! - the `Module` trait and the types that exist only to serve it
+//!   (`ModuleCategory`, `ModuleContext`, `PreviewReport`, `ApplyResult`,
+//!   `UpdateInfo`, `UpdateStatus`) are `#[cfg(test)]`: no product path
+//!   calls them, so they are not compiled into the shipped binary. They
+//!   are kept, and kept tested, because whether the trait is worth
+//!   reviving is an open design question (see docs/BACKEND-MODULES.md)
+//!   and deleting the only executable specification of it would make
+//!   that question harder to answer.
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use std::path::PathBuf;
 
+#[cfg(test)]
 use crate::transaction::TransactionRecord;
 
 /// Coarse classification of a module. Matches the `category` enum on the
 /// TypeScript `ToolModuleDefinition` in `src/types/game.ts`.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ModuleCategory {
@@ -51,6 +66,7 @@ pub enum ModuleCategory {
     System,
 }
 
+#[cfg(test)]
 impl ModuleCategory {
     /// Stable identifier used in the YAML catalog.
     pub fn as_str(&self) -> &'static str {
@@ -72,6 +88,7 @@ impl ModuleCategory {
 /// per-game YAML entry and any engine preset fallback) as a JSON object.
 /// Modules that need typed config fields (e.g. ReShade's `proxy`,
 /// `archiveUrl`, `sha256`) translate it into their own request struct.
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModuleContext {
@@ -86,6 +103,14 @@ pub struct ModuleContext {
 
 /// Result of a dry-run `preview`. Reports the concrete preconditions the
 /// UI surfaces as a checklist.
+///
+/// `dead_code` is allowed rather than deleted: this is part of the written
+/// specification of the `Module` contract. No implementor exists, and the
+/// one test double does not override `preview`, so nothing constructs this
+/// — but removing it would silently shrink the contract the trait is
+/// meant to state. See the module "Adoption" note.
+#[cfg(test)]
+#[allow(dead_code, reason = "specification of the un-adopted Module contract")]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewReport {
@@ -140,8 +165,9 @@ pub enum CheckSeverity {
 
 /// Declarative description of a check the module knows how to run. The
 /// module returns one of these per logical check from
-/// [`Module::verification_definitions`]; the runtime evaluates them
-/// and reports each result as a [`CheckOutcome`] in
+/// `Module::verification_definitions` (a test-only trait method, so this
+/// is plain text rather than an intra-doc link); the runtime evaluates
+/// them and reports each result as a [`CheckOutcome`] in
 /// `VerificationReport.checks`.
 ///
 /// `definitions` are the **schema**; `checks` are the **result**. The
@@ -230,6 +256,7 @@ pub enum ModuleStatus {
 }
 
 /// Result of `update_check`. Mirrors `ModuleUpdate` on the TypeScript side.
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
@@ -240,6 +267,7 @@ pub struct UpdateInfo {
     pub detail: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateStatus {
@@ -253,6 +281,10 @@ pub enum UpdateStatus {
 /// What `apply` and `remove` return to the UI. `transaction` is the
 /// canonical undo handle; the rest are module-specific flags so the UI can
 /// refresh without a second `verify` call.
+///
+/// `dead_code` is allowed for the same reason as [`PreviewReport`].
+#[cfg(test)]
+#[allow(dead_code, reason = "specification of the un-adopted Module contract")]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyResult {
@@ -265,6 +297,10 @@ pub struct ApplyResult {
 }
 
 /// Shared lifecycle every Moddin module exposes.
+///
+/// No production module implements this yet — see "Adoption" above. Kept
+/// and tested as the specification for a trait that may be revived, so it
+/// is compiled for the test suite only.
 ///
 /// All methods take a `ModuleContext` so they remain stateless. Modules
 /// are free to hold their own state through the existing `*_marker.json`
@@ -286,6 +322,22 @@ pub struct ApplyResult {
 /// * validation / safety problems → `Err(...)` so the UI surfaces them;
 /// * recoverable "not ready yet" conditions → `Ok` with
 ///   `can_apply: false` or `status: Attention`.
+///
+/// `dead_code` is allowed for the whole trait: no production code
+/// implements it (the five `*_module.rs` adapters that did have been
+/// deleted), and the single test double, `DummyModule`, deliberately
+/// overrides only the four methods the app can currently drive
+/// (`id`, `name`, `category`, `config`) plus `update_check`. The
+/// remaining required methods are the specification of the contract —
+/// the only executable statement of what a future implementor owes — so
+/// deleting them would turn the trait into a misleading partial
+/// interface. Widening this `allow` crate-wide would be the wrong trade;
+/// keep it scoped to the trait.
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "un-adopted Module contract, kept as its specification"
+)]
 pub trait Module: Send + Sync {
     /// Stable catalog id (e.g. `"obs-vr"`, `"ofxr-framegen"`, `"uevr"`).
     fn id(&self) -> &'static str;
@@ -430,7 +482,10 @@ mod tests {
             work_dir: PathBuf::from("C:/Users/me/AppData/Local/Moddin/tools/dummy"),
             config: None,
         };
-        let info = module.update_check(&context).await.expect("default update_check");
+        let info = module
+            .update_check(&context)
+            .await
+            .expect("default update_check");
         assert_eq!(info.status, UpdateStatus::Unknown);
         assert!(info.latest_version.is_none());
     }
@@ -473,7 +528,9 @@ mod tests {
             label: "Proxy DLL available".to_owned(),
             category: CheckCategory::ModuleSpecific,
             severity: CheckSeverity::Blocker,
-            description: Some("The chosen proxy DLL must not already exist in the game directory.".to_owned()),
+            description: Some(
+                "The chosen proxy DLL must not already exist in the game directory.".to_owned(),
+            ),
         };
         let serialized = serde_json::to_string(&definition).expect("serialize");
         assert!(serialized.contains("\"id\":\"proxy-available\""));

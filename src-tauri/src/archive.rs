@@ -10,16 +10,30 @@
 //!
 //! - [`LocalArchive`] — bytes come from a path on disk.
 //! - [`RemoteArchive`] — bytes come from an HTTPS GET.
-//! - [`VerifiedArchive`] — wraps another source and enforces the
-//!   SHA-256 match against the expected digest.
 //!
-//! Modules compose these wrappers instead of branching over
-//! `archive_url` vs `local_archive`. New sources (S3, B2, signed URLs)
-//! slot in by implementing [`ArchiveSource`].
+//! New sources (S3, B2, signed URLs) slot in by implementing
+//! [`ArchiveSource`].
+//!
+//! ## Where SHA-256 is actually checked
+//!
+//! Not here. `fetch` returns `(bytes, computed_sha256)` and the *caller*
+//! compares, because the two call sites need different behaviour:
+//! `builtin_checks::evaluate_archive_sha256` does the preflight comparison
+//! against the recipe's declared digest, and the `verify-hash` step does
+//! it at install time. This file used to carry an `expected_sha256` field
+//! and a `fetch_verified` wrapper to do the comparison inside the trait,
+//! but nothing ever called `with_expected_sha256`, so the expected digest
+//! was always `None` and `fetch_verified` was `fetch` with a branch that
+//! could never be taken.
 
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use std::{fs::File, io::Read};
+// Only `LocalArchive` opens a file, and it is test-only.
+#[cfg(test)]
+use std::fs::File;
+// Only `LocalArchive` reads a file to the end, and it is test-only.
+#[cfg(test)]
+use std::io::Read;
 
 /// Maximum archive size, enforced by both implementations. Moddin
 /// archives are well under this (ReShade ~6 MB, UEVR ~10 MB,
@@ -28,7 +42,13 @@ use std::{fs::File, io::Read};
 pub const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Common contract for any source of archive bytes.
-#[allow(async_fn_in_trait)]
+///
+/// `async_fn_in_trait` is allowed deliberately: the trait is `dyn`-less by
+/// design and only ever used as a generic bound
+/// (`archive: &impl ArchiveSource`), so it does not need `-> impl Future`
+/// in return position. The `Send`-bound caveat of bare AFIT does not apply
+/// because the only callers await the future inline on the same task.
+#[allow(async_fn_in_trait, reason = "generic-only bound, never used as dyn")]
 pub trait ArchiveSource: Send + Sync {
     /// Fetch the archive contents and return `(bytes, computed_sha256)`.
     async fn fetch(&self) -> Result<(Vec<u8>, String), String>;
@@ -36,30 +56,6 @@ pub trait ArchiveSource: Send + Sync {
     /// Short label for log lines and error messages (e.g. `"local:..."`,
     /// `"https://..."`).
     fn label(&self) -> String;
-
-    /// Optional expected SHA-256; if set, the implementation MUST verify
-    /// the computed hash against it before returning the bytes.
-    fn expected_sha256(&self) -> Option<&str> {
-        None
-    }
-
-    /// Fetch with the verification step applied (if `expected_sha256` is
-    /// set). The default implementation calls `fetch` and verifies when
-    /// needed; overriding is rarely necessary.
-    async fn fetch_verified(&self) -> Result<(Vec<u8>, String), String> {
-        let (bytes, computed) = self.fetch().await?;
-        if let Some(expected) = self.expected_sha256() {
-            if !computed.eq_ignore_ascii_case(expected) {
-                return Err(format!(
-                    "{}: SHA-256 mismatch (expected {}, got {}).",
-                    self.label(),
-                    expected,
-                    computed
-                ));
-            }
-        }
-        Ok((bytes, computed))
-    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -69,32 +65,26 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Reads an archive from a local filesystem path.
+///
+/// Test-only for now: every production call site fetches over HTTPS
+/// (`RemoteArchive`), so nothing outside the test module constructs this.
+#[cfg(test)]
 pub struct LocalArchive {
     pub path: std::path::PathBuf,
-    pub expected_sha256: Option<String>,
 }
 
+#[cfg(test)]
 impl LocalArchive {
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            expected_sha256: None,
-        }
-    }
-
-    pub fn with_expected_sha256(mut self, expected: impl Into<String>) -> Self {
-        self.expected_sha256 = Some(expected.into());
-        self
+        Self { path: path.into() }
     }
 }
 
+#[cfg(test)]
 impl ArchiveSource for LocalArchive {
     async fn fetch(&self) -> Result<(Vec<u8>, String), String> {
         if !self.path.is_file() {
-            return Err(format!(
-                "{}: local archive does not exist.",
-                self.label()
-            ));
+            return Err(format!("{}: local archive does not exist.", self.label()));
         }
         let mut file = File::open(&self.path)
             .map_err(|error| format!("{}: could not open archive: {error}", self.label()))?;
@@ -117,17 +107,12 @@ impl ArchiveSource for LocalArchive {
     fn label(&self) -> String {
         format!("local:{}", self.path.display())
     }
-
-    fn expected_sha256(&self) -> Option<&str> {
-        self.expected_sha256.as_deref()
-    }
 }
 
 /// Fetches an archive over HTTPS and verifies the response.
 pub struct RemoteArchive {
     pub url: String,
     pub host_allowlist: Vec<String>,
-    pub expected_sha256: Option<String>,
 }
 
 impl RemoteArchive {
@@ -135,7 +120,6 @@ impl RemoteArchive {
         Self {
             url: url.into(),
             host_allowlist: Vec::new(),
-            expected_sha256: None,
         }
     }
 
@@ -147,9 +131,54 @@ impl RemoteArchive {
         self
     }
 
-    pub fn with_expected_sha256(mut self, expected: impl Into<String>) -> Self {
-        self.expected_sha256 = Some(expected.into());
-        self
+    /// Size of the remote payload in bytes, from a HEAD request, or
+    /// `None` when the server does not report one.
+    ///
+    /// Exists so a preflight check can decide *whether to download*
+    /// without starting the download. `archive-sha256` is a blocker
+    /// that runs while the UI is rendering a module card, and pulling
+    /// 300 MB to decide whether a button should be enabled is not a
+    /// check.
+    ///
+    /// `Err` means the size could not be determined (offline, host not
+    /// allowed, server rejects HEAD). Callers should treat that as
+    /// "unknown size", not as "download failed".
+    pub async fn content_length(&self) -> Result<Option<u64>, String> {
+        let parsed = reqwest::Url::parse(&self.url)
+            .map_err(|error| format!("{}: invalid URL: {error}", self.label()))?;
+        if parsed.scheme() != "https" {
+            return Err(format!("{}: must use HTTPS.", self.label()));
+        }
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| format!("{}: missing host.", self.label()))?
+            .to_ascii_lowercase();
+        let allowed = if self.host_allowlist.is_empty() {
+            vec!["github.com".to_owned()]
+        } else {
+            self.host_allowlist
+                .iter()
+                .map(|host| host.to_ascii_lowercase())
+                .collect()
+        };
+        if !allowed.contains(&host) {
+            return Err(format!(
+                "{}: host '{host}' is not in the allow-list.",
+                self.label()
+            ));
+        }
+
+        let client = Client::builder()
+            .user_agent("Moddin-Desktop/0.1 (+https://github.com/petonexus/moddin-desktop)")
+            .build()
+            .map_err(|error| format!("{}: could not create downloader: {error}", self.label()))?;
+
+        let response =
+            client.head(parsed).send().await.map_err(|error| {
+                format!("{}: could not read archive size: {error}", self.label())
+            })?;
+
+        Ok(response.content_length())
     }
 }
 
@@ -167,16 +196,22 @@ impl ArchiveSource for RemoteArchive {
         let allowed = if self.host_allowlist.is_empty() {
             vec!["github.com".to_owned()]
         } else {
-            self.host_allowlist.iter().map(|host| host.to_ascii_lowercase()).collect()
+            self.host_allowlist
+                .iter()
+                .map(|host| host.to_ascii_lowercase())
+                .collect()
         };
-        if !allowed.iter().any(|candidate| host == *candidate) {
+        if !allowed.contains(&host) {
             return Err(format!(
                 "{}: host '{host}' is not in the allow-list.",
                 self.label()
             ));
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err(format!("{}: credentials in URL are not allowed.", self.label()));
+            return Err(format!(
+                "{}: credentials in URL are not allowed.",
+                self.label()
+            ));
         }
 
         let client = Client::builder()
@@ -207,42 +242,6 @@ impl ArchiveSource for RemoteArchive {
 
     fn label(&self) -> String {
         self.url.clone()
-    }
-
-    fn expected_sha256(&self) -> Option<&str> {
-        self.expected_sha256.as_deref()
-    }
-}
-
-/// Compose an [`ArchiveSource`] with a SHA-256 expectation, when the
-/// inner source doesn't already carry one. Useful for tests and for
-/// callers that want to enforce verification without rebuilding the
-/// inner source.
-pub struct VerifiedArchive<S: ArchiveSource> {
-    pub inner: S,
-    pub expected_sha256: String,
-}
-
-impl<S: ArchiveSource> VerifiedArchive<S> {
-    pub fn new(inner: S, expected: impl Into<String>) -> Self {
-        Self {
-            inner,
-            expected_sha256: expected.into(),
-        }
-    }
-}
-
-impl<S: ArchiveSource + Send + Sync> ArchiveSource for VerifiedArchive<S> {
-    async fn fetch(&self) -> Result<(Vec<u8>, String), String> {
-        self.inner.fetch().await
-    }
-
-    fn label(&self) -> String {
-        self.inner.label()
-    }
-
-    fn expected_sha256(&self) -> Option<&str> {
-        Some(&self.expected_sha256)
     }
 }
 
@@ -278,17 +277,9 @@ mod tests {
     #[test]
     fn sha256_hex_matches_known_value() {
         // SHA-256 of empty bytes.
-        assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-    }
-
-    #[test]
-    fn verified_archive_propagates_expected_digest() {
-        let inner = LocalArchive::new(std::path::PathBuf::from("C:/no/such/file.zip"));
-        let verified = VerifiedArchive::new(inner, "0".repeat(64));
         assert_eq!(
-            verified.expected_sha256(),
-            Some("0000000000000000000000000000000000000000000000000000000000000000")
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
-        assert_eq!(verified.label(), "local:C:/no/such/file.zip");
     }
 }

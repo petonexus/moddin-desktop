@@ -62,7 +62,7 @@ Moddin checks GitHub Releases for new versions. To update:
 2. Click **Download update**.
 3. Restart Moddin to apply the patch.
 
-You can also update manually by downloading the latest `.msi` from [Releases](https://github.com/petonexus/moddin-desktop/releases).
+You can also update manually by downloading the latest `Moddin.Desktop_*_x64-setup.exe` from [Releases](https://github.com/petonexus/moddin-desktop/releases).
 
 ---
 

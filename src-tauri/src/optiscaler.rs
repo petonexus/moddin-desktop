@@ -260,10 +260,7 @@ fn proxy_conflict(executable_directory: &Path, name: &str) -> ProxyConflict {
     ProxyConflict {
         name: name.to_owned(),
         path: path.to_string_lossy().into_owned(),
-        size_bytes: path
-            .metadata()
-            .map(|metadata| metadata.len())
-            .unwrap_or(0),
+        size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
         managed_by_moddin,
         held_by,
     }
@@ -840,7 +837,10 @@ mod tests {
         assert_eq!(preview.selected_proxy, None);
         assert!(!preview.can_apply);
         assert_eq!(preview.conflicts.len(), 2);
-        assert!(preview.conflicts.iter().all(|conflict| !conflict.managed_by_moddin));
+        assert!(preview
+            .conflicts
+            .iter()
+            .all(|conflict| !conflict.managed_by_moddin));
         assert!(preview
             .conflicts
             .iter()
@@ -900,7 +900,7 @@ mod tests {
 
         let record = transaction::begin_file_set_transaction(
             &root,
-            &[proxy.clone()],
+            std::slice::from_ref(&proxy),
             "optiscaler",
             "Replace proxy test",
             "proxy-test-game",

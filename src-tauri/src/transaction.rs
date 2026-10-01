@@ -58,7 +58,9 @@ fn is_valid_transaction_id(id: &str) -> bool {
     };
 
     !timestamp.is_empty()
-        && timestamp.chars().all(|character| character.is_ascii_digit())
+        && timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
         && nonce.len() == 32
         && nonce.chars().all(|character| character.is_ascii_hexdigit())
 }
@@ -84,7 +86,10 @@ fn validate_record(record: &TransactionRecord, expected_id: &str) -> Result<(), 
             "Transaction manifest identity mismatch for '{expected_id}'."
         ));
     }
-    if !matches!(record.status.as_str(), "prepared" | "applied" | "rolled_back") {
+    if !matches!(
+        record.status.as_str(),
+        "prepared" | "applied" | "rolled_back"
+    ) {
         return Err(format!(
             "Transaction '{}' has an invalid status '{}'.",
             record.id, record.status
@@ -144,8 +149,9 @@ fn write_record(record: &TransactionRecord) -> Result<(), String> {
         drop(file);
 
         if manifest.is_file() {
-            fs::copy(&manifest, &backup)
-                .map_err(|error| format!("Could not preserve previous transaction manifest: {error}"))?;
+            fs::copy(&manifest, &backup).map_err(|error| {
+                format!("Could not preserve previous transaction manifest: {error}")
+            })?;
             fs::remove_file(&manifest)
                 .map_err(|error| format!("Could not replace transaction manifest: {error}"))?;
         }
@@ -313,6 +319,66 @@ pub fn backup_file_with_metadata(
     Ok(record)
 }
 
+/// Snapshot one target into the transaction's backup directory.
+///
+/// A file that already exists is copied aside so rollback can restore the
+/// user's original content; a file that does not exist yet is recorded
+/// with `existed_before: false` so rollback deletes it instead. `index`
+/// keeps backup names unique and stably ordered.
+fn snapshot_target(
+    backup_directory: &Path,
+    index: usize,
+    target_root: &Path,
+    target: &Path,
+) -> Result<TransactionFile, String> {
+    ensure_target_within_root(target_root, target)?;
+
+    let existed_before = target.is_file();
+    let backup_path = if existed_before {
+        let file_name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file.bin");
+        let backup = backup_directory.join(format!("{index:04}-{file_name}"));
+        fs::copy(target, &backup).map_err(|error| {
+            format!(
+                "Could not back up existing file '{}': {error}",
+                target.display()
+            )
+        })?;
+        Some(backup.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    Ok(TransactionFile {
+        target_path: target.to_string_lossy().into_owned(),
+        backup_path,
+        existed_before,
+    })
+}
+
+/// Directories between `target_root` and each target that do not exist
+/// yet, deepest first, so rollback removes them in a safe order.
+fn collect_created_directories(target_root: &Path, targets: &[PathBuf]) -> Vec<String> {
+    let mut directories = Vec::new();
+    for target in targets {
+        let mut current = target.parent();
+        while let Some(directory) = current {
+            if directory == target_root || !directory.starts_with(target_root) {
+                break;
+            }
+            if !directory.exists() {
+                directories.push(directory.to_string_lossy().into_owned());
+            }
+            current = directory.parent();
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    directories.dedup();
+    directories
+}
+
 pub fn begin_file_set_transaction(
     target_root: &Path,
     targets: &[PathBuf],
@@ -333,48 +399,15 @@ pub fn begin_file_set_transaction(
 
     let mut files = Vec::with_capacity(unique_targets.len());
     for (index, target) in unique_targets.iter().enumerate() {
-        ensure_target_within_root(target_root, target)?;
-
-        let existed_before = target.is_file();
-        let backup_path = if existed_before {
-            let file_name = target
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("file.bin");
-            let backup = backup_directory.join(format!("{index:04}-{file_name}"));
-            fs::copy(target, &backup).map_err(|error| {
-                format!(
-                    "Could not back up existing file '{}': {error}",
-                    target.display()
-                )
-            })?;
-            Some(backup.to_string_lossy().into_owned())
-        } else {
-            None
-        };
-
-        files.push(TransactionFile {
-            target_path: target.to_string_lossy().into_owned(),
-            backup_path,
-            existed_before,
-        });
+        files.push(snapshot_target(
+            &backup_directory,
+            index,
+            target_root,
+            target,
+        )?);
     }
 
-    let mut directories = Vec::new();
-    for target in &unique_targets {
-        let mut current = target.parent();
-        while let Some(directory) = current {
-            if directory == target_root || !directory.starts_with(target_root) {
-                break;
-            }
-            if !directory.exists() {
-                directories.push(directory.to_string_lossy().into_owned());
-            }
-            current = directory.parent();
-        }
-    }
-    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
-    directories.dedup();
+    let directories = collect_created_directories(target_root, &unique_targets);
 
     let record = TransactionRecord {
         id,
@@ -389,6 +422,69 @@ pub fn begin_file_set_transaction(
         created_directories: directories,
         metadata,
     };
+
+    write_record(&record)?;
+    Ok(record)
+}
+
+/// Append newly-planned targets to an already-open transaction.
+///
+/// The capability runner plans each step's targets immediately before it
+/// runs that step â€” an archive cannot be inspected until the previous
+/// `download-file` step has fetched it â€” so the transaction has to grow as
+/// the install progresses. Targets already recorded, and duplicates within
+/// `extra_targets`, are ignored.
+pub fn add_files_to_transaction(
+    record: TransactionRecord,
+    target_root: &Path,
+    extra_targets: &[PathBuf],
+) -> Result<TransactionRecord, String> {
+    let mut record = record;
+    validate_record(&record, &record.id.clone())?;
+    if record.status != "prepared" {
+        return Err(format!(
+            "Transaction '{}' can only be extended while prepared, but it is '{}'.",
+            record.id, record.status
+        ));
+    }
+
+    let mut fresh: Vec<PathBuf> = Vec::new();
+    for target in extra_targets {
+        if record
+            .files
+            .iter()
+            .any(|file| Path::new(&file.target_path) == target)
+        {
+            continue;
+        }
+        if fresh.contains(target) {
+            continue;
+        }
+        fresh.push(target.clone());
+    }
+    if fresh.is_empty() {
+        return Ok(record);
+    }
+
+    let backup_directory = PathBuf::from(&record.backup_path);
+    let index_offset = record.files.len();
+    for (offset, target) in fresh.iter().enumerate() {
+        record.files.push(snapshot_target(
+            &backup_directory,
+            index_offset + offset,
+            target_root,
+            target,
+        )?);
+    }
+
+    let mut directories = record.created_directories.clone();
+    for directory in collect_created_directories(target_root, &fresh) {
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    record.created_directories = directories;
 
     write_record(&record)?;
     Ok(record)
@@ -485,7 +581,7 @@ pub fn list_transactions_sync() -> Result<Vec<TransactionRecord>, String> {
         }
     }
 
-    records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    records.sort_by_key(|record| std::cmp::Reverse(record.created_at));
     Ok(records)
 }
 
@@ -545,7 +641,145 @@ pub fn rollback_transaction(id: String) -> Result<TransactionRecord, String> {
     restored
 }
 
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transaction_id_validation_accepts_generated_shape() {
+        assert!(is_valid_transaction_id(
+            "1757720000000-0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn transaction_id_validation_rejects_path_traversal_and_malformed_ids() {
+        for id in [
+            "../manifest",
+            "..-0123456789abcdef0123456789abcdef",
+            "1757720000000/../../escape",
+            "1757720000000-short",
+            "not-a-timestamp-0123456789abcdef0123456789abcdef",
+            "1757720000000-0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(!is_valid_transaction_id(id), "unexpectedly accepted {id}");
+        }
+    }
+
+    #[test]
+    fn target_validation_accepts_descendants() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let target = root.join("subdir").join("plugin.dll");
+        assert!(ensure_target_within_root(&root, &target).is_ok());
+    }
+
+    #[test]
+    fn target_validation_rejects_lexical_parent_escape() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let target = root
+            .join("subdir")
+            .join("..")
+            .join("..")
+            .join("outside.dll");
+        assert!(ensure_target_within_root(&root, &target).is_err());
+    }
+
+    fn record(id: &str, game_id: &str, status: &str) -> TransactionRecord {
+        TransactionRecord {
+            id: id.to_owned(),
+            created_at: 0,
+            kind: "module".to_owned(),
+            label: "BepInEx".to_owned(),
+            game_id: game_id.to_owned(),
+            target_path: format!("C:/games/{game_id}"),
+            backup_path: format!("C:/backup/{game_id}/{id}"),
+            status: status.to_owned(),
+            files: Vec::new(),
+            created_directories: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_captures_only_its_own_games_transactions() {
+        // Rolling a snapshot back replays its ids, so a snapshot that
+        // captured another title would undo mods in a game the user
+        // never named. The filter used to be a tautology and every
+        // snapshot took the whole log.
+        let log = vec![
+            record("a", "elden-ring", "applied"),
+            record("b", "cyberpunk", "applied"),
+            record("c", "elden-ring", "applied"),
+        ];
+
+        let captured = snapshot_transaction_ids(&log, "elden-ring");
+
+        assert_eq!(captured, vec!["a".to_owned(), "c".to_owned()]);
+        assert!(
+            !captured.contains(&"b".to_owned()),
+            "a snapshot of Elden Ring must not capture Cyberpunk's transaction"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_skips_transactions_that_are_not_applied() {
+        let log = vec![
+            record("a", "elden-ring", "applied"),
+            record("b", "elden-ring", "rolled_back"),
+            record("c", "elden-ring", "planned"),
+        ];
+
+        assert_eq!(
+            snapshot_transaction_ids(&log, "elden-ring"),
+            vec!["a".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_snapshot_of_a_game_with_no_changes_is_empty_rather_than_the_whole_log() {
+        let log = vec![record("a", "elden-ring", "applied")];
+
+        assert!(snapshot_transaction_ids(&log, "cyberpunk").is_empty());
+    }
+
+    #[test]
+    fn target_validation_rejects_sibling_path() {
+        let root = env::temp_dir().join("moddin-target-root");
+        let sibling = root
+            .parent()
+            .expect("temp child must have a parent")
+            .join("moddin-sibling")
+            .join("outside.dll");
+        assert!(ensure_target_within_root(&root, &sibling).is_err());
+    }
+
+    #[test]
+    fn record_validation_rejects_identity_and_status_corruption() {
+        let id = "1757720000000-0123456789abcdef0123456789abcdef";
+        let mut record = TransactionRecord {
+            id: id.to_owned(),
+            created_at: 1,
+            kind: "test".to_owned(),
+            label: "test".to_owned(),
+            game_id: "game".to_owned(),
+            target_path: "target".to_owned(),
+            backup_path: "backup".to_owned(),
+            status: "applied".to_owned(),
+            files: Vec::new(),
+            created_directories: Vec::new(),
+            metadata: BTreeMap::new(),
+        };
+
+        assert!(validate_record(&record, id).is_ok());
+        assert!(
+            validate_record(&record, "1757720000001-0123456789abcdef0123456789abcdef").is_err()
+        );
+
+        record.status = "mystery".to_owned();
+        assert!(validate_record(&record, id).is_err());
+    }
+}
+
 // Named snapshots — point-in-time rollback points
 // ---------------------------------------------------------------------------
 
@@ -624,24 +858,35 @@ pub fn create_snapshot(name: String, game_id: String) -> Result<Snapshot, String
     let (id_part, created_at) = new_transaction_id()?;
     // Snapshot ids share the transaction-id shape (timestamp-nonce) so
     // existing path-validation rules apply unchanged.
+    let transaction_ids = snapshot_transaction_ids(&list_transactions_sync()?, &game_id);
     let snapshot = Snapshot {
         id: id_part,
         name: trimmed.to_owned(),
         created_at,
         game_id,
-        transaction_ids: list_transactions_sync()?
-            .into_iter()
-            .filter(|record| record.status == "applied" && record.game_id == snapshot_game_filter(&record))
-            .map(|record| record.id)
-            .collect(),
+        transaction_ids,
     };
-    let _ = snapshot_game_filter; // placeholder for future per-game filtering
     write_snapshot(&snapshot)?;
     Ok(snapshot)
 }
 
-fn snapshot_game_filter(record: &TransactionRecord) -> String {
-    record.game_id.clone()
+/// Ids of the applied transactions a snapshot of `game_id` captures.
+///
+/// Per-game by construction. A snapshot is the user's "put this game
+/// back the way it was" button, so capturing another title's applied
+/// changes and rolling them back would undo mods the user never asked
+/// to touch — in a game they may not even have open. The previous
+/// version compared `record.game_id` against a helper that returned
+/// `record.game_id.clone()`, which is a tautology: it always held, and
+/// every snapshot of every game captured the whole log. It carried a
+/// `placeholder for future per-game filtering` note at the call site,
+/// so the intent was always this; only the filter was missing.
+fn snapshot_transaction_ids(records: &[TransactionRecord], game_id: &str) -> Vec<String> {
+    records
+        .iter()
+        .filter(|record| record.status == "applied" && record.game_id == game_id)
+        .map(|record| record.id.clone())
+        .collect()
 }
 
 #[tauri::command]
@@ -659,14 +904,18 @@ pub fn list_snapshots() -> Result<Vec<Snapshot>, String> {
         if !path.is_file() {
             continue;
         }
-        let Some(id) = path.file_stem().and_then(|value| value.to_str()).map(str::to_owned) else {
+        let Some(id) = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+        else {
             continue;
         };
         if let Ok(snapshot) = read_snapshot(&id) {
             snapshots.push(snapshot);
         }
     }
-    snapshots.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at));
     Ok(snapshots)
 }
 
@@ -692,88 +941,7 @@ pub fn rollback_snapshot(id: String) -> Result<Vec<TransactionRecord>, String> {
 pub fn delete_snapshot(id: String) -> Result<(), String> {
     let path = snapshot_path(&id)?;
     if path.is_file() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("Could not delete snapshot: {error}"))?;
+        fs::remove_file(&path).map_err(|error| format!("Could not delete snapshot: {error}"))?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transaction_id_validation_accepts_generated_shape() {
-        assert!(is_valid_transaction_id(
-            "1757720000000-0123456789abcdef0123456789abcdef"
-        ));
-    }
-
-    #[test]
-    fn transaction_id_validation_rejects_path_traversal_and_malformed_ids() {
-        for id in [
-            "../manifest",
-            "..-0123456789abcdef0123456789abcdef",
-            "1757720000000/../../escape",
-            "1757720000000-short",
-            "not-a-timestamp-0123456789abcdef0123456789abcdef",
-            "1757720000000-0123456789abcdef0123456789abcdeg",
-        ] {
-            assert!(!is_valid_transaction_id(id), "unexpectedly accepted {id}");
-        }
-    }
-
-    #[test]
-    fn target_validation_accepts_descendants() {
-        let root = env::temp_dir().join("moddin-target-root");
-        let target = root.join("subdir").join("plugin.dll");
-        assert!(ensure_target_within_root(&root, &target).is_ok());
-    }
-
-    #[test]
-    fn target_validation_rejects_lexical_parent_escape() {
-        let root = env::temp_dir().join("moddin-target-root");
-        let target = root
-            .join("subdir")
-            .join("..")
-            .join("..")
-            .join("outside.dll");
-        assert!(ensure_target_within_root(&root, &target).is_err());
-    }
-
-    #[test]
-    fn target_validation_rejects_sibling_path() {
-        let root = env::temp_dir().join("moddin-target-root");
-        let sibling = root
-            .parent()
-            .expect("temp child must have a parent")
-            .join("moddin-sibling")
-            .join("outside.dll");
-        assert!(ensure_target_within_root(&root, &sibling).is_err());
-    }
-
-    #[test]
-    fn record_validation_rejects_identity_and_status_corruption() {
-        let id = "1757720000000-0123456789abcdef0123456789abcdef";
-        let mut record = TransactionRecord {
-            id: id.to_owned(),
-            created_at: 1,
-            kind: "test".to_owned(),
-            label: "test".to_owned(),
-            game_id: "game".to_owned(),
-            target_path: "target".to_owned(),
-            backup_path: "backup".to_owned(),
-            status: "applied".to_owned(),
-            files: Vec::new(),
-            created_directories: Vec::new(),
-            metadata: BTreeMap::new(),
-        };
-
-        assert!(validate_record(&record, id).is_ok());
-        assert!(validate_record(&record, "1757720000001-0123456789abcdef0123456789abcdef")
-            .is_err());
-
-        record.status = "mystery".to_owned();
-        assert!(validate_record(&record, id).is_err());
-    }
 }

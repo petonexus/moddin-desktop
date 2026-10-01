@@ -1,4 +1,4 @@
-﻿id: stalker-2
+id: stalker-2
 name: "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
 steamAppId: "1643320"
 executable: Stalker2/Binaries/Win64/Stalker2-Win64-Shipping.exe
@@ -20,24 +20,20 @@ modules:
       sceneName: vr
       sourceName: STALKER 2 VR
       executableName: Stalker2-Win64-Shipping.exe
-  - id: ofxr-framegen
-    name: OFXR FrameGen
-    description: Instalar e preparar o OFXR Bridge para uma sessão OpenXR, mantendo a configuração e o rollback transacionais.
+  - id: ofxr-bridge
+    name: OFXR Bridge FrameGen
+    description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
     category: vr
     status: available
     config:
-      version: 0.2.0
-      implementationVersion: 68
-      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
-      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
-      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      version: 0.2.1
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.1/OFXR-Bridge-v0.2.1-V116.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases/latest
+      sha256: db224491cbc9553a51fe55d08623d25864c4ec0a3d49bd76e9d6c4d9b2410c67
+      implementationVersion: 116
       backend: fidelityfx
       nvidiaPreset: medium
       nvidiaInputScale: 50
-      nvidiaBidirectional: 0
-      safetyNotes:
-        - OFXR Bridge é experimental e pode produzir artefatos, travamentos ou crashes dependendo do jogo, plugin UEVR, GPU e runtime.
-        - O tray exige o Microsoft Visual C++ Redistributable x64; mantenha o jogo sem elevação para que as camadas OpenXR do usuário sejam aplicadas.
   - id: uevr
     name: Instalador UEVR com detecção de engine
     description: Detectar Unreal Engine, resolver a release oficial do UEVR e manter variantes Nightly, JoeyHodge e AFW separadas e reversíveis.
@@ -58,20 +54,24 @@ modules:
         - O scanner local confirmou um perfil UEVR e o caminho Native Stereo deve ser validado primeiro dentro do jogo.
         - Feche STALKER 2 e UEVRInjector.exe antes de instalar ou trocar uma variante.
         - Não execute Steam, UEVR ou o jogo como administrador.
-  - id: cheeky-foveated-dlss-uevr
-    name: Cheeky Foveated DLSS para UEVR
-    description: Instalar o plugin Cheeky no perfil UEVR, configurar a camada OpenXR correspondente e validar o pipeline com DLSS. O fluxo seguro ainda está em planejamento no Moddin.
-    category: graphics
-    status: planned
-    # O scanner do Cheeky só marca READY com a config do UEVR presente.
-    dependencies:
-      - uevr
+# `cheeky-foveated-dlss-uevr` foi listado aqui e removido. É quase
+# duplicata do módulo `cheeky-foveated-dlss` que o preset unreal5 já
+# adiciona, sob um id que nada implementa. Como entrada `planned` virava
+# um card desabilitado, não um botão quebrado — mas o catálogo anunciava um
+# id sobre o qual o app não pode agir. Volta quando o fluxo transacional
+# específico do jogo que ele descreve existir de fato.
   - id: optiscaler
     name: OptiScaler
     description: Instalar a release oficial do OptiScaler com verificação de checksum, seleção de proxy consciente de conflito e rollback. Compatível com STALKER 2 segundo a lista oficial do projeto.
     category: graphics
     status: available
     config:
+      version: 0.9.4
+      downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z
+      updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
+      sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxy: dxgi.dll
+      proxyCandidates: dxgi.dll,wininet.dll
       compatibilityStatus: proven
       compatSource: 'https://github.com/optiscaler/OptiScaler/wiki/S.T.A.L.K.E.R.-2-Heart-of-Chornobyl'
       recommendedUpscaler: dlss

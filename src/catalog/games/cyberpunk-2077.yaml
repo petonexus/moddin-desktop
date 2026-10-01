@@ -50,6 +50,7 @@ modules:
       downloadUrl: https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/Optiscaler_0.9.4-final.20260718._MM.7z
       updateUrl: https://api.github.com/repos/optiscaler/OptiScaler/releases/latest
       sha256: 575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad
+      proxy: dxgi.dll
       proxyCandidates: dxgi.dll,wininet.dll
   - id: cheeky-foveated-dlss
     name: Cheeky Foveated DLSS
@@ -64,46 +65,40 @@ modules:
       addonFile: CheekyFoveatedDLSS.addon64
       compatibilityStatus: experimental
       compatibilityEvidence: upstream-not-confirmed
-  - id: ofxr-framegen
-    name: OFXR FrameGen
+  - id: ofxr-bridge
+    name: OFXR Bridge FrameGen
     description: Install the OFXR Bridge tray tool, apply the recommended optical-flow settings, and arm it before launching the VR game.
     category: vr
     status: available
     config:
-      version: 0.2.0
-      implementationVersion: 68
-      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.0/OFXR-Bridge-v0.2.0-V068.zip
-      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases?per_page=1
-      sha256: 3a4db67abd3d7fd013c9ef6878d8b7e23d312e84fe9c2c39ae509e4e554cb7f4
+      version: 0.2.1
+      downloadUrl: https://github.com/tig3rmast3r/OFXR-Bridge/releases/download/0.2.1/OFXR-Bridge-v0.2.1-V116.zip
+      updateUrl: https://api.github.com/repos/tig3rmast3r/OFXR-Bridge/releases/latest
+      sha256: db224491cbc9553a51fe55d08623d25864c4ec0a3d49bd76e9d6c4d9b2410c67
+      implementationVersion: 116
       backend: fidelityfx
       nvidiaPreset: medium
       nvidiaInputScale: 50
-      nvidiaBidirectional: 0
-      safetyNotes:
-        - OFXR Bridge is an experimental pre-release; it may produce artifacts, freeze, or crash depending on the game, VR mod, GPU, and runtime.
-        - The tray requires the Microsoft Visual C++ Redistributable x64. Keep the game non-elevated because OpenXR ignores per-user layers for elevated processes.
   - id: openxr
     name: OpenXR tools
     description: Manage OpenXR-related helpers and per-game VR configuration.
     category: vr
     status: planned
-  - id: uevr
-    name: UEVR engine-aware installer
-    description: Detect the game engine, resolve the newest compatible UEVR build, and keep Nightly, JoeyHodge, and AFW variants separate and reversible.
-    category: vr
-    status: available
-    config:
-      versionPolicy: latest
-      releaseApiUrl: https://api.github.com/repos/praydog/UEVR-nightly/releases/latest
-      afwReleaseApiUrl: https://api.github.com/repos/PureDark/UEVR/releases/latest
-      backendReleaseApiUrl: https://api.github.com/repos/joeyhodge/UEVR/releases/latest
-      defaultBackend: nightly
-      backendCandidates:
-        - nightly|available
-        - joey|available
-        - afw|experimental
-        - joey-afw|experimental
-      safetyNotes:
-        - UEVR is only eligible for Unreal Engine games in the supported UE 4.8-5.4 range; the local engine detection is a gate, not a compatibility guarantee.
-        - Nightly is verified with the upstream SHA-256 sidecar. JoeyHodge and AFW releases are official GitHub sources but may not publish a checksum sidecar.
-        - Close the game and UEVRInjector.exe before installing or changing a backend. Do not run UEVR, Steam, or the game as administrator.
+# `uevr` was listed here and removed. The comment that used to sit here
+# framed the choice as "either the recipe learns about REDengine, or the
+# module goes away" and left it open. It is the second one.
+#
+# UEVR is an Unreal Engine VR injector. Cyberpunk 2077 is REDengine, and
+# the redengine preset's own description says Moddin does not bundle a
+# UEVR-style VR injector for it. Teaching the recipe about REDengine is
+# not a data fix — it is asking a VR injector to support an engine it has
+# never supported, and whether that is even possible is not something this
+# repository can answer. So the module goes, and the game is left with the
+# VR stack that does apply: OFXR Bridge and OptiScaler.
+#
+# This removed two baselined defects at once, which is why they were filed
+# as one decision: the preset denying the module, and the recipe-engine
+# mismatch. Both baseline lines go with it.
+# -
+# To bring it back, someone has to show that UEVR works on REDengine. A
+# link, a forum report, or upstream saying so would be enough to reopen it.

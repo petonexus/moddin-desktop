@@ -1,3 +1,11 @@
+/** One capability-level revocation, carried *inside* the signed
+ *  catalog. It arrives inlined from `revoked-ids.json` by the community
+ *  repo's `regenerate_catalog.py`. */
+export interface CommunityRevocation {
+  id: string
+  reason: string
+}
+
 /**
  * Mirrors `crate::community_catalog::CommunityFetchResult` in Rust.
  * Returned by the `community_catalog_fetch` Tauri command.
@@ -21,6 +29,13 @@ export interface CommunityCatalog {
   generatedAt: string
   generator: string
   capabilities: CommunityCatalogEntry[]
+  /** The maintainers' kill switch, covered by the same signature as
+   *  `capabilities`. An absent field in a validly signed catalog is a
+   *  statement that nothing is revoked, not a failed load — see
+   *  `moddin-community-capabilities/SECURITY.md`, "Layer 6 — kill
+   *  switch". There is no `revocationsVerified` flag: the list is part
+   *  of the signed bytes, so `signatureVerified` already covers it. */
+  revoked: CommunityRevocation[]
 }
 
 export interface CommunityCatalogEntry {

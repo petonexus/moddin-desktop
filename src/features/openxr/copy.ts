@@ -22,6 +22,10 @@ const ptBR = {
   useForGame: 'Usar só neste jogo',
   makeSystem: 'Tornar padrão',
   applying: 'Aplicando…',
+  // UX-26: one of these two buttons per VR app on the machine, so the
+  // label carries the app it acts on. `{action}` stays the visible text,
+  // which keeps the two in step for voice control.
+  actionNamed: '{action} {name}',
   noRuntimes: 'Nenhum programa de VR foi encontrado. Instale e abra o SteamVR, o app da Meta ou outro programa compatível com OpenXR.',
   gameHint: 'A escolha para um jogo só vale quando você o abre pelo Moddin. O padrão do Windows continua o mesmo.',
   systemHint: 'Mudar o padrão afeta todos os jogos de VR e o Windows vai pedir permissão de administrador.',
@@ -29,11 +33,15 @@ const ptBR = {
   sourceGame: 'escolhido para o jogo',
   sourceSystem: 'padrão do Windows',
   sourceNone: 'nenhum',
+  cancelAction: 'Cancelar',
+  makeSystemConfirmTitle: 'Mudar o runtime de VR do Windows?',
+  makeSystemConfirmDescription: 'Todos os jogos de VR vão passar a usar este programa.',
+  makeSystemConfirmScope: 'A mudança vale para o Windows inteiro, não só para o jogo que está aberto aqui.',
+  makeSystemConfirmAdmin: 'O Windows vai pedir permissão de administrador para aplicar a mudança.',
   errorGenericTitle: 'Não consegui ler o estado do VR agora.',
   errorGenericWhy: 'O Windows recusou a consulta. Tente atualizar daqui a pouco. Se persistir, abra uma issue em github.com/petonexus/moddin-desktop.',
   errorUacTitle: 'O Windows pediu permissão de administrador e ela foi negada.',
   errorUacWhy: 'Sem essa permissão, o Moddin não consegue trocar o runtime OpenXR. Tente de novo e clique em "Sim" na janela do Windows.',
-  errorRawToggle: 'Ver detalhe técnico',
 } as const
 
 const openXrMessages = defineLocalizedCopy(
@@ -60,6 +68,7 @@ const openXrMessages = defineLocalizedCopy(
     useForGame: 'Use just for this game',
     makeSystem: 'Make default',
     applying: 'Applying…',
+    actionNamed: '{action} {name}',
     noRuntimes: 'No VR app was found. Install and open SteamVR, the Meta app or another OpenXR-compatible app.',
     gameHint: 'A per-game choice only applies when you open the game through Moddin. The Windows default stays the same.',
     systemHint: 'Changing the default affects every VR game, and Windows will ask for administrator permission.',
@@ -67,11 +76,15 @@ const openXrMessages = defineLocalizedCopy(
     sourceGame: 'picked for this game',
     sourceSystem: 'Windows default',
     sourceNone: 'none',
+    cancelAction: 'Cancel',
+    makeSystemConfirmTitle: 'Change the Windows VR runtime?',
+    makeSystemConfirmDescription: 'Every VR game will start using this program.',
+    makeSystemConfirmScope: 'The change applies to Windows as a whole, not just the game open here.',
+    makeSystemConfirmAdmin: 'Windows will ask for administrator permission to apply the change.',
     errorGenericTitle: 'Could not read the VR state right now.',
     errorGenericWhy: 'Windows refused the query. Try refreshing in a few seconds. If it persists, open an issue at github.com/petonexus/moddin-desktop.',
     errorUacTitle: 'Windows asked for administrator permission and it was denied.',
     errorUacWhy: 'Without that, Moddin cannot switch the OpenXR runtime. Try again and click "Yes" on the Windows prompt.',
-    errorRawToggle: 'Show technical detail',
   },
   {
     button: 'Sistema de VR',
@@ -95,6 +108,7 @@ const openXrMessages = defineLocalizedCopy(
     useForGame: 'Usar solo en este juego',
     makeSystem: 'Hacer predeterminado',
     applying: 'Aplicando…',
+    actionNamed: '{action} {name}',
     noRuntimes: 'No se encontró ningún programa de VR. Instala y abre SteamVR, la app de Meta u otro programa compatible con OpenXR.',
     gameHint: 'La elección por juego solo se aplica cuando lo abres desde Moddin. El predeterminado de Windows no cambia.',
     systemHint: 'Cambiar el predeterminado afecta a todos los juegos de VR y Windows pedirá permiso de administrador.',
@@ -102,14 +116,24 @@ const openXrMessages = defineLocalizedCopy(
     sourceGame: 'elegido para el juego',
     sourceSystem: 'predeterminado de Windows',
     sourceNone: 'ninguno',
+    cancelAction: 'Cancelar',
+    makeSystemConfirmTitle: '¿Cambiar el runtime de VR de Windows?',
+    makeSystemConfirmDescription: 'Todos los juegos de VR van a pasar a usar este programa.',
+    makeSystemConfirmScope: 'El cambio aplica a Windows entero, no solo al juego abierto aquí.',
+    makeSystemConfirmAdmin: 'Windows pedirá permiso de administrador para aplicar el cambio.',
     errorGenericTitle: 'No pude leer el estado de VR ahora mismo.',
     errorGenericWhy: 'Windows rechazó la consulta. Intenta actualizar en unos segundos. Si persiste, abre un issue en github.com/petonexus/moddin-desktop.',
     errorUacTitle: 'Windows pidió permiso de administrador y fue denegado.',
     errorUacWhy: 'Sin ese permiso, Moddin no puede cambiar el runtime OpenXR. Intenta otra vez y haz clic en "Sí" en la ventana de Windows.',
-    errorRawToggle: 'Ver detalle técnico',
   },
 )
 
 export function openXrCopyForLocale(locale: string) {
   return localizedCopyFor(openXrMessages, locale)
+}
+
+export function formatOpenXrCopy(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_match, key: string) =>
+    vars[key] !== undefined ? String(vars[key]) : `{${key}}`,
+  )
 }

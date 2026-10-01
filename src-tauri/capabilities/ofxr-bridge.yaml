@@ -1,7 +1,8 @@
 id: ofxr-bridge
 displayName: OFXR Bridge FrameGen
+description: Planned. Arms the OFXR-Bridge frame-generation layer for this game, written and registered by its own tray. The archive ships no manifest and the tray generates one at arm time, which is an interactive step a capability chain cannot yet express.
 category: vr
-status: available
+status: planned
 supportedEngines:
   - unreal5
   - redengine
@@ -53,7 +54,7 @@ configSchema:
   - name: extractedDir
     type: path
     required: true
-    description: Absolute path of the staging directory where the archive is extracted before files are copied into the game directory.
+    description: Absolute path of the staging directory the archive is extracted into before the runtime manifest is promoted out of it.
 checks:
   - id: archive-reachable
     label: OFXR archive reachable
@@ -80,53 +81,16 @@ checks:
     description: OFXR Bridge cannot apply frame generation unless the tray is alive.
     params:
       processName: OFXRBridgeTray.exe
-install:
-  - kind: extract-zip
-    description: Extract OFXR-Bridge archive into the staging directory.
-    params:
-      archivePathField: downloadUrl
-  - kind: move-file
-    description: Move the host runtime manifest into the OpenXR ApiLayers directory expected by the registry entry.
-    params:
-      fromField: extractedDir
-      toField: runtimePath
-  - kind: write-text-file
-    description: Render and write tray.ini with the configured backend / preset.
-    params:
-      pathField: trayIniPath
-      template: |
-        [tray]
-        backend={backend}
-        nvidia_preset={nvidiaPreset}
-        nvidia_input_scale={nvidiaInputScale}
-        diagnostics=0
-        overlay_position=upper_right
-  - kind: spawn-process
-    description: Launch the OFXR Bridge tray so the user can arm the layer from the system tray.
-    params:
-      executable: OFXRBridgeTray.exe
-
-verify:
-  - id: tray-running
-    label: OFXRBridgeTray.exe is running
-    kind: process-running
-    severity: warning
-    category: modulespecific
-    params:
-      processName: OFXRBridgeTray.exe
-
-uninstall:
-  - kind: kill-process
-    description: Stop OFXRBridgeTray.exe before removing files.
-    params:
-      processName: OFXRBridgeTray.exe
-      force: false
-  - kind: file-delete
-    description: Remove the local tray.ini written by install.
-    params:
-      pathField: trayIniPath
+install: []
+uninstall: []
 
 safetyNotes:
+  - This recipe is `planned` and installs nothing. It was `available`, and its install could not succeed. The chain's third step promoted `XR_APILAYER_XRFrameBridge_manual-{implementationVersion}.json` out of the extracted archive, and **no published release ships that file at any depth** — 0.2.1 and 0.2.0 of `tig3rmast3r/OFXR-Bridge` were both listed in full. The `move-file` therefore failed on every install, and the two steps after it (writing `tray.ini`, launching the tray) never ran.
+  - The file is not missing by accident. The tray generates the manifest and registers the layer itself, at arm time, after the user picks a backend from its system-tray UI. Upstream's own install steps are extract, run the tray, choose the backend. A chain that "promotes" the manifest is describing a step that does not exist upstream.
+  - So the blocker is a missing capability, not a missing file. Closing it needs a step that can run an interactive arming flow and wait for it — a step that blocks on a user action in another process and then reads back what that process wrote. There is no such step, and inventing one is a runner change rather than a recipe edit.
+  - Registering the layer is now expressible and was not before. The OpenXR loader reads an explicit layer from `HKLM\SOFTWARE\Khronos\OpenXR\ApiLayers`, and a `registry-write` with `data`/`dataField` can write exactly that value. What is still missing is the manifest the registration points at, which is the half the tray produces.
+  - The safety note this replaces read as though the promoted manifest were a real file whose absence was an edge case. It was unconditional, and a note describing a failure that always happens is worse than no note — it reads as reassurance.
+  - Every path in this recipe still comes from a `path`-typed config field, so the staging directory, the manifest and the tray all live outside the game folder by design. The transaction store refuses to back any of them up, so the runner reports each as not covered by Undo. A committed catalogue cannot supply those four fields either — they resolve under `%LOCALAPPDATA%` and no step expands an environment variable — so a collection naming this recipe refuses with `needsConfig`, which is the correct outcome rather than a missing feature.
   - OFXR Bridge is an experimental pre-release; it may produce artifacts, freezes, or crashes depending on the game, VR mod, GPU and runtime.
   - The tray requires the Microsoft Visual C++ Redistributable x64; keep the game non-elevated because Windows OpenXR does not apply per-user layers to elevated processes.
   - Requires the Game executable to be closed before install.

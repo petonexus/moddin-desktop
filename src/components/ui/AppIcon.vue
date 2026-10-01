@@ -7,7 +7,7 @@ export type IconName =
   | 'library' | 'history' | 'vr' | 'community' | 'activity' | 'refresh'
   | 'search' | 'check' | 'alert' | 'close' | 'external' | 'play' | 'undo'
   | 'info' | 'gamepad' | 'shield' | 'arrow-up' | 'folder' | 'globe'
-  | 'ai'
+  | 'ai' | 'terminal'
 
 withDefaults(defineProps<{ name: IconName; size?: number }>(), { size: 16 })
 
@@ -32,6 +32,7 @@ const paths: Record<IconName, string> = {
   folder: '<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>',
   ai: '<path d="M12 4 9 7H6a1 1 0 0 0-1 1v3l-3 3 3 3v3a1 1 0 0 0 1 1h3l3 3 3-3h3a1 1 0 0 0 1-1v-3l3-3-3-3V8a1 1 0 0 0-1-1h-3z"/><circle cx="10" cy="12" r="1.2"/><circle cx="14" cy="12" r="1.2"/>',
+  terminal: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 2.5 2.5-2.5 2.5"/><path d="M12.5 15h4"/>',
 }
 </script>
 

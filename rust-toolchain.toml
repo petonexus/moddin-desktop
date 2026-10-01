@@ -1,0 +1,16 @@
+# The Rust toolchain CI builds and tests with.
+#
+# `stable-msvc` (what ci.yml and SETUP-WINDOWS.bat used to select) is a
+# moving target: every push compiled against whatever stable happened to
+# be that week, so a green build on Monday could go red on Tuesday with
+# no change to the repository. Pin the exact release instead — this is
+# the version `stable` resolves to as of 2026-09-29, so pinning does not
+# change what CI builds today.
+#
+# `profile = "minimal"` installs rustc, cargo and rust-std only. The
+# components below are the two the quality gates need; nothing else in
+# the tree requires more (no wasm targets, no nightly, no rust-src).
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

@@ -2,7 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'refactor/**']
+    # Every branch prefix CONTRIBUTING.md documents gets feedback. The
+    # list used to be main/feat/**/refactor/** only, so a fix/,
+    # hardening/, docs/ or chore/ branch shipped unverified until
+    # someone opened a PR against it.
+    branches:
+      - main
+      - 'feat/**'
+      - 'refactor/**'
+      - 'fix/**'
+      - 'hardening/**'
+      - 'docs/**'
+      - 'chore/**'
   pull_request:
     branches: [main]
 
@@ -18,6 +29,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The community capabilities repo is a submodule and the
+          # capability-kind parity check reads its validator. Checking
+          # out without it made that check impossible, which is why the
+          # drift it exists to catch went unnoticed.
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,39 +42,265 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The `tauri` dependency needs its `custom-protocol` Cargo feature, and
+      # without it the release build still compiles, still bundles and still
+      # installs — the window just loads http://127.0.0.1:1420 and renders
+      # nothing. Nothing in `cargo check`, `cargo test` or the installer build
+      # can see it; the symptom is a blank app on a user's machine, so the
+      # manifest is all a cheap gate can check. Zero dependencies, and run
+      # through `node` directly so it really does execute before the install
+      # below, on a bare checkout, with nothing able to fail first.
+      - name: Check bundled-build features
+        run: node scripts/check-bundle-features.mjs
+
       - name: Install frontend dependencies
         run: npm ci
+
+      # Before the build on purpose. The catalogue is data with no
+      # other gate, and it is not validatable by eyeball: a game shipped
+      # declaring RE Engine while offering UEVR, OFXR and Cheeky, and
+      # nothing noticed. The check declares no dependencies, so it runs
+      # on a bare checkout, and it gets its own step so a red run names
+      # the data problem instead of a build error.
+      - name: Validate the game catalogue
+        run: npm run check:catalog
+
+      - name: Frontend tests
+        # ROADMAP F-12. The four ConfirmDialog prompts and the
+        # unsigned-consent gate shipped with nothing asserting they
+        # appear; this is the gate that stops the next one from doing
+        # the same. Kept as its own step so a red run names the cause.
+        run: npm run test
 
       - name: Check and build frontend
         run: |
           npm run check:architecture
+          npm run check:capability-kinds
           npm run build
 
+      # The community repo lives in a submodule, so this only runs when
+      # it is actually checked out. The parity guard inside the desktop
+      # repo is the one that always runs.
       - name: Validate moddin-agent capability templates
         working-directory: moddin-agent
         run: |
           npm ci
           node scripts/validate-templates.mjs
 
+      - name: Validate community capabilities
+        working-directory: moddin-community-capabilities
+        run: |
+          python -m pip install --quiet -r requirements.txt
+          python scripts/validate_capability.py capabilities/
+
       - name: Smoke test moddin-agent MCP server
         working-directory: moddin-agent
         run: node scripts/smoke-test.mjs
 
-      - name: Setup Rust stable MSVC
+      - name: Setup Rust toolchain
         shell: pwsh
+        # rust-toolchain.toml at the repo root pins the exact release,
+        # the profile and the components (rustfmt, clippy). `rustup show`
+        # is what installs and selects it; `rustup default stable-msvc`
+        # was the moving target this replaces.
         run: |
-          rustup default stable-msvc
+          rustup show
           rustc --version
           cargo --version
+          rustfmt --version
+          cargo clippy --version
 
+      # ------------------------------------------------------------------
       # tauri.conf.json bundles ../moddin-runtime/{node.exe,moddin-agent},
       # and tauri-build validates those resource paths during cargo's
       # build script — so cargo test/check fails without them. The folder
       # is gitignored and generated; this is the documented step that
       # creates it (same one developers run before `npm run tauri build`).
+      #
+      # It is also the slowest thing in this workflow: a ~28 MB
+      # digest-verified Node download plus a full `npm install` of the
+      # staged agent runtime, on every push, to produce output that is a
+      # pure function of its inputs. So it is cached.
+      - name: Resolve runtime bundle cache key
+        id: runtime-key
+        shell: pwsh
+        env:
+          # Everything the bundle is derived from: the script itself
+          # (which pins the Node version and the staged manifest), and
+          # the agent sources it copies and installs from.
+          INPUT_HASH: >-
+            ${{ hashFiles('moddin-runtime/bundle-runtime.ps1',
+                          'moddin-agent/package.json',
+                          'moddin-agent/package-lock.json',
+                          'moddin-agent/src/**',
+                          'moddin-agent/scripts/**',
+                          'moddin-agent/templates/**',
+                          'moddin-agent/schema/**') }}
+        run: |
+          # hashFiles returns the empty string when a pattern matches
+          # nothing. Left unchecked, that collapses the key to one entry
+          # shared by every commit in history, and the first job to fill
+          # it would hand the rest a bundle built from inputs nobody
+          # looked at. Fail the run instead.
+          if (-not $env:INPUT_HASH) {
+            throw "hashFiles matched no inputs, so the runtime cache key would be a single shared entry: '$env:INPUT_HASH'"
+          }
+          "hash=$env:INPUT_HASH" >> $env:GITHUB_OUTPUT
+          Write-Host "runtime bundle key: $env:INPUT_HASH"
+
+      - name: Restore runtime bundle
+        id: runtime-cache
+        uses: actions/cache@v4
+        with:
+          # No `restore-keys`. A prefix fallback would let a job whose
+          # inputs differ from the cached one run `cargo test` against
+          # a bundle staged from a different commit — the exact "stale
+          # bundle" this step exists to rule out.
+          path: |
+            moddin-runtime/node.exe
+            moddin-runtime/moddin-agent
+            moddin-runtime/BUNDLE_OK
+          # v2: the bundle no longer carries node.zip, tmp/ or
+          # node_modules.old, and it installs with `npm ci` from
+          # moddin-agent/package-lock.json. A v1 cache entry holds a
+          # staged tree with a 56 MB dev node_modules.old in it, and
+          # caching it back out would keep shipping that.
+          key: moddin-runtime-v2-${{ runner.os }}-${{ steps.runtime-key.outputs.hash }}
+
       - name: Bundle moddin-runtime
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: pwsh -NoProfile -File ./moddin-runtime/bundle-runtime.ps1
+
+      - name: Verify runtime bundle
+        shell: pwsh
+        # A cache hit is a claim that the bundle on disk was built from
+        # exactly these inputs. This step is the claim's audit, and it
+        # fails the job rather than warning: cargo test and cargo check
+        # below are about to treat this folder as the shipped runtime.
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'moddin-runtime'
+          $agent = Join-Path $out 'moddin-agent'
+
+          $required = @(
+            (Join-Path $out 'node.exe'),
+            (Join-Path $out 'BUNDLE_OK'),
+            (Join-Path $agent 'package.json'),
+            (Join-Path $agent 'package-lock.json'),
+            (Join-Path $agent 'node_modules'),
+            (Join-Path $agent 'scripts\smoke-test.mjs')
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            throw "Runtime bundle is incomplete (cache hit: '${{ steps.runtime-cache.outputs.cache-hit }}'). Missing: $($missing -join ', ')"
+          }
+
+          # The staged manifest is generated by bundle-runtime.ps1, not
+          # copied. A cache that restored the agent's dev manifest
+          # instead would carry devDependencies into the installer.
+          $staged = Get-Content (Join-Path $agent 'package.json') -Raw | ConvertFrom-Json
+          if ($staged.name -ne 'moddin-agent-runtime') {
+            throw "Staged runtime manifest is '$($staged.name)', not 'moddin-agent-runtime'. The cache is holding a dev copy."
+          }
+          foreach ($dev in @('typescript', '@yao-pkg/pkg', 'vitest')) {
+            if ($null -ne $staged.dependencies.$dev) {
+              throw "Staged runtime manifest still declares the dev dependency '$dev'."
+            }
+          }
+          foreach ($prod in @('@modelcontextprotocol/sdk', 'ajv', 'ajv-formats', 'yaml')) {
+            $pkg = $prod.Replace('/', '\')
+            if ($null -eq $staged.dependencies.$prod) { throw "Staged manifest is missing '$prod'." }
+            if (-not (Test-Path (Join-Path $agent "node_modules\$pkg"))) { throw "Staged runtime has no node_modules\$pkg." }
+          }
+
+          # The install is `npm ci` against this file, so it is the one
+          # thing deciding which versions ship (F-13 / O-06). If the
+          # staged copy is not the committed one, the install was
+          # resolved from something else and the guarantee is gone.
+          $srcLock = (Get-FileHash 'moddin-agent\package-lock.json' -Algorithm SHA256).Hash
+          $stagedLock = (Get-FileHash (Join-Path $agent 'package-lock.json') -Algorithm SHA256).Hash
+          if ($srcLock -ne $stagedLock) {
+            throw "Staged package-lock.json is not moddin-agent\package-lock.json byte for byte."
+          }
+
+          # Every shipped version is exact, because the install is
+          # `npm ci` against moddin-agent/package-lock.json (F-13 / O-06).
+          # A caret here would mean the install and the manifest had
+          # drifted apart, which is the state this replaced.
+          foreach ($prop in $staged.dependencies.PSObject.Properties) {
+            if ($prop.Value -notmatch '^\d+\.\d+\.\d+([-+].*)?$') {
+              throw "Staged manifest pins '$($prop.Name)' as '$($prop.Value)', which is a range, not a version."
+            }
+          }
+
+          # Build scratch and the previous script's staging leftover.
+          # tauri.conf.json lists the whole moddin-agent directory as a
+          # bundle resource, so anything left inside it ships. These
+          # were 28.5 MB and 56 MB respectively, and a cached bundle
+          # that grew them is how they stayed invisible.
+          foreach ($scratch in @(
+            (Join-Path $out 'node.zip'),
+            (Join-Path $out 'tmp'),
+            (Join-Path $agent 'node_modules.old')
+          )) {
+            if (Test-Path $scratch) { throw "Build scratch '$scratch' survived the bundler and would be bundled." }
+          }
+
+          # The bundle ships its own pinned Node; a cache that restored
+          # the runner's own would still build, just not the artifact.
+          $nodeVersion = (& (Join-Path $out 'node.exe') --version).Trim()
+          if ($nodeVersion -ne 'v20.19.5') {
+            throw "Bundled node.exe reports $nodeVersion, expected v20.19.5."
+          }
+
+          # The same smoke test the bundler runs before writing
+          # BUNDLE_OK: a cached bundle is re-proven, not assumed.
+          $env:MODDIN_PROJECT_ROOT = (Resolve-Path '.').Path
+          & (Join-Path $out 'node.exe') (Join-Path $agent 'scripts\smoke-test.mjs')
+          if ($LASTEXITCODE -ne 0) { throw "Runtime smoke test failed on the '${{ steps.runtime-cache.outputs.cache-hit }}' bundle." }
+          $env:MODDIN_PROJECT_ROOT = $null
+          Write-Host "runtime bundle verified (cache hit: '${{ steps.runtime-cache.outputs.cache-hit }}', node $nodeVersion)"
+
+      # ------------------------------------------------------------------
+      # Both gates are blocking. They were added reported-only while the
+      # backlog stood at 3,653 `cargo fmt` diff lines across 34 files and
+      # 144 clippy diagnostics across 30 lints (53 of them `dead_code`
+      # from the nine unwired module implementations in docs/
+      # BACKEND-MODULES.md). That backlog is now cleared, so there is
+      # nothing left to report and nothing left to justify `continue-on-error`.
+      #
+      # `cargo fmt --check` needs no flags to block: it exits non-zero on
+      # any diff. `cargo clippy` does — without `-- -D warnings` it exits
+      # 0 and only prints its findings, which is precisely why the step
+      # looked green while the lints were outstanding.
+      #
+      # Deliberately no `[lints]` allow-list in src-tauri/Cargo.toml: the
+      # tree is clean without one, and a blanket allow would turn the gate
+      # into a guard that has been switched off. The only suppressions
+      # left are three item-scoped `#[allow(dead_code, reason = ...)]` on
+      # the un-adopted `Module` contract in src-tauri/src/module.rs, each
+      # stating why the code exists and why it is not compiled into the
+      # shipped binary.
+      #
+      # These two sit BELOW the runtime bundle on purpose, and the ordering
+      # is load-bearing rather than cosmetic. `cargo fmt` does not compile,
+      # so it passed wherever it was put — but `cargo clippy` compiles the
+      # crate, which runs tauri's build script, and that script copies
+      # every path in `bundle.resources` unconditionally (tauri-build
+      # `lib.rs`: `copy_resources(ResourcePaths::new(res, true), …)`), erroring
+      # with `resource path '..\moddin-runtime\node.exe' doesn't exist` on a
+      # checkout where the gitignored bundle has not been staged. The first
+      # run with these gates above the bundle failed in the Clippy step for
+      # exactly that reason, with the gates' own history never printed.
+      # `main` had the bundle before every Rust compile and was green; these
+      # two were inserted above it and broke it. **Any new step that compiles
+      # Rust belongs after `Verify runtime bundle`, not before it.**
+      - name: Format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml

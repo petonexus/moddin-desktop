@@ -2,12 +2,59 @@ export type CapabilityCategory = 'vr' | 'graphics' | 'qol' | 'system'
 export type CapabilityStatus = 'available' | 'planned'
 export type CheckCategory = 'global' | 'category' | 'modulespecific'
 export type CheckSeverity = 'info' | 'warning' | 'blocker'
+
+/**
+ * Engine ids the shipped catalogue knows about — the ones under
+ * `src/catalog/engines/`.
+ *
+ * Mirrors `crate::capability::KNOWN_ENGINES`; the two, plus the
+ * `supportedEngines.items.enum` in the agent JSON schema, are compared
+ * by `scripts/check-capability-kind-parity.mjs`. An id outside this
+ * list is never rejected by the backend — it resolves to
+ * `unknownGameEngine`, which gates nothing.
+ */
+export type EngineId = 'idtech' | 're-engine' | 'redengine' | 'unity' | 'unreal5'
+
+/**
+ * Why a capability is (or is not) offered for a game, decided once in
+ * the backend and rendered here. Mirrors
+ * `crate::capability::EngineMatch`; the card renders this instead of
+ * re-deriving the rule, which is how `supportedEngines` was parsed and
+ * then ignored for a release.
+ */
+export type EngineMatch =
+  | { verdict: 'noGameEngine' }
+  | { verdict: 'engineAgnostic' }
+  | { verdict: 'unknownGameEngine'; engine: string }
+  | { verdict: 'supported' }
+  | { verdict: 'mismatch'; supported: EngineId[] }
+
+/**
+ * Step kinds the runner can execute.
+ *
+ * Kept in lockstep with `builtin_steps::known_kinds()` — the order
+ * mirrors the dispatch arm order there. `scripts/check-capability-kind-parity.mjs`
+ * fails the build if this list, the community validator's
+ * `KNOWN_STEP_KINDS` and the Rust list ever disagree, because a step
+ * kind that exists in the backend but not here cannot be typed by the
+ * AI/MCP authoring path at all.
+ */
 export type StepKind =
+  | 'download-file'
   | 'extract-zip'
+  | 'git-checkout'
+  | 'build-project'
   | 'verify-hash'
   | 'file-delete'
   | 'write-text-file'
+  | 'write-binary-file'
   | 'spawn-process'
+  | 'move-file'
+  | 'kill-process'
+  | 'registry-write'
+  | 'registry-delete'
+
+/** Check kinds, mirroring `builtin_checks`. See {@link StepKind}. */
 export type CheckKind =
   | 'process-running'
   | 'file-exists'
@@ -70,9 +117,19 @@ export interface StepSpec {
 export interface CapabilitySpec {
   id: string
   displayName: string
+  /** One sentence written for a person: what the mod does for the
+   * player. Rendered as the card's supporting line; the UI falls back to
+   * the technical id when a recipe does not declare one. */
+  description?: string
   category: CapabilityCategory
   status: CapabilityStatus
-  supportedEngines?: string[]
+  /**
+   * Engines this recipe is built for. Absent or empty means **every**
+   * engine, not none — the backend gate treats a recipe that declares
+   * nothing as engine-agnostic, and `scripts/check-capability-kind-parity.mjs`
+   * holds the other three declarations of that rule in line.
+   */
+  supportedEngines?: readonly EngineId[]
   /** Ids of capabilities that must be installed before this one. */
   dependencies?: string[]
   compatibility?: CapabilityCompatibility
@@ -90,9 +147,27 @@ export interface CapabilitySpec {
 export interface CapabilitySummary {
   id: string
   displayName: string
+  /** Player-facing one-liner. Falls back to `id` in the UI when a recipe
+   * does not declare one. */
+  description?: string
   category: CapabilityCategory
   status: CapabilityStatus
   origin: CapabilityOrigin
+  /**
+   * Engines the recipe declares. Empty means every engine. Read-only
+   * because it mirrors a wire struct the UI never mutates, and it
+   * accepts the `as const` fixtures the tests build without weakening
+   * anything a caller does.
+   *
+   * `capability_list` and `capability_reload` always send both engine
+   * fields, so they are required on the wire. They are optional in the
+   * mirror only so a summary literal does not have to name a verdict it
+   * does not care about. A missing `engineMatch` means "no gate was
+   * decided", not "every engine".
+   */
+  supportedEngines?: readonly EngineId[]
+  /** The engine verdict the backend decided. See {@link EngineMatch}. */
+  engineMatch?: EngineMatch
 }
 
 export interface ResolvedConfig {
@@ -115,6 +190,12 @@ export interface InstallResult {
     kind: string
     description: string | null
     affectedPaths: string[]
+    /**
+     * Full commit SHA a `git-checkout` landed on, when the step kind
+     * produces one. The tag a recipe pins can be moved upstream; the
+     * commit cannot, so this is what makes an install reproducible.
+     */
+    resolvedCommit?: string
   }>
   affectedPaths: string[]
   /** Ids auto-installed as dependencies of this install, in install order. */

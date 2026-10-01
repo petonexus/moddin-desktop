@@ -1,28 +1,26 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
-import { openXrCopyForLocale } from './copy'
+import BaseDialog from '../../components/ui/BaseDialog.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
+import ErrorCallout from '../../components/ui/ErrorCallout.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
+import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
+import { useBackendText } from '../../composables/useBackendText'
+import { openXrCopyForLocale, formatOpenXrCopy } from './copy'
 import { useOpenXrManager } from './useOpenXrManager'
 
 const { locale } = useI18n()
 const copy = computed(() => openXrCopyForLocale(locale.value))
-
-const friendlyError = computed<{ title: string; why: string }>(() => {
-  const raw = error.value ?? ''
-  const c = copy.value
-  if (/admin|UAC|denied|permission|elevation|0x80070005|0x80070252/i.test(raw)) {
-    return { title: c.errorUacTitle, why: c.errorUacWhy }
-  }
-  return { title: c.errorGenericTitle, why: c.errorGenericWhy }
-})
+const { text } = useBackendText()
 
 const {
   open,
-  dialogElement,
   loading,
   busyAction,
   error,
+  errorContext,
   state,
   selectedGameId,
   gameChoices,
@@ -34,6 +32,38 @@ const {
   setGameRuntime,
   setSystemRuntime,
 } = useOpenXrManager()
+
+/** UX-26: the per-app button name, built from the visible text plus the app. */
+function formatRuntimeAction(action: string, name: string): string {
+  return formatOpenXrCopy(copy.value.actionNamed, { action, name })
+}
+
+const errorRules = computed<FriendlyErrorRule[]>(() => {
+  const c = copy.value
+  return [
+    { match: /admin|UAC|denied|permission|elevation|0x80070005|0x80070252/i, title: c.errorUacTitle, why: c.errorUacWhy, showRaw: true },
+    { title: c.errorGenericTitle, why: c.errorGenericWhy, showRaw: true },
+  ]
+})
+
+const friendlyError = useFriendlyError({ error, rules: () => errorRules.value, context: errorContext })
+
+// Making a runtime the Windows-wide default writes to HKLM and prompts
+// for elevation. It changes every VR game on the machine, not the one
+// on screen, so it gets a confirmation of its own rather than living
+// in a passive callout at the bottom of the dialog.
+const pendingSystemRuntime = ref<{ name: string; manifestPath: string } | null>(null)
+
+function askSetSystemRuntime(runtime: { name: string; manifestPath: string }) {
+  pendingSystemRuntime.value = runtime
+}
+
+async function confirmSetSystemRuntime() {
+  const runtime = pendingSystemRuntime.value
+  if (!runtime) return
+  pendingSystemRuntime.value = null
+  await setSystemRuntime(runtime.manifestPath)
+}
 
 function effectiveSourceLabel() {
   if (state.value?.effectiveSource === 'game') return copy.value.sourceGame
@@ -49,126 +79,128 @@ function effectiveSourceLabel() {
   </button>
 
   <Teleport to="body">
-    <div v-if="open" class="dialog-backdrop" @click.self="closeManager">
-      <section
-        ref="dialogElement"
-        class="dialog dialog-lg"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="copy.title"
-        tabindex="-1"
-      >
-        <header class="dialog-header">
-          <div>
-            <h2>{{ copy.title }}</h2>
-            <p class="dialog-description">{{ copy.subtitle }}</p>
+    <BaseDialog
+      v-if="open"
+      size="lg"
+      :title="copy.title"
+      :description="copy.subtitle"
+      @close="closeManager"
+    >
+      <div class="openxr-toolbar">
+        <label class="field">
+          <span>{{ copy.selectGame }}</span>
+          <select v-model="selectedGameId" class="select">
+            <option value="">{{ copy.systemOnly }}</option>
+            <option v-for="game in gameChoices" :key="game.gameId" :value="game.gameId">{{ game.label }}</option>
+          </select>
+        </label>
+        <button class="btn btn-sm" type="button" :disabled="loading || busyAction !== null" @click="inspect">
+          <AppIcon name="refresh" :size="14" />
+          {{ copy.refresh }}
+        </button>
+      </div>
+
+      <ErrorCallout :error="friendlyError" />
+      <EmptyState v-if="loading && !state" busy />
+
+      <template v-if="state">
+        <div class="fact-grid">
+          <div class="fact">
+            <span>{{ copy.windowsRuntime }}</span>
+            <strong>{{ state.activeRuntimeName ?? copy.noRuntime }}</strong>
           </div>
-          <button class="btn btn-icon" type="button" :aria-label="copy.close" @click="closeManager">
-            <AppIcon name="close" :size="18" />
-          </button>
-        </header>
-
-        <div class="dialog-body">
-          <div class="openxr-toolbar">
-            <label class="field">
-              <span>{{ copy.selectGame }}</span>
-              <select v-model="selectedGameId" class="select">
-                <option value="">{{ copy.systemOnly }}</option>
-                <option v-for="game in gameChoices" :key="game.gameId" :value="game.gameId">{{ game.label }}</option>
-              </select>
-            </label>
-            <button class="btn btn-sm" type="button" :disabled="loading || busyAction !== null" @click="inspect">
-              <AppIcon name="refresh" :size="14" />
-              {{ copy.refresh }}
-            </button>
+          <div v-if="selectedGameId" class="fact">
+            <span>{{ copy.effectiveRuntime }} · {{ effectiveSourceLabel() }}</span>
+            <strong>{{ state.effectiveRuntimeName ?? copy.noRuntime }}</strong>
           </div>
-
-          <div v-if="error" class="callout callout-danger" role="alert">
-            <strong>{{ friendlyError.title }}</strong>
-            <p>{{ friendlyError.why }}</p>
-            <details class="callout-raw">
-              <summary>{{ copy.errorRawToggle }}</summary>
-              <code>{{ error }}</code>
-            </details>
-          </div>
-          <div v-if="loading && !state" class="empty-state"><span class="spinner" /></div>
-
-          <template v-if="state">
-            <div class="fact-grid">
-              <div class="fact">
-                <span>{{ copy.windowsRuntime }}</span>
-                <strong>{{ state.activeRuntimeName ?? copy.noRuntime }}</strong>
-              </div>
-              <div v-if="selectedGameId" class="fact">
-                <span>{{ copy.effectiveRuntime }} · {{ effectiveSourceLabel() }}</span>
-                <strong>{{ state.effectiveRuntimeName ?? copy.noRuntime }}</strong>
-              </div>
-            </div>
-
-            <div v-if="state.warnings.length" class="callout callout-warning">
-              <AppIcon class="callout-icon" name="alert" />
-              <ul class="note-list">
-                <li v-for="warning in state.warnings" :key="warning">{{ warning }}</li>
-              </ul>
-            </div>
-
-            <section class="dialog-section">
-              <h3>{{ copy.runtimes }}</h3>
-              <div v-if="!state.runtimes.length" class="empty-state">{{ copy.noRuntimes }}</div>
-              <div v-else class="openxr-runtime-list">
-                <article v-for="runtime in state.runtimes" :key="runtime.manifestPath" class="openxr-runtime">
-                  <div class="openxr-runtime-copy">
-                    <div class="openxr-runtime-title">
-                      <strong>{{ runtime.name }}</strong>
-                      <span v-if="runtime.active" class="badge badge-success">{{ copy.active }}</span>
-                      <span v-if="isSelectedForGame(runtime)" class="badge badge-accent">{{ copy.selected }}</span>
-                      <span v-if="!runtime.enabled" class="badge">{{ copy.disabled }}</span>
-                      <span v-if="!runtime.manifestExists" class="badge badge-danger">{{ copy.missingManifest }}</span>
-                      <span v-else-if="!runtime.libraryExists" class="badge badge-warning">{{ copy.missingLibrary }}</span>
-                    </div>
-                    <p class="path-text">{{ runtime.manifestPath }}</p>
-                  </div>
-                  <div class="openxr-runtime-actions">
-                    <button
-                      v-if="selectedGameId"
-                      class="btn btn-sm"
-                      :class="{ 'is-loading': busyAction === `game:${runtime.manifestPath}` }"
-                      type="button"
-                      :disabled="!runtimeUsable(runtime) || busyAction !== null || isSelectedForGame(runtime)"
-                      @click="setGameRuntime(runtime.manifestPath)"
-                    >
-                      {{ busyAction === `game:${runtime.manifestPath}` ? copy.applying : copy.useForGame }}
-                    </button>
-                    <button
-                      class="btn btn-sm"
-                      :class="{ 'btn-primary': !selectedGameId, 'is-loading': busyAction === `system:${runtime.manifestPath}` }"
-                      type="button"
-                      :disabled="!runtimeUsable(runtime) || busyAction !== null || runtime.active"
-                      @click="setSystemRuntime(runtime.manifestPath)"
-                    >
-                      {{ busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem }}
-                    </button>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <div class="callout callout-info">
-              <AppIcon class="callout-icon" name="info" />
-              <div>
-                <p v-if="selectedGameId">{{ copy.gameHint }}</p>
-                <p>{{ copy.systemHint }}</p>
-              </div>
-            </div>
-            <div v-if="selectedGameId && state.gameOverride !== null">
-              <button class="btn btn-ghost btn-sm" type="button" :disabled="busyAction !== null" @click="setGameRuntime(null)">
-                {{ copy.systemDefault }}
-              </button>
-            </div>
-          </template>
         </div>
-      </section>
-    </div>
+
+        <div v-if="state.warnings.length" class="callout callout-warning">
+          <AppIcon class="callout-icon" name="alert" />
+          <ul class="note-list">
+            <li v-for="(warning, index) in state.warnings" :key="index">{{ text(warning) }}</li>
+          </ul>
+        </div>
+
+        <section class="dialog-section">
+          <h3>{{ copy.runtimes }}</h3>
+          <EmptyState v-if="!state.runtimes.length" :description="copy.noRuntimes" />
+          <div v-else class="openxr-runtime-list">
+            <article
+              v-for="runtime in state.runtimes"
+              :key="runtime.manifestPath"
+              class="openxr-runtime"
+              :aria-busy="busyAction?.endsWith(runtime.manifestPath) ?? false"
+            >
+              <div class="openxr-runtime-copy">
+                <div class="openxr-runtime-title">
+                  <strong>{{ runtime.name }}</strong>
+                  <span v-if="runtime.active" class="badge badge-success">{{ copy.active }}</span>
+                  <span v-if="isSelectedForGame(runtime)" class="badge badge-accent">{{ copy.selected }}</span>
+                  <span v-if="!runtime.enabled" class="badge">{{ copy.disabled }}</span>
+                  <span v-if="!runtime.manifestExists" class="badge badge-danger">{{ copy.missingManifest }}</span>
+                  <span v-else-if="!runtime.libraryExists" class="badge badge-warning">{{ copy.missingLibrary }}</span>
+                </div>
+                <p class="path-text">{{ runtime.manifestPath }}</p>
+              </div>
+              <div class="openxr-runtime-actions">
+                <!--
+                  UX-26: one "Use just for this game" and one "Make
+                  default" per runtime, so tabbing through the list read
+                  as the same button six times. The name carries the
+                  runtime it acts on, and keeps the visible text in it.
+                -->
+                <button
+                  v-if="selectedGameId"
+                  class="btn btn-sm"
+                  :class="{ 'is-loading': busyAction === `game:${runtime.manifestPath}` }"
+                  type="button"
+                  :disabled="!runtimeUsable(runtime) || busyAction !== null || isSelectedForGame(runtime)"
+                  :aria-label="formatRuntimeAction(busyAction === `game:${runtime.manifestPath}` ? copy.applying : copy.useForGame, runtime.name)"
+                  @click="setGameRuntime(runtime.manifestPath)"
+                >
+                  {{ busyAction === `game:${runtime.manifestPath}` ? copy.applying : copy.useForGame }}
+                </button>
+                <button
+                  class="btn btn-sm"
+                  :class="{ 'btn-primary': !selectedGameId, 'is-loading': busyAction === `system:${runtime.manifestPath}` }"
+                  type="button"
+                  :disabled="!runtimeUsable(runtime) || busyAction !== null || runtime.active"
+                  :aria-label="formatRuntimeAction(busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem, runtime.name)"
+                  @click="askSetSystemRuntime(runtime)"
+                >
+                  {{ busyAction === `system:${runtime.manifestPath}` ? copy.applying : copy.makeSystem }}
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <div class="callout callout-info">
+          <AppIcon class="callout-icon" name="info" />
+          <div>
+            <p v-if="selectedGameId">{{ copy.gameHint }}</p>
+            <p>{{ copy.systemHint }}</p>
+          </div>
+        </div>
+        <div v-if="selectedGameId && state.gameOverride !== null">
+          <button class="btn btn-ghost btn-sm" type="button" :disabled="busyAction !== null" @click="setGameRuntime(null)">
+            {{ copy.systemDefault }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
+    <ConfirmDialog
+      v-if="pendingSystemRuntime"
+      :title="copy.makeSystemConfirmTitle"
+      :description="copy.makeSystemConfirmDescription"
+      :confirm-label="copy.makeSystem"
+      :cancel-label="copy.cancelAction"
+      :details="[copy.makeSystemConfirmScope, copy.makeSystemConfirmAdmin]"
+      @close="pendingSystemRuntime = null"
+      @confirm="confirmSetSystemRuntime"
+    />
   </Teleport>
 </template>
 

@@ -1,5 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 import type { CapabilitySpec, CapabilitySummary } from '../../types/capability'
+import { resolveCatalogConfig } from '../../services/catalog'
+import { missingRequiredConfigFields, seedConfigValues } from './config'
 import {
   evaluateCapability,
   getCapabilityCompatibility,
@@ -8,17 +10,10 @@ import {
   listCapabilities,
   uninstallCapability,
 } from './service'
-import type { CapabilityCardState, CapabilityConfigValue, UseCapabilityModulesOptions } from './types'
+import type { CapabilityCardState, UseCapabilityModulesOptions } from './types'
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : String(error)
-}
-
-function defaultFor(fieldType: string, fallback: string | number | boolean | undefined): CapabilityConfigValue {
-  if (fallback !== undefined) return fallback
-  if (fieldType === 'boolean') return false
-  if (fieldType === 'number') return 0
-  return ''
 }
 
 /**
@@ -44,10 +39,17 @@ export function hasCompatibilityConstraint(spec: CapabilitySpec | null | undefin
  * dedicated installer for them. Everything else the registry knows,
  * including `builtIn` specs like BepInEx, surfaces as a card.
  *
- * v1 deliberately does NOT engine-gate the list: `capability_list` returns
- * summaries only (no `supportedEngines`), and inventing a filter without
- * data would hide cards randomly. Once a per-spec engine gate is wanted,
- * the cached `capability_get` specs below already carry `supportedEngines`.
+ * Engine gating happens in the backend, not here. It used not to happen
+ * at all, because `capability_list` returned summaries with no
+ * `supportedEngines` and a filter invented on this side would have
+ * hidden cards at random. The summaries now carry an `engineMatch`
+ * verdict the runner computed while it already had the spec in hand, and
+ * the gate is `CapabilitySpec::engine_match` in Rust: a recipe that
+ * names engines and does not name the game's is held back; a recipe
+ * that names none, or a game that declares no engine, is shown. The
+ * reason matters here, because it is why `engine()` is passed instead
+ * of filtered afterwards — the "no engine means everything" case is a
+ * decision about the user's data, not a detail of the filter.
  */
 export function useCapabilityModules(options: UseCapabilityModulesOptions) {
   const capabilities = ref<CapabilitySummary[]>([])
@@ -81,13 +83,26 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     return state
   }
 
-  function applySpecDefaults(state: CapabilityCardState) {
+  /**
+   * Fill the config form from the answer the catalogue already holds for
+   * this game — the per-game `config:` block behind the module card — and
+   * from the recipe's own defaults behind it. A field the user already
+   * filled keeps its value, so the form stays overridable: this is a
+   * pre-fill, not a lock.
+   */
+  function applySpecDefaults(state: CapabilityCardState, capabilityId: string) {
     const schema = state.spec?.configSchema ?? []
-    for (const field of schema) {
-      if (state.configValues[field.name] === undefined) {
-        state.configValues[field.name] = defaultFor(field.type, field.default)
-      }
-    }
+    const seeded = seedConfigValues(schema, catalogueConfigFor(capabilityId), state.configValues)
+    for (const [name, value] of Object.entries(seeded)) state.configValues[name] = value
+  }
+
+  /**
+   * The catalogue's values for the selected game. Read through a helper
+   * rather than inlined so the one lookup — and its tolerance for "this
+   * game declares no such module" — stays in one place.
+   */
+  function catalogueConfigFor(capabilityId: string): Record<string, string | string[]> {
+    return resolveCatalogConfig(options.gameId(), capabilityId)
   }
 
   /** Fetch (once) and cache the full spec; needed for the config form. */
@@ -97,7 +112,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     state.specLoading = true
     try {
       state.spec = await getCapabilitySpec(capability.id)
-      applySpecDefaults(state)
+      applySpecDefaults(state, capability.id)
       // Specs that pin a game build get probed right away so the card can
       // warn (and offer a forced install) before the user clicks Apply.
       if (hasCompatibilityConstraint(state.spec)) await refreshCompatibility(capability)
@@ -152,7 +167,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
     loading.value = true
     loadPromise = (async () => {
       try {
-        capabilities.value = await listCapabilities()
+        capabilities.value = await listCapabilities(options.engine())
         loadError.value = null
         loaded.value = true
         // Prefetch full specs so the per-card config forms are ready when
@@ -189,13 +204,7 @@ export function useCapabilityModules(options: UseCapabilityModulesOptions) {
   /** Names of required config fields the user has not filled in yet. */
   function missingRequiredFields(capabilityId: string): string[] {
     const state = stateFor(capabilityId)
-    return (state.spec?.configSchema ?? [])
-      .filter((field) => {
-        if (!field.required) return false
-        const value = state.configValues[field.name]
-        return value === undefined || value === ''
-      })
-      .map((field) => field.name)
+    return missingRequiredConfigFields(state.spec?.configSchema ?? [], state.configValues)
   }
 
   /**

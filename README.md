@@ -41,7 +41,7 @@ You can also drop your own YAML capability into `%LOCALAPPDATA%\Moddin\capabilit
 ## Getting Moddin
 
 1. **Download** the latest release from [Releases](https://github.com/petonexus/moddin-desktop/releases). Beta releases are tagged `vX.Y.Z-beta.N`.
-2. **Install** by running the `.msi` (Windows 10/11 x64).
+2. **Install** by running the downloaded `Moddin.Desktop_*_x64-setup.exe` (Windows 10/11 x64).
 3. **Open** the app. Moddin scans your Steam + Epic libraries automatically.
 4. **Pick a game**, see which mods apply, and install what you need.
 

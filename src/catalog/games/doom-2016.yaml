@@ -10,8 +10,10 @@ modules:
     description: Cria um atalho do Windows para o executavel do jogo, usando o icone real do DOOM e com opcao de Desfazer.
     category: system
     status: available
-  - id: kharvox-vr
-    name: KHARVOX VR
-    description: O KHARVOX 0.8 Beta foi preparado externamente. A integracao gerenciada do launcher externo no Moddin ainda esta planejada.
-    category: vr
-    status: planned
+# `kharvox-vr` was listed here and removed. No preset, recipe, module or
+# command offers it, and the idtech preset says outright that the desktop
+# shortcut is the only reusable mod that ships today and that KHARVOX-style
+# launchers stay outside the app. A `planned` entry renders as a disabled
+# "Planned" card, so it was not a broken button — but the catalogue was
+# advertising an id the app cannot act on, which is the defect the check
+# was baselined for. It comes back when there is something behind it.

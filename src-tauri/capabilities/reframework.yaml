@@ -1,5 +1,6 @@
 id: reframework
 displayName: REFramework scripting framework
+description: Scripting framework for RE Engine — lets mods change the game while it is running.
 category: qol
 status: planned
 supportedEngines:
@@ -8,15 +9,15 @@ configSchema:
   - name: downloadUrl
     type: url
     required: true
-    description: HTTPS URL of the pinned REFramework release archive.
+    description: HTTPS URL of the pinned REFramework release archive. Upstream publishes one archive per game and per game branch rather than one universal build — v1.5.9.1 ships DD2.zip, DMC5.zip, MHRISE.zip, MHWILDS.zip, RE2.zip, RE2_TDB66.zip, RE3.zip, RE3_TDB67.zip, RE4.zip, RE7.zip, RE7_TDB49.zip, RE8.zip and SF6.zip. Verified at https://api.github.com/repos/praydog/REFramework/releases .
   - name: sha256
     type: sha256
     required: true
-    description: Expected SHA-256 of the archive.
+    description: Expected SHA-256 of the archive. Moddin refuses to install when the download does not match.
   - name: version
     type: string
     required: true
-    description: Upstream REFramework release tag.
+    description: Upstream REFramework release tag this URL points at, e.g. `v1.5.9.1`.
 checks:
   - id: archive-reachable
     label: REFramework archive reachable
@@ -34,6 +35,10 @@ checks:
       urlField: downloadUrl
       expectedField: sha256
 safetyNotes:
-  - Not installable yet. This spec records the intended recipe; the install step is not written because the RE Engine release layout has not been verified against a real game.
+  - Still `planned`, and the blocker is now specific rather than "unverified". The release layout IS verified — the v1.5.9.1 archive at https://github.com/praydog/REFramework/releases/download/v1.5.9.1/RE8.zip is rooted, 23 entries, with dinput8.dll (the injector) at the top level beside openvr_api.dll, openxr_loader.dll, reframework_revision.txt and reframework/autorun/**. What cannot be expressed is which of those members belong in the game folder.
+  - Upstream's own v1.5.9.1 release note draws the line for us — a player with no VR headset should only extract dinput8.dll into the game folder, and extracting the other files may crash a non-VR game. So the correct install is either that single injector file or, for a VR user, the full set. Which one is correct is a per-user choice, not a per-game constant this recipe can read.
+  - The `extract-zip` step cannot express that choice. It writes every member of the archive and takes no include, exclude or skip parameter (only archiveBytesField / archivePathField / archivePath, targetSubdirField / targetSubdir, and proxyField), so the only honest flat chain would drop openvr_api.dll and openxr_loader.dll next to a non-VR game — the exact outcome upstream warns crashes it. Extracting to a staging path and moving only dinput8.dll does install the flat-screen case correctly, but it silently gives a VR user a REFramework with no OpenXR support and none of the reframework/autorun scripts, and there is no conditional step kind to let the user choose. A recipe that is only right for half its users is the failure mode this file is kept out of.
+  - What would unblock it is a member filter on `extract-zip` (an include/exclude list, or a conditional step), so the recipe can declare "dinput8.dll always, openvr_api.dll and openxr_loader.dll only when the user wants VR". That is a `builtin_steps.rs` change and a new step parameter, deliberately not made here.
+  - Upstream also splits some games by build, as the same release note says to take the archive with "TDB" in its name (e.g. RE2_TDB66.zip) if you are not on the recent Ray Tracing updates. The `downloadUrl` field carries that choice today; it is the extraction policy above, not the archive choice, that is the blocker.
   - REFramework injects into the game process. Close the game before installing.
   - Many RE Engine titles ship with anti-cheat. Moddin does not disable it, and the user is responsible for any conflict.

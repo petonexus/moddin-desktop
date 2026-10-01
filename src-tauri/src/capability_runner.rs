@@ -5,12 +5,13 @@
 //! that the Tauri command layer (and the future in-process modules)
 //! can call to:
 //!
-//! * [`run_install`] — execute every step in `spec.install`,
+//! * `run_install` — execute every step in `spec.install`,
 //!   record a transaction, and return the structured result.
-//! * [`run_uninstall`] — run the uninstall steps (or rely on the
+//! * `run_uninstall` — run the uninstall steps (or rely on the
 //!   transaction store to roll back the install record).
-//! * [`evaluate_check`] — run a single check by id against the
-//!   current game state.
+//! * `evaluate_check` — run a single check by id against the
+//!   current game state (test-only; the command layer uses
+//!   `evaluate_all_checks`).
 //! * [`evaluate_all_checks`] — drive the UI verification list in one
 //!   call.
 //!
@@ -28,19 +29,67 @@ use crate::{
     transaction::{self, TransactionRecord},
 };
 use serde::Serialize;
+use std::path::PathBuf;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::Path,
 };
-use std::path::PathBuf;
 
 const OFXR_BRIDGE_YAML: &str = include_str!("../capabilities/ofxr-bridge.yaml");
 const OPTISCALER_YAML: &str = include_str!("../capabilities/optiscaler.yaml");
-const CHEEKY_FOVEATED_DLSS_YAML: &str =
-    include_str!("../capabilities/cheeky-foveated-dlss.yaml");
+const CHEEKY_FOVEATED_DLSS_YAML: &str = include_str!("../capabilities/cheeky-foveated-dlss.yaml");
 const RESHADE_YAML: &str = include_str!("../capabilities/reshade.yaml");
 const OPENXR_HELPERS_YAML: &str = include_str!("../capabilities/openxr-helpers.yaml");
 const UEVR_YAML: &str = include_str!("../capabilities/uevr.yaml");
+const BEPINEX_YAML: &str = include_str!("../capabilities/bepinex.yaml");
+const UE4SS_YAML: &str = include_str!("../capabilities/ue4ss.yaml");
+const REFRAMEWORK_YAML: &str = include_str!("../capabilities/reframework.yaml");
+
+/// Every capability recipe compiled into the binary.
+///
+/// Kept as one list so [`CapabilityRegistry::load`] and the test-only
+/// `load_with_local_dir` cannot drift apart, and so
+/// `tests::every_built_in_spec_installs_from_a_local_archive` can cover
+/// each recipe automatically as specs are added.
+const BUILT_IN_YAML: &[&str] = &[
+    OFXR_BRIDGE_YAML,
+    OPTISCALER_YAML,
+    CHEEKY_FOVEATED_DLSS_YAML,
+    RESHADE_YAML,
+    OPENXR_HELPERS_YAML,
+    UEVR_YAML,
+    BEPINEX_YAML,
+    UE4SS_YAML,
+    REFRAMEWORK_YAML,
+];
+
+/// Parse the built-in recipe list into `specs`, failing loudly on a
+/// duplicate id or malformed YAML.
+fn insert_built_ins(specs: &mut HashMap<String, CapabilitySpec>) {
+    for raw in BUILT_IN_YAML {
+        match serde_yaml::from_str::<CapabilitySpec>(raw) {
+            Ok(mut spec) => {
+                spec.origin = SpecOrigin::BuiltIn;
+                if specs.contains_key(&spec.id) {
+                    panic!("duplicate built-in capability id '{id}'", id = spec.id);
+                }
+                specs.insert(spec.id.clone(), spec);
+            }
+            Err(error) => {
+                // A YAML scalar containing ": " silently becomes a
+                // mapping, which is the single most common authoring
+                // mistake in a safety note or a description. Name the
+                // recipe so the failure is actionable.
+                let id = raw
+                    .lines()
+                    .find_map(|line| line.strip_prefix("id:"))
+                    .map(str::trim)
+                    .unwrap_or("<no id>");
+                panic!("could not parse built-in capability '{id}': {error}");
+            }
+        }
+    }
+}
 
 /// Directory Moddin Desktop scans at startup for user-provided
 /// capability recipes. Files placed here are loaded as `SpecOrigin::Local`,
@@ -73,31 +122,7 @@ impl CapabilityRegistry {
     /// logged and skipped — the runner keeps the first one it finds.
     pub fn load() -> Self {
         let mut specs = HashMap::new();
-
-        for raw in [
-            OFXR_BRIDGE_YAML,
-            OPTISCALER_YAML,
-            CHEEKY_FOVEATED_DLSS_YAML,
-            RESHADE_YAML,
-            OPENXR_HELPERS_YAML,
-            UEVR_YAML,
-        ] {
-            match serde_yaml::from_str::<CapabilitySpec>(raw) {
-                Ok(mut spec) => {
-                    spec.origin = SpecOrigin::BuiltIn;
-                    if specs.contains_key(&spec.id) {
-                        panic!(
-                            "duplicate built-in capability id '{id}'",
-                            id = spec.id
-                        );
-                    }
-                    specs.insert(spec.id.clone(), spec);
-                }
-                Err(error) => {
-                    panic!("could not parse built-in capability YAML: {error}");
-                }
-            }
-        }
+        insert_built_ins(&mut specs);
 
         if let Some(local_dir) = local_capabilities_dir() {
             Self::load_local_into(&local_dir, &mut specs);
@@ -107,24 +132,14 @@ impl CapabilityRegistry {
     }
 
     /// Same as [`Self::load`] but takes the local override directory
-    /// explicitly. Used by tests and by a future `capability_reload`
-    /// Tauri command so the user can drop a new YAML and re-read it
-    /// without restarting.
+    /// explicitly. Test-only: the live `capability_reload` command calls
+    /// [`Self::reload_local`] on an existing registry rather than
+    /// rebuilding one, so nothing in the product needs a
+    /// build-from-scratch-with-an-explicit-dir entry point.
+    #[cfg(test)]
     pub fn load_with_local_dir<P: AsRef<Path>>(local_dir: P) -> Self {
         let mut registry = Self::default();
-        for raw in [
-            OFXR_BRIDGE_YAML,
-            OPTISCALER_YAML,
-            CHEEKY_FOVEATED_DLSS_YAML,
-            RESHADE_YAML,
-            OPENXR_HELPERS_YAML,
-            UEVR_YAML,
-        ] {
-            if let Ok(mut spec) = serde_yaml::from_str::<CapabilitySpec>(raw) {
-                spec.origin = SpecOrigin::BuiltIn;
-                registry.specs.insert(spec.id.clone(), spec);
-            }
-        }
+        insert_built_ins(&mut registry.specs);
         Self::load_local_into(local_dir.as_ref(), &mut registry.specs);
         registry
     }
@@ -154,20 +169,14 @@ impl CapabilityRegistry {
             let raw = match std::fs::read_to_string(&path) {
                 Ok(raw) => raw,
                 Err(error) => {
-                    eprintln!(
-                        "moddin: could not read {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("moddin: could not read {}: {error}", path.display());
                     continue;
                 }
             };
             let mut spec = match serde_yaml::from_str::<CapabilitySpec>(&raw) {
                 Ok(spec) => spec,
                 Err(error) => {
-                    eprintln!(
-                        "moddin: could not parse {}: {error}",
-                        path.display()
-                    );
+                    eprintln!("moddin: could not parse {}: {error}", path.display());
                     continue;
                 }
             };
@@ -177,19 +186,19 @@ impl CapabilityRegistry {
                 .insert(spec.id.clone(), spec)
                 .map(|existing| existing.origin);
             match previous_origin {
-                Some(SpecOrigin::BuiltIn) => eprintln!(
-                    "moddin: local capability {spec_id} overrides the built-in"
-                ),
+                Some(SpecOrigin::BuiltIn) => {
+                    eprintln!("moddin: local capability {spec_id} overrides the built-in")
+                }
                 Some(other) if other != SpecOrigin::Local => eprintln!(
                     "moddin: local capability {spec_id} overrides {} capability",
                     other.as_str()
                 ),
-                Some(SpecOrigin::Local) => eprintln!(
-                    "moddin: duplicate local capability id {spec_id}, keeping first"
-                ),
-                Some(SpecOrigin::Community) => eprintln!(
-                    "moddin: local capability {spec_id} overrides community capability"
-                ),
+                Some(SpecOrigin::Local) => {
+                    eprintln!("moddin: duplicate local capability id {spec_id}, keeping first")
+                }
+                Some(SpecOrigin::Community) => {
+                    eprintln!("moddin: local capability {spec_id} overrides community capability")
+                }
                 None => {}
             }
         }
@@ -199,16 +208,22 @@ impl CapabilityRegistry {
         self.specs.get(id)
     }
 
+    /// Does at least one loaded spec declare this engine?
+    ///
+    /// The engine rule needs this and cannot compute it: a recipe's
+    /// `supportedEngines` is what makes an engine *comparable*, and a
+    /// game on an engine nothing declares (`doom-2016` on `idtech`)
+    /// must not be gated on a comparison that has only one side.
+    pub fn declares_engine(&self, engine: &str) -> bool {
+        self.specs.values().any(|spec| {
+            spec.supported_engines
+                .iter()
+                .any(|declared| declared == engine)
+        })
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.specs.keys().map(String::as_str)
-    }
-
-    pub fn len(&self) -> usize {
-        self.specs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.specs.is_empty()
     }
 
     /// Re-read the local override directory and either add, replace,
@@ -260,48 +275,109 @@ pub const MAX_DEPENDENCY_DEPTH: usize = 8;
 /// specs that declare a `compatibility` block.
 pub const COMPATIBILITY_CHECK_ID: &str = "exe-version-compat";
 
+/// The per-install inputs that the command layer already holds and every
+/// stage of the install pipeline needs: which game, the resolved recipe
+/// config, and the two directories.
+///
+/// Bundled because five functions below took these five parameters in the
+/// same order, and `install_directory` / `executable_directory` are
+/// adjacent same-typed `&Path`s — a swapped pair still compiles and
+/// silently points the backup scope at the wrong root.
+#[derive(Clone, Copy)]
+struct InstallScope<'a> {
+    game_id: &'a str,
+    game_name: &'a str,
+    config: &'a ResolvedConfig,
+    install_directory: &'a Path,
+    executable_directory: &'a Path,
+}
+
 /// Internal install worker. Called by `run_install` (registry lookup)
 /// and `run_install_with_spec` (community YAML the caller already
 /// fetched + verified). Same transaction store, same step dispatch.
 fn execute_install(
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
 ) -> Result<InstallResult, String> {
+    let InstallScope {
+        game_id,
+        game_name,
+        config,
+        install_directory,
+        executable_directory,
+    } = *scope;
     let step_context = StepContext {
-        spec,
         config,
         install_directory,
         executable_directory,
     };
     let mut step_results = Vec::new();
     let mut affected = Vec::new();
+
+    // Plan each step's targets, back them up, then run the step. The
+    // order matters: a file the step is about to overwrite has to be in
+    // the backup *before* it is replaced, and a step that fails halfway
+    // must still leave a record that can undo what already landed.
+    let metadata = build_metadata(spec, config);
+    let label = format!("Install {} for {}", spec.display_name, game_name);
+    let mut record: Option<transaction::TransactionRecord> = None;
+    let mut outside_root: Vec<String> = Vec::new();
+
     for step in &spec.install {
-        let result = builtin_steps::execute_step(step, &step_context)?;
+        let planned = builtin_steps::plan_step_targets(step, &step_context)?;
+
+        // Only paths under the install directory are inside the game's
+        // rollback scope. A recipe that writes elsewhere (an OpenXR
+        // runtime manifest, a tray INI) is still allowed to do so, but
+        // the user is told it is not covered by Undo.
+        let mut in_scope = Vec::new();
+        for path in planned {
+            if path.starts_with(install_directory) {
+                in_scope.push(path);
+            } else {
+                outside_root.push(path.to_string_lossy().into_owned());
+            }
+        }
+
+        if !in_scope.is_empty() {
+            record = Some(match record {
+                Some(existing) => {
+                    transaction::add_files_to_transaction(existing, install_directory, &in_scope)?
+                }
+                None => transaction::begin_file_set_transaction(
+                    install_directory,
+                    &in_scope,
+                    &spec.id,
+                    &label,
+                    game_id,
+                    metadata.clone(),
+                )?,
+            });
+        }
+
+        let result = match builtin_steps::execute_step(step, &step_context) {
+            Ok(result) => result,
+            Err(error) => {
+                // Roll back whatever this install already wrote instead
+                // of leaving orphaned files with no undo record.
+                if let Some(prepared) = record {
+                    let _ = transaction::restore_record(prepared);
+                }
+                return Err(error);
+            }
+        };
         affected.extend(result.affected_paths.clone());
         step_results.push(result);
     }
 
-    let transaction = if !affected.is_empty() {
-        let metadata = build_metadata(spec, config);
-        let record = transaction::begin_file_set_transaction(
-            install_directory,
-            &affected
-                .iter()
-                .map(std::path::PathBuf::from)
-                .collect::<Vec<_>>(),
-            &spec.id,
-            &format!("Install {} for {}", spec.display_name, game_name),
-            game_id,
-            metadata,
-        )?;
-        Some(transaction::mark_applied(record)?)
-    } else {
-        None
+    let transaction = match record {
+        Some(prepared) => Some(transaction::mark_applied(prepared)?),
+        None => None,
     };
+
+    if !outside_root.is_empty() {
+        affected.extend(outside_root);
+    }
 
     Ok(InstallResult {
         capability_id: spec.id.clone(),
@@ -336,14 +412,15 @@ fn is_capability_installed(game_id: &str, capability_id: &str) -> bool {
 fn install_dependencies_recursive(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     chain: &mut Vec<String>,
     installed_dependencies: &mut Vec<String>,
 ) -> Result<(), String> {
+    let InstallScope {
+        game_id,
+        executable_directory,
+        ..
+    } = *scope;
     for dependency_id in &spec.dependencies {
         if is_capability_installed(game_id, dependency_id) {
             continue;
@@ -377,11 +454,7 @@ fn install_dependencies_recursive(
             install_dependencies_recursive(
                 registry,
                 dependency_spec,
-                game_id,
-                game_name,
-                config,
-                install_directory,
-                executable_directory,
+                scope,
                 chain,
                 installed_dependencies,
             )?;
@@ -400,20 +473,13 @@ fn install_dependencies_recursive(
                          accept the risk.",
                         dependency_spec.id,
                         spec.id,
-                        compatibility
-                            .detail
-                            .unwrap_or_else(|| "game executable outside the supported version range".to_owned())
+                        compatibility.detail.unwrap_or_else(|| {
+                            "game executable outside the supported version range".to_owned()
+                        })
                     ));
                 }
             }
-            execute_install(
-                dependency_spec,
-                game_id,
-                game_name,
-                config,
-                install_directory,
-                executable_directory,
-            )?;
+            execute_install(dependency_spec, scope)?;
             installed_dependencies.push(dependency_id.clone());
             Ok(())
         })();
@@ -455,10 +521,16 @@ fn evaluate_compatibility(
         serde_json::Value::String(compatibility.game_exe.clone().unwrap_or_default()),
     );
     if let Some(min) = &compatibility.min_exe_version {
-        params.insert("minVersion".to_owned(), serde_json::Value::String(min.clone()));
+        params.insert(
+            "minVersion".to_owned(),
+            serde_json::Value::String(min.clone()),
+        );
     }
     if let Some(max) = &compatibility.max_exe_version {
-        params.insert("maxVersion".to_owned(), serde_json::Value::String(max.clone()));
+        params.insert(
+            "maxVersion".to_owned(),
+            serde_json::Value::String(max.clone()),
+        );
     }
     if !compatibility.blocked_exe_versions.is_empty() {
         params.insert(
@@ -499,11 +571,7 @@ fn evaluate_compatibility(
 fn install_spec(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
     // `status: planned` means the recipe is a declared intention, not a
@@ -520,7 +588,7 @@ fn install_spec(
     }
     let compatibility = evaluate_compatibility(
         spec,
-        executable_directory,
+        scope.executable_directory,
         &mut builtin_checks::ExeVersionCache::new(),
     );
     if let Some(outcome) = &compatibility {
@@ -541,23 +609,12 @@ fn install_spec(
     install_dependencies_recursive(
         registry,
         spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
+        scope,
         &mut chain,
         &mut installed_dependencies,
     )?;
 
-    let mut result = execute_install(
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-    )?;
+    let mut result = execute_install(spec, scope)?;
     result.installed_dependencies = installed_dependencies;
     result.compatibility = compatibility;
     Ok(result)
@@ -567,29 +624,16 @@ fn install_spec(
 /// registry. Missing `dependencies` are auto-installed first (up to
 /// [`MAX_DEPENDENCY_DEPTH`] levels); `force` bypasses the spec's
 /// compatibility gate for this capability only.
-pub fn run_install(
+fn run_install(
     registry: &CapabilityRegistry,
     capability_id: &str,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
     let spec = registry
         .get(capability_id)
         .ok_or_else(|| format!("Unknown capability id '{capability_id}'."))?;
-    install_spec(
-        registry,
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-        force,
-    )
+    install_spec(registry, spec, scope, force)
 }
 
 /// Run the `install` section of a capability whose `CapabilitySpec`
@@ -597,26 +641,13 @@ pub fn run_install(
 /// `community_capability_install` after the caller has downloaded
 /// and signature-verified the YAML. Dependencies resolve against the
 /// regular registry (built-ins + local overrides).
-pub fn run_install_with_spec(
+fn run_install_with_spec(
     registry: &CapabilityRegistry,
     spec: &CapabilitySpec,
-    game_id: &str,
-    game_name: &str,
-    config: &ResolvedConfig,
-    install_directory: &Path,
-    executable_directory: &Path,
+    scope: &InstallScope<'_>,
     force: bool,
 ) -> Result<InstallResult, String> {
-    install_spec(
-        registry,
-        spec,
-        game_id,
-        game_name,
-        config,
-        install_directory,
-        executable_directory,
-        force,
-    )
+    install_spec(registry, spec, scope, force)
 }
 
 /// Run the `uninstall` section (or fall back to rolling back the
@@ -639,7 +670,6 @@ pub fn run_uninstall(
     }
     let config = ResolvedConfig::default();
     let step_context = StepContext {
-        spec,
         config: &config,
         install_directory,
         executable_directory: install_directory,
@@ -651,6 +681,13 @@ pub fn run_uninstall(
 }
 
 /// Run a single check by id against the supplied config.
+///
+/// Test-only: the `capability_evaluate` command goes through
+/// [`evaluate_all_checks`] and the UI has no path that names one check
+/// id, so this lookup wrapper is not compiled into the shipped binary.
+/// It stays because the tests below are what pin the "search `checks`
+/// *and* `verify`" behaviour that [`evaluate_all_checks`] relies on.
+#[cfg(test)]
 pub async fn evaluate_check(
     registry: &CapabilityRegistry,
     capability_id: &str,
@@ -741,16 +778,8 @@ pub async fn evaluate_all_checks(
     })
 }
 
-fn parse_index(value: &str) -> Option<usize> {
-    if value.starts_with("check:") {
-        value.trim_start_matches("check:").parse().ok()
-    } else {
-        None
-    }
-}
-
-fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collections::BTreeMap<String, String> {
-    let mut metadata = std::collections::BTreeMap::new();
+fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::new();
     metadata.insert("capabilityId".to_owned(), spec.id.clone());
     if let Some(version) = config.get_string("version") {
         metadata.insert("version".to_owned(), version);
@@ -763,7 +792,6 @@ fn build_metadata(spec: &CapabilitySpec, config: &ResolvedConfig) -> std::collec
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
-use serde_yaml;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -808,11 +836,13 @@ pub async fn capability_install(
     run_install(
         &registry,
         &request.capability_id,
-        &request.game_id,
-        &request.game_name,
-        &request.config,
-        &install_directory,
-        &executable_directory,
+        &InstallScope {
+            game_id: &request.game_id,
+            game_name: &request.game_name,
+            config: &request.config,
+            install_directory: &install_directory,
+            executable_directory: &executable_directory,
+        },
         request.force,
     )
 }
@@ -886,29 +916,76 @@ pub fn capability_compatibility(
 pub struct CapabilitySummary {
     pub id: String,
     pub display_name: String,
+    /// Same player-facing line as [`CapabilitySpec::description`].
+    /// The card shows this instead of the technical id.
+    pub description: Option<String>,
     pub category: String,
     pub status: String,
     /// Provenance — drives the UI badge ("Verified", "Local",
     /// "Community"). See [`SpecOrigin`].
     pub origin: crate::capability::SpecOrigin,
+    /// The engines this recipe declares, verbatim. Empty means
+    /// *every* engine, not none — see
+    /// [`CapabilitySpec::supported_engines`].
+    pub supported_engines: Vec<String>,
+    /// The engine verdict the backend already decided, so the card
+    /// renders the reason instead of re-deriving the rule (ROADMAP
+    /// F-09). A returned summary is always eligible; a
+    /// [`crate::capability::EngineMatch::Mismatch`] never reaches the
+    /// wire.
+    pub engine_match: crate::capability::EngineMatch,
 }
 
-#[tauri::command]
-pub fn capability_list() -> Vec<CapabilitySummary> {
-    let registry = CapabilityRegistry::load();
+impl CapabilitySummary {
+    fn from_spec(spec: &CapabilitySpec, scope: crate::capability::EngineScope<'_>) -> Self {
+        Self {
+            id: spec.id.clone(),
+            display_name: spec.display_name.clone(),
+            description: spec.description.clone(),
+            category: spec.category.clone(),
+            status: spec.status.clone(),
+            origin: spec.origin,
+            supported_engines: spec.supported_engines.clone(),
+            engine_match: spec.engine_match(scope),
+        }
+    }
+}
+
+/// Summaries for one engine scope, with the mismatch gate applied.
+///
+/// Kept separate from the `#[tauri::command]` wrapper so the rule is
+/// testable without an IPC payload, and so `capability_list` and
+/// `capability_reload` cannot grow two different definitions of "the
+/// list".
+pub fn summaries_for_engine(
+    registry: &CapabilityRegistry,
+    game_engine: Option<&str>,
+) -> Vec<CapabilitySummary> {
+    let scope = crate::capability::EngineScope::resolve(game_engine, |engine| {
+        registry.declares_engine(engine)
+    });
     registry
         .ids()
-        .map(|id| {
+        .filter_map(|id| {
             let spec = registry.get(id).expect("registry invariant");
-            CapabilitySummary {
-                id: spec.id.clone(),
-                display_name: spec.display_name.clone(),
-                category: spec.category.clone(),
-                status: spec.status.clone(),
-                origin: spec.origin,
-            }
+            let summary = CapabilitySummary::from_spec(spec, scope);
+            summary.engine_match.is_eligible().then_some(summary)
         })
         .collect()
+}
+
+/// Every capability the registry holds, with the engine verdict
+/// attached.
+///
+/// `engine` is the selected game's `enginePreset`. It is optional on
+/// purpose: a caller that does not know the game's engine gets the
+/// whole list with `noGameEngine`, which is what an unscoped list means.
+/// (Tauri passes `None` for a missing key rather than erroring, so the
+/// existing no-argument callers keep working unchanged.)
+#[tauri::command]
+pub fn capability_list(engine: Option<String>) -> Vec<CapabilitySummary> {
+    let registry = CapabilityRegistry::load();
+    summaries_for_engine(&registry, engine.as_deref())
 }
 
 #[derive(Debug, Deserialize)]
@@ -952,19 +1029,10 @@ pub fn capability_reload(
         .or_else(local_capabilities_dir)
         .ok_or_else(|| "LOCALAPPDATA not set".to_owned())?;
     registry.reload_local(&dir);
-    Ok(registry
-        .ids()
-        .map(|id| {
-            let spec = registry.get(id).expect("registry invariant");
-            CapabilitySummary {
-                id: spec.id.clone(),
-                display_name: spec.display_name.clone(),
-                category: spec.category.clone(),
-                status: spec.status.clone(),
-                origin: spec.origin,
-            }
-        })
-        .collect())
+    // No engine argument: a reload is a catalogue refresh, not a
+    // game-scoped query, so the list is unscoped and the gate stays
+    // open. Same summaries as `capability_list` with no engine.
+    Ok(summaries_for_engine(&registry, None))
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1051,21 +1119,12 @@ pub struct CommunityInstallRequest {
 pub async fn community_capability_install(
     request: CommunityInstallRequest,
 ) -> Result<InstallResult, String> {
-    let catalog = crate::community_catalog::read_cached_catalog_only()
-        .ok_or_else(|| {
-            "Community catalog has not been fetched yet. Call community_catalog_fetch first."
-                .to_owned()
-        })?;
-    let entry = catalog
-        .capabilities
-        .iter()
-        .find(|candidate| candidate.id == request.capability_id)
-        .ok_or_else(|| {
-            format!(
-                "Community catalog does not list a capability named '{}'.",
-                request.capability_id
-            )
-        })?;
+    // The cached catalog is re-verified against the keyring here, inside
+    // the install flow, and the capability is checked against
+    // `revoked-ids.json` before its `downloadUrl` is read. Both fail
+    // closed, so an install never runs off an entry the app has not just
+    // proved is still signed and still live.
+    let entry = crate::community_catalog::verified_entry_for_install(&request.capability_id)?;
     let download_url = entry.download_url.clone().ok_or_else(|| {
         format!(
             "Community catalog entry '{}' has no downloadUrl.",
@@ -1074,7 +1133,7 @@ pub async fn community_capability_install(
     })?;
 
     let (yaml_text, signed_by_text) =
-        crate::community_catalog::fetch_capability_yaml(&download_url).await?;
+        crate::community_catalog::fetch_capability_yaml(&download_url, None).await?;
 
     if let Some(signed_by) = signed_by_text.as_deref() {
         if let Err(error) = verify_signed_by(&yaml_text, signed_by) {
@@ -1106,11 +1165,13 @@ pub async fn community_capability_install(
     run_install_with_spec(
         &registry,
         &spec,
-        &request.game_id,
-        &request.game_name,
-        &request.config,
-        &install_directory,
-        &executable_directory,
+        &InstallScope {
+            game_id: &request.game_id,
+            game_name: &request.game_name,
+            config: &request.config,
+            install_directory: &install_directory,
+            executable_directory: &executable_directory,
+        },
         request.force,
     )
 }
@@ -1118,14 +1179,27 @@ pub async fn community_capability_install(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::{CheckSpec, SpecOrigin};
+    use crate::capability::{CheckSpec, EngineMatch, SpecOrigin};
+    use serde_json::json;
+    use std::collections::BTreeSet;
     use std::fs;
+
+    /// Build a resolved config from key/value pairs, matching how the
+    /// Tauri command layer deserialises a request.
+    fn config_with(pairs: &[(&str, &str)]) -> ResolvedConfig {
+        ResolvedConfig {
+            values: pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), json!(value)))
+                .collect(),
+        }
+    }
 
     #[test]
     fn registry_loads_ofxr_bridge() {
         let registry = CapabilityRegistry::load();
         assert!(registry.get("ofxr-bridge").is_some());
-        assert!(registry.len() >= 1);
+        assert!(registry.ids().count() >= 1);
     }
 
     #[test]
@@ -1201,10 +1275,8 @@ mod tests {
 
     #[test]
     fn local_overrides_built_in_when_id_matches() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-override-test-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-override-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_local_capability(
             &temp,
@@ -1226,10 +1298,8 @@ status: planned
 
     #[test]
     fn local_adds_new_capability_without_touching_built_ins() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-add-test-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-add-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         write_local_capability(
             &temp,
@@ -1270,19 +1340,161 @@ install:
 
     #[test]
     fn malformed_local_yaml_is_skipped_not_panicked() {
-        let temp = std::env::temp_dir().join(format!(
-            "moddin-local-malformed-{}",
-            std::process::id()
-        ));
+        let temp =
+            std::env::temp_dir().join(format!("moddin-local-malformed-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).expect("create temp dir");
-        fs::write(temp.join("bad.yaml"), "this: is: not: valid: yaml: at: all:")
-            .expect("write malformed yaml");
+        fs::write(
+            temp.join("bad.yaml"),
+            "this: is: not: valid: yaml: at: all:",
+        )
+        .expect("write malformed yaml");
         let registry = CapabilityRegistry::load_with_local_dir(&temp);
         // Built-ins unaffected by the malformed local file.
         assert!(registry.get("ofxr-bridge").is_some());
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    // === Engine gate over the real registry (ROADMAP F-09) =========
+
+    /// Built-ins only, so a developer's `%LOCALAPPDATA%` recipes cannot
+    /// change what these assertions see.
+    fn built_in_registry() -> CapabilityRegistry {
+        let registry = CapabilityRegistry::load_with_local_dir(temp_root("engine-gate"));
+        assert!(registry.ids().count() > 1, "expected the built-in recipes");
+        registry
+    }
+
+    fn listed_ids(registry: &CapabilityRegistry, engine: Option<&str>) -> Vec<String> {
+        let mut ids: Vec<String> = summaries_for_engine(registry, engine)
+            .into_iter()
+            .map(|summary| summary.id)
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn every_built_in_id(registry: &CapabilityRegistry) -> Vec<String> {
+        let mut ids: Vec<String> = registry.ids().map(str::to_owned).collect();
+        ids.sort();
+        ids
+    }
+
+    /// The `enginePreset` a shipped catalogue file declares, read from
+    /// the file rather than hard-coded so the Elden Ring test keeps
+    /// testing what actually ships.
+    fn shipped_engine_preset(game_file: &str) -> Option<String> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("src")
+            .join("catalog")
+            .join("games")
+            .join(game_file);
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+        // Some catalogue files ship a UTF-8 BOM.
+        let raw = raw.trim_start_matches('\u{feff}');
+        let parsed: serde_yaml::Value = serde_yaml::from_str(raw)
+            .unwrap_or_else(|error| panic!("could not parse {}: {error}", path.display()));
+        parsed
+            .get("enginePreset")
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn a_re_engine_game_is_not_offered_uevr() {
+        // The `dead-island-2` shape, one layer down: the recipe the
+        // engine does not support must not reach the card list.
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, Some("re-engine"));
+        assert!(!listed.iter().any(|id| id == "uevr"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "ue4ss"), "{listed:?}");
+        // ...while the recipes that do target it still are.
+        assert!(listed.iter().any(|id| id == "reframework"), "{listed:?}");
+    }
+
+    #[test]
+    fn an_unreal_game_is_not_offered_a_re_engine_or_unity_recipe() {
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, Some("unreal5"));
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
+        assert!(listed.iter().any(|id| id == "ue4ss"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "reframework"), "{listed:?}");
+        assert!(!listed.iter().any(|id| id == "bepinex"), "{listed:?}");
+    }
+
+    #[test]
+    fn every_returned_summary_carries_the_verdict_that_kept_it() {
+        let registry = built_in_registry();
+        for engine in ["unreal5", "redengine", "re-engine", "unity", "idtech"] {
+            for summary in summaries_for_engine(&registry, Some(engine)) {
+                assert!(
+                    summary.engine_match.is_eligible(),
+                    "{} was gated out and must not be listed",
+                    summary.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unscoped_list_returns_every_recipe() {
+        // What the three existing no-argument callers get: the whole
+        // registry, nothing gated, because no engine was named.
+        let registry = built_in_registry();
+        let summaries = summaries_for_engine(&registry, None);
+        assert_eq!(listed_ids(&registry, None), every_built_in_id(&registry));
+        assert!(summaries
+            .iter()
+            .all(|summary| summary.engine_match == EngineMatch::NoGameEngine));
+    }
+
+    #[test]
+    fn an_engine_no_recipe_declares_keeps_every_card() {
+        // `idtech` is a real preset (`doom-2016` uses it) and nothing
+        // Moddin ships claims id Tech. Gating on a comparison with only
+        // one side would empty the game's card list.
+        let registry = built_in_registry();
+        assert!(!registry.declares_engine("idtech"));
+        let listed = listed_ids(&registry, Some("idtech"));
+        assert_eq!(listed, every_built_in_id(&registry));
+        assert!(summaries_for_engine(&registry, Some("idtech"))
+            .iter()
+            .all(|summary| matches!(summary.engine_match, EngineMatch::UnknownGameEngine { .. })));
+    }
+
+    #[test]
+    fn elden_ring_declares_no_engine_preset_so_nothing_is_gated() {
+        // Elden Ring ships no `enginePreset` and it is the app's
+        // flagship VR title. Its UEVR card — the one combination the
+        // project is known for — must survive the gate, and the
+        // catalogue file itself is what decides that, so it is read
+        // from disk rather than asserted here.
+        assert_eq!(
+            shipped_engine_preset("elden-ring.yaml"),
+            None,
+            "elden-ring.yaml started declaring an engine; this test's premise changed"
+        );
+        let registry = built_in_registry();
+        let engine = shipped_engine_preset("elden-ring.yaml");
+        let listed = listed_ids(&registry, engine.as_deref());
+        assert_eq!(listed, every_built_in_id(&registry));
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
+    }
+
+    #[test]
+    fn a_shipped_game_with_an_engine_preset_gets_that_engines_cards() {
+        // The other half of the Elden Ring case, read from the
+        // catalogue: `dead-island-2` declares `unreal5`, so the RE
+        // Engine-only recipe must not reach its list.
+        let engine = shipped_engine_preset("dead-island-2.yaml");
+        assert_eq!(engine.as_deref(), Some("unreal5"));
+        let registry = built_in_registry();
+        let listed = listed_ids(&registry, engine.as_deref());
+        assert!(!listed.iter().any(|id| id == "reframework"), "{listed:?}");
+        assert!(listed.iter().any(|id| id == "uevr"), "{listed:?}");
     }
 
     // === Dependency graph + compatibility gate ======================
@@ -1379,9 +1591,7 @@ install:
         );
         config.values.insert(
             "markerMiddle".to_owned(),
-            serde_json::Value::String(
-                executable.join("middle.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("middle.txt").to_string_lossy().into_owned()),
         );
         config.values.insert(
             "markerTop".to_owned(),
@@ -1393,17 +1603,22 @@ install:
         let result = run_install(
             &registry,
             "dep-top",
-            game_id,
-            "Dep Order Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Order Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install with auto-installed dependencies");
 
         // Transitive dependency installs first, then its dependent.
-        assert_eq!(result.installed_dependencies, vec!["dep-base", "dep-middle"]);
+        assert_eq!(
+            result.installed_dependencies,
+            vec!["dep-base", "dep-middle"]
+        );
         assert!(result.compatibility.is_none());
         for name in ["base.txt", "middle.txt", "top.txt"] {
             assert!(
@@ -1451,13 +1666,19 @@ install:
         config.values.insert(
             "markerPresent".to_owned(),
             serde_json::Value::String(
-                executable.join("present.txt").to_string_lossy().into_owned(),
+                executable
+                    .join("present.txt")
+                    .to_string_lossy()
+                    .into_owned(),
             ),
         );
         config.values.insert(
             "markerRequester".to_owned(),
             serde_json::Value::String(
-                executable.join("requester.txt").to_string_lossy().into_owned(),
+                executable
+                    .join("requester.txt")
+                    .to_string_lossy()
+                    .into_owned(),
             ),
         );
 
@@ -1466,11 +1687,13 @@ install:
         run_install(
             &registry,
             "dep-present",
-            game_id,
-            "Dep Skip Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Skip Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install the dependency on its own");
@@ -1478,11 +1701,13 @@ install:
         let result = run_install(
             &registry,
             "dep-requester",
-            game_id,
-            "Dep Skip Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id,
+                game_name: "Dep Skip Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect("install the requester");
@@ -1524,11 +1749,13 @@ install:
         let error = run_install(
             &registry,
             "cycle-alpha",
-            "cycle-game",
-            "Cycle Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "cycle-game",
+                game_name: "Cycle Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("cycle aborts the install");
@@ -1541,11 +1768,13 @@ install:
         let error = run_install(
             &registry,
             "cycle-self",
-            "cycle-game",
-            "Cycle Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "cycle-game",
+                game_name: "Cycle Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("self-dependency aborts the install");
@@ -1581,11 +1810,13 @@ install:
         let error = run_install(
             &registry,
             "chain-0",
-            "depth-game",
-            "Depth Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "depth-game",
+                game_name: "Depth Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("runaway chain aborts the install");
@@ -1620,11 +1851,13 @@ install:
         let error = run_install(
             &registry,
             "dep-orphan",
-            "missing-game",
-            "Missing Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "missing-game",
+                game_name: "Missing Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("unknown dependency aborts the install");
@@ -1671,20 +1904,20 @@ install:
         let mut config = ResolvedConfig::default();
         config.values.insert(
             "markerGated".to_owned(),
-            serde_json::Value::String(
-                executable.join("gated.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("gated.txt").to_string_lossy().into_owned()),
         );
 
         let registry = CapabilityRegistry::load_with_local_dir(&caps);
         let error = run_install(
             &registry,
             "gated-mod",
-            "gate-game",
-            "Gate Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "gate-game",
+                game_name: "Gate Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("incompatible build blocks a plain install");
@@ -1720,20 +1953,20 @@ install:
         let mut config = ResolvedConfig::default();
         config.values.insert(
             "markerGated".to_owned(),
-            serde_json::Value::String(
-                executable.join("gated.txt").to_string_lossy().into_owned(),
-            ),
+            serde_json::Value::String(executable.join("gated.txt").to_string_lossy().into_owned()),
         );
 
         let registry = CapabilityRegistry::load_with_local_dir(&caps);
         let result = run_install(
             &registry,
             "gated-mod",
-            "gate-game",
-            "Gate Game",
-            &config,
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "gate-game",
+                game_name: "Gate Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             true,
         )
         .expect("force bypasses the compatibility gate");
@@ -1780,7 +2013,11 @@ install:
             "the dummy exe reports no FileVersion, so the row fails"
         );
         assert!(
-            first.detail.as_deref().unwrap_or_default().contains("game.exe"),
+            first
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("game.exe"),
             "detail names the probed exe: {:?}",
             first.detail
         );
@@ -1837,7 +2074,7 @@ install:
 
         let error = capability_compatibility(CapabilityCompatibilityRequest {
             capability_id: "does-not-exist".to_owned(),
-            executable_dir: executable_dir,
+            executable_dir,
         })
         .expect_err("an unknown id is an error, not a silent None");
         assert!(
@@ -1869,11 +2106,13 @@ install:
         let error = run_install(
             &registry,
             "planned-mod",
-            "planned-game",
-            "Planned Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "planned-game",
+                game_name: "Planned Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             false,
         )
         .expect_err("a planned recipe cannot be installed");
@@ -1887,11 +2126,13 @@ install:
         let forced = run_install(
             &registry,
             "planned-mod",
-            "planned-game",
-            "Planned Game",
-            &ResolvedConfig::default(),
-            &work,
-            &executable,
+            &InstallScope {
+                game_id: "planned-game",
+                game_name: "Planned Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
             true,
         )
         .expect_err("force does not bypass the planned guard");
@@ -1940,5 +2181,483 @@ install:
         );
 
         let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Guards the bug class behind "adding a mod is one YAML file".
+    ///
+    /// Every shipped recipe that is `available` and actually installs
+    /// something has to read its payload from a local path that a
+    /// previous `download-file` step produced. Pointing `extract-zip` at
+    /// a URL — which every recipe used to do — made the whole install
+    /// chain fail on its first step, at runtime, with a file-not-found
+    /// the user had no way to act on.
+    #[test]
+    fn every_available_built_in_recipe_reads_its_payload_from_the_download_cache() {
+        for raw in BUILT_IN_YAML {
+            let spec: CapabilitySpec = serde_yaml::from_str(raw)
+                .unwrap_or_else(|error| panic!("built-in capability YAML does not parse: {error}"));
+            if spec.status != "available" || spec.install.is_empty() {
+                continue;
+            }
+
+            let extracts_anything = spec.install.iter().any(|step| step.kind == "extract-zip");
+            if !extracts_anything {
+                continue;
+            }
+
+            assert!(
+                spec.install.iter().any(|step| step.kind == "download-file"),
+                "'{}' extracts an archive but never downloads one",
+                spec.id
+            );
+
+            for step in spec
+                .install
+                .iter()
+                .filter(|step| step.kind == "extract-zip")
+            {
+                let reference = step
+                    .params
+                    .get("archivePath")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        step.params
+                            .get("archivePathField")
+                            .and_then(|value| value.as_str())
+                            .map(|field| {
+                                format!(
+                                    "{field} -> {}",
+                                    spec.config_schema
+                                        .iter()
+                                        .find(|declared| declared.name == field)
+                                        .map(|declared| declared.field_type.clone())
+                                        .unwrap_or_else(|| "missing field".to_owned())
+                                )
+                            })
+                    })
+                    .expect("extract-zip needs archivePath or archivePathField");
+
+                assert!(
+                    !reference.contains("://"),
+                    "'{}' points extract-zip at a URL ({reference}); \
+                     a download-file step has to fetch it into Moddin's cache first",
+                    spec.id
+                );
+            }
+        }
+    }
+
+    /// The transaction has to be opened *before* the step that overwrites
+    /// a file runs. Opened afterwards — as it used to be — the backup
+    /// holds the mod's own output, so Undo restores the mod instead of
+    /// the player's file and the original is gone for good.
+    #[test]
+    fn an_install_backs_up_an_existing_game_file_before_overwriting_it() {
+        let appdata = IsolatedAppdata::new("overwrite-backup");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "overwriter",
+            r#"
+id: overwriter
+displayName: Overwriter
+category: qol
+status: available
+configSchema:
+  - name: target
+    type: string
+    required: true
+install:
+  - kind: write-text-file
+    description: Overwrite a file the game already shipped with.
+    params:
+      pathField: target
+      template: replaced
+"#,
+        );
+
+        let work = temp_root("overwrite-backup-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+        let victim = executable.join("settings.ini");
+        fs::write(&victim, b"original").expect("seed original");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let config = config_with(&[("target", "settings.ini")]);
+
+        let result = run_install(
+            &registry,
+            "overwriter",
+            &InstallScope {
+                game_id: "overwrite-game",
+                game_name: "Overwrite Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
+            false,
+        )
+        .expect("install runs");
+        assert!(
+            result.transaction.is_some(),
+            "an install that touches a file records a transaction"
+        );
+        assert_eq!(
+            fs::read_to_string(&victim).expect("read victim"),
+            "replaced",
+            "the step really did overwrite the file"
+        );
+
+        run_uninstall(
+            &registry,
+            "overwriter",
+            "overwrite-game",
+            "Overwrite Game",
+            &work,
+        )
+        .expect("uninstall runs");
+
+        assert_eq!(
+            fs::read_to_string(&victim).expect("read victim after undo"),
+            "original",
+            "Undo must restore the player's original content, not the mod's output"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// A step that fails halfway must not leave the files the earlier
+    /// steps already wrote behind with no rollback record. Before the
+    /// runner was reordered, `?` returned out of the step loop before
+    /// any transaction existed, so those writes were simply orphaned.
+    #[test]
+    fn a_failed_step_rolls_back_what_the_install_already_wrote() {
+        let appdata = IsolatedAppdata::new("partial-failure");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "half-writer",
+            r#"
+id: half-writer
+displayName: Half writer
+category: qol
+status: available
+install:
+  - kind: write-text-file
+    description: Succeeds.
+    params:
+      path: first.ini
+      template: written
+  - kind: file-delete
+    description: Fails on purpose — there is no such file to delete.
+    params:
+      path: does-not-exist.ini
+"#,
+        );
+
+        let work = temp_root("partial-failure-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let error = run_install(
+            &registry,
+            "half-writer",
+            &InstallScope {
+                game_id: "partial-game",
+                game_name: "Partial Game",
+                config: &ResolvedConfig::default(),
+                install_directory: &work,
+                executable_directory: &executable,
+            },
+            false,
+        )
+        .expect_err("the second step fails");
+
+        assert!(error.contains("does-not-exist.ini"), "{error}");
+        assert!(
+            !executable.join("first.ini").exists(),
+            "the file the first step wrote must be rolled back, not orphaned"
+        );
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    /// Step paths are rendered from config, so `..` in a config value
+    /// would otherwise let a recipe write anywhere on the machine.
+    #[test]
+    fn a_step_cannot_write_outside_the_install_root_without_saying_so() {
+        let appdata = IsolatedAppdata::new("escape-root");
+        let caps = appdata.dir.join("Moddin").join("capabilities");
+        write_local_capability(
+            &caps,
+            "escaper",
+            r#"
+id: escaper
+displayName: Escaper
+category: qol
+status: available
+configSchema:
+  - name: target
+    type: string
+    required: true
+install:
+  - kind: write-text-file
+    description: Try to climb out of the game folder.
+    params:
+      pathField: target
+      template: owned
+"#,
+        );
+
+        let work = temp_root("escape-root-work");
+        let executable = work.join("game");
+        fs::create_dir_all(&executable).expect("game dir");
+        let outside = work.join("hijacked.ini");
+
+        let registry = CapabilityRegistry::load_with_local_dir(&caps);
+        let config = config_with(&[("target", "../hijacked.ini")]);
+
+        let error = run_install(
+            &registry,
+            "escaper",
+            &InstallScope {
+                game_id: "escape-game",
+                game_name: "Escape Game",
+                config: &config,
+                install_directory: &work,
+                executable_directory: &executable,
+            },
+            false,
+        )
+        .expect_err("traversal out of the install root is refused");
+
+        assert!(error.contains("escapes the install directory"), "{error}");
+        assert!(!outside.exists(), "nothing was written outside the root");
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    // ---- Recipe-wide invariants -------------------------------------
+    //
+    // These used to live in `builtin_steps` as a pair of tests scoped to
+    // one hand-picked recipe (`openxr-helpers`). A guard is only as good
+    // as its inventory of sources, so they are stated over every built-in
+    // recipe instead: adding a tenth YAML file is covered automatically,
+    // with no test to remember to extend.
+
+    /// Every built-in recipe, parsed, as `BUILT_IN_YAML` declares it.
+    fn every_built_in_spec() -> Vec<CapabilitySpec> {
+        BUILT_IN_YAML
+            .iter()
+            .map(|raw| {
+                serde_yaml::from_str::<CapabilitySpec>(raw)
+                    .unwrap_or_else(|error| panic!("a built-in recipe does not parse: {error}"))
+            })
+            .collect()
+    }
+
+    /// A step may only reference a config field its own recipe declares.
+    ///
+    /// A `{placeholder}` naming a field that was never declared renders to
+    /// nothing, so whatever the step was building is written with the
+    /// placeholder still in it. This is the bug `openxr-helpers` shipped:
+    /// `gameId` was declared, but the step referenced a `<gameId>` literal
+    /// the renderer did not understand, and the literal became a registry
+    /// key of its own.
+    ///
+    /// The narrower sibling of a rule this file deliberately does **not**
+    /// assert. "Every declared field is consumed" cannot be checked from
+    /// here, because `configSchema` is the union of three consumers that
+    /// live in three different languages:
+    ///
+    ///   * the declarative chain — steps and checks, what this module runs;
+    ///   * the typed module path — `src/features/modules/module-registry.ts`
+    ///     maps the same fields into `OptiScalerRequest` / `CheekyRequest`
+    ///     for the dedicated Rust commands, which is how `proxyCandidates`
+    ///     and `addonFile` are read;
+    ///   * `build_metadata` above, which records `version` on the
+    ///     transaction so the install reports what it pinned.
+    ///
+    /// A first attempt asserted the union of the first two only and named
+    /// all six available recipes as declaring fields nothing reads. Every
+    /// one of those reports was a false positive. A guard that cries wolf
+    /// on the whole catalogue teaches everyone to ignore it, so the rule
+    /// that can be stated honestly is the one that stays.
+    #[test]
+    fn no_step_references_a_config_field_its_recipe_does_not_declare() {
+        for spec in every_built_in_spec() {
+            let declared: BTreeSet<&str> = spec
+                .config_schema
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect();
+            for name in crate::builtin_steps::tests::config_fields_a_step_reads(&spec) {
+                assert!(
+                    declared.contains(name.as_str()),
+                    "'{}' has a step referencing '{{{name}}}', which it does not declare",
+                    spec.id
+                );
+            }
+        }
+    }
+
+    /// What a recipe's install/uninstall chain can produce: the paths a
+    /// step names outright, and whether it unpacks an archive.
+    ///
+    /// A registry write lands under `registry:<key>`, which no check kind
+    /// can address: the check runner looks at processes, at paths inside
+    /// the game folder and at archive URLs, and that is the whole
+    /// vocabulary it has.
+    ///
+    /// `extracts` matters because an extracted archive is the one artifact
+    /// whose full tree is the product: `bepinex` checks
+    /// `BepInEx/core/BepInEx.Preloader.dll`, a path no step declares and
+    /// no step can, because it is the layout inside the release zip. A
+    /// check there is verifying the download, which is legitimate.
+    fn chain_artifacts(spec: &CapabilitySpec) -> (BTreeSet<String>, bool) {
+        let mut written = BTreeSet::new();
+        let mut extracts = false;
+        for step in spec.install.iter().chain(spec.uninstall.iter()) {
+            match step.kind.as_str() {
+                "write-text-file" | "write-binary-file" => {
+                    for param in ["pathField", "path"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("{param}:{value}"));
+                        }
+                    }
+                }
+                "move-file" => {
+                    for param in ["fromField", "from", "toField", "to"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("{param}:{value}"));
+                        }
+                    }
+                }
+                "extract-zip" => {
+                    extracts = true;
+                    for param in ["target", "targetSubdir"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("path:{value}"));
+                        }
+                    }
+                }
+                "git-checkout" => {
+                    for param in ["targetField", "target"] {
+                        if let Some(value) = step.params.get(param).and_then(|v| v.as_str()) {
+                            written.insert(format!("pathField:{value}"));
+                        }
+                    }
+                }
+                "build-project" => {
+                    // The build's declared outputs are what it must produce,
+                    // so they are artifacts of the chain like any other.
+                    for output in step
+                        .params
+                        .get("outputs")
+                        .and_then(|v| v.as_array())
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(path) = output.as_str() {
+                            written.insert(if path.starts_with('{') {
+                                format!("pathField:{}", path.trim_matches(|c| c == '{' || c == '}'))
+                            } else {
+                                format!("path:{path}")
+                            });
+                        }
+                    }
+                }
+                "registry-write" | "registry-delete" => {
+                    if let Some(key) = step.params.get("key").and_then(|v| v.as_str()) {
+                        written.insert(format!("registry:{key}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (written, extracts)
+    }
+
+    /// A check may only inspect something its own recipe's chain writes,
+    /// and may never name an absolute path.
+    ///
+    /// A check resolving an absolute path is a check that inspects the
+    /// developer's machine rather than the game folder the install just
+    /// populated, so it passes for one user and fails for the next.
+    ///
+    /// "Writes" includes unpacking an archive, because the tree inside a
+    /// release zip is the artifact and no step can name its paths. What is
+    /// still refused is a check pointing at something the chain never had
+    /// any way to produce — a file in a directory no step extracts into,
+    /// or a path outside the game folder.
+    ///
+    /// Scoped to `available` because `chain_artifacts` reads step params,
+    /// and a `planned` recipe's chain is a statement of intent: `uevr`
+    /// declares a `file-exists` check on `Binaries/Win64` that no step in
+    /// its chain names, and that check cannot run while the recipe refuses
+    /// to install. A guard that cannot tell intent from code should not
+    /// pretend to.
+    #[test]
+    fn a_check_only_looks_at_what_its_own_recipe_writes() {
+        for spec in every_built_in_spec() {
+            if spec.status != "available" {
+                continue;
+            }
+            let (written, extracts) = chain_artifacts(&spec);
+            for check in spec.checks.iter().chain(spec.verify.iter()) {
+                for (param, value) in &check.params {
+                    if let Some(text) = value.as_str() {
+                        // The community validator rejects a placeholder in
+                        // a check param: the check runner holds no resolved
+                        // config, so `{name}` would be compared literally.
+                        assert!(
+                            !text.contains('{'),
+                            "'{}' check '{}' param '{param}' holds a placeholder: {text}",
+                            spec.id,
+                            check.id
+                        );
+                    }
+                }
+                if !matches!(
+                    check.kind.as_str(),
+                    "file-exists" | "file-absent" | "exe-version"
+                ) {
+                    continue;
+                }
+                let target = check
+                    .params
+                    .get("pathField")
+                    .and_then(|v| v.as_str())
+                    .map(|field| format!("pathField:{field}"))
+                    .or_else(|| {
+                        check
+                            .params
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .map(|path| format!("path:{path}"))
+                    });
+                let Some(target) = target else {
+                    continue;
+                };
+                let literal = target.strip_prefix("path:").expect("a literal path target");
+                assert!(
+                    !Path::new(literal).is_absolute(),
+                    "'{}' check '{}' names the absolute path '{literal}'; a check resolves relative \
+                     to the game folder",
+                    spec.id,
+                    check.id
+                );
+                assert!(
+                    written.contains(&target) || extracts,
+                    "'{}' check '{}' inspects '{literal}', which nothing in its chain produces. \
+                     The chain writes: {written:?}, and it unpacks no archive, so the path has \
+                     to be one a step names",
+                    spec.id,
+                    check.id
+                );
+            }
+        }
     }
 }

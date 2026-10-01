@@ -27,7 +27,15 @@ onUnmounted(clearTimer)
 </script>
 
 <template>
-  <div class="toast-stack" aria-live="polite">
+  <!--
+    UX-29: the container carried `aria-live="polite"` and so did the two
+    toasts inside it, so every message was announced twice — once as a
+    live-region change and once as the `role="alert"` / `role="status"`
+    element. The roles are the precise mechanism: `alert` interrupts
+    for an error, `status` waits its turn for a success. The container
+    is now silent and only carries the stack's layout.
+  -->
+  <div class="toast-stack">
     <TransitionGroup name="toast">
       <div v-if="error" key="error" class="toast toast-error" role="alert">
         <AppIcon class="toast-icon" name="alert" :size="18" />

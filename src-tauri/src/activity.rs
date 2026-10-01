@@ -74,8 +74,7 @@ fn rotate_if_needed(path: &PathBuf, incoming_bytes: u64) -> Result<(), String> {
         fs::remove_file(&rotated)
             .map_err(|error| format!("Could not remove previous rotated action log: {error}"))?;
     }
-    fs::rename(path, &rotated)
-        .map_err(|error| format!("Could not rotate action log: {error}"))
+    fs::rename(path, &rotated).map_err(|error| format!("Could not rotate action log: {error}"))
 }
 
 pub fn record(
@@ -149,17 +148,17 @@ fn valid_level(level: &str) -> bool {
 fn valid_action(action: &str) -> bool {
     !action.is_empty()
         && action.len() <= 96
-        && action
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        && action.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
 }
 
 fn valid_reference(reference: &str) -> bool {
     !reference.is_empty()
         && reference.len() <= MAX_REFERENCE_BYTES
-        && reference
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        && reference.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
 }
 
 fn valid_optional_reference(reference: Option<&str>) -> bool {
@@ -217,13 +216,11 @@ pub fn list_action_logs(limit: Option<usize>) -> Result<Vec<ActionLogEntry>, Str
         .lock()
         .map_err(|_| "Action log lock is poisoned.".to_owned())?;
 
-    let requested_limit = limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, MAX_LIST_LIMIT);
+    let requested_limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
     let mut entries = Vec::new();
     read_log_file(rotated_log_path(), &mut entries);
     read_log_file(current_log_path(), &mut entries);
-    entries.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
     entries.truncate(requested_limit);
     Ok(entries)
 }
@@ -237,8 +234,9 @@ pub fn clear_action_logs() -> Result<(), String> {
 
     for path in [current_log_path(), rotated_log_path()] {
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|error| format!("Could not remove action log '{}': {error}", path.display()))?;
+            fs::remove_file(&path).map_err(|error| {
+                format!("Could not remove action log '{}': {error}", path.display())
+            })?;
         }
     }
     Ok(())
@@ -266,7 +264,10 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         let decoded: ActionLogEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.action, "optiscaler");
-        assert_eq!(decoded.details.get("proxy").map(String::as_str), Some("dxgi.dll"));
+        assert_eq!(
+            decoded.details.get("proxy").map(String::as_str),
+            Some("dxgi.dll")
+        );
     }
 
     #[test]
@@ -276,7 +277,9 @@ mod tests {
         assert!(valid_action("set_system_openxr_runtime"));
         assert!(!valid_action("../escape"));
         assert!(valid_reference("cyberpunk-2077"));
-        assert!(valid_reference("1757720000000-0123456789abcdef0123456789abcdef"));
+        assert!(valid_reference(
+            "1757720000000-0123456789abcdef0123456789abcdef"
+        ));
         assert!(!valid_reference("../escape"));
         assert!(!valid_reference(&"x".repeat(MAX_REFERENCE_BYTES + 1)));
     }

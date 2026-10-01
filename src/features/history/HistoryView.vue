@@ -2,7 +2,10 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
+import EmptyState from '../../components/ui/EmptyState.vue'
 import type { TransactionRecord } from '../../types/transaction'
+import SnapshotPanel from './SnapshotPanel.vue'
 
 const props = defineProps<{
   transactions: TransactionRecord[]
@@ -22,6 +25,26 @@ const activeCount = computed(() => props.transactions.filter((item) => item.stat
 const visible = computed(() =>
   activeOnly.value ? props.transactions.filter((item) => item.status === 'applied') : props.transactions,
 )
+
+// Undo rewrites files in the game folder. Every row's button is
+// labelled "Desfazer", so the list alone does not tell the user what
+// they are about to revert — the dialog names it and counts the files.
+const pendingUndo = ref<{ transaction: TransactionRecord; label: string; fileCount: number } | null>(null)
+
+function askUndo(transaction: TransactionRecord) {
+  pendingUndo.value = {
+    transaction,
+    label: transaction.label || transaction.kind,
+    fileCount: transaction.files?.length ?? 0,
+  }
+}
+
+function confirmUndo() {
+  const pending = pendingUndo.value
+  if (!pending) return
+  pendingUndo.value = null
+  emit('undo', pending.transaction)
+}
 </script>
 
 <template>
@@ -37,6 +60,15 @@ const visible = computed(() =>
       </button>
     </header>
 
+    <!-- Restoring a snapshot changes every transaction it captured, so the
+         panel reports the change upward instead of only refreshing itself. -->
+    <SnapshotPanel
+      :transactions="transactions"
+      :game-name="gameName"
+      :format-date="formatDate"
+      @changed="emit('refresh')"
+    />
+
     <div class="history-toolbar">
       <div class="segmented" role="group" :aria-label="t('historyTitle')">
         <button type="button" :aria-pressed="!activeOnly" @click="activeOnly = false">
@@ -48,16 +80,18 @@ const visible = computed(() =>
       </div>
     </div>
 
-    <div class="panel history-list">
-      <div v-if="loading && !transactions.length" class="empty-state">
-        <span class="spinner" />
-        <span>{{ t('historyLoading') }}</span>
-      </div>
-      <div v-else-if="!visible.length" class="empty-state">
-        <AppIcon name="history" :size="28" />
-        <strong>{{ t('historyEmptyTitle') }}</strong>
-        <span>{{ t('historyEmptyHint') }}</span>
-      </div>
+    <div class="panel history-list" :aria-busy="loading">
+      <EmptyState
+        v-if="loading && !transactions.length"
+        busy
+        :description="t('historyLoading')"
+      />
+      <EmptyState
+        v-else-if="!visible.length"
+        icon="history"
+        :title="t('historyEmptyTitle')"
+        :description="t('historyEmptyHint')"
+      />
 
       <article v-for="transaction in visible" :key="transaction.id" class="history-row" :class="{ undone: transaction.status !== 'applied' }">
         <div class="history-marker" aria-hidden="true">
@@ -86,13 +120,26 @@ const visible = computed(() =>
           type="button"
           :disabled="busyId === transaction.id || Boolean(blockedReason(transaction))"
           :title="blockedReason(transaction)"
-          @click="emit('undo', transaction)"
+          :aria-label="t('ariaUndoNamed', { name: transaction.label })"
+          :aria-busy="busyId === transaction.id"
+          @click="askUndo(transaction)"
         >
           <AppIcon v-if="busyId !== transaction.id" name="undo" :size="14" />
           {{ busyId === transaction.id ? t('historyUndoing') : t('historyUndo') }}
         </button>
       </article>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingUndo"
+      :title="t('historyUndoConfirmTitle')"
+      :description="t('historyUndoConfirmDescription', { label: pendingUndo.label })"
+      :confirm-label="t('historyUndo')"
+      :cancel-label="t('cancel')"
+      :details="[t('historyUndoConfirmDetailFiles', { count: pendingUndo.fileCount })]"
+      @close="pendingUndo = null"
+      @confirm="confirmUndo"
+    />
   </section>
 </template>
 
