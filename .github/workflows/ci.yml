@@ -111,32 +111,6 @@ jobs:
           cargo clippy --version
 
       # ------------------------------------------------------------------
-      # Both gates are blocking. They were added reported-only while the
-      # backlog stood at 3,653 `cargo fmt` diff lines across 34 files and
-      # 144 clippy diagnostics across 30 lints (53 of them `dead_code`
-      # from the nine unwired module implementations in docs/
-      # BACKEND-MODULES.md). That backlog is now cleared, so there is
-      # nothing left to report and nothing left to justify `continue-on-error`.
-      #
-      # `cargo fmt --check` needs no flags to block: it exits non-zero on
-      # any diff. `cargo clippy` does — without `-- -D warnings` it exits
-      # 0 and only prints its findings, which is precisely why the step
-      # looked green while the lints were outstanding.
-      #
-      # Deliberately no `[lints]` allow-list in src-tauri/Cargo.toml: the
-      # tree is clean without one, and a blanket allow would turn the gate
-      # into a guard that has been switched off. The only suppressions
-      # left are three item-scoped `#[allow(dead_code, reason = ...)]` on
-      # the un-adopted `Module` contract in src-tauri/src/module.rs, each
-      # stating why the code exists and why it is not compiled into the
-      # shipped binary.
-      - name: Format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-
-      - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      # ------------------------------------------------------------------
       # tauri.conf.json bundles ../moddin-runtime/{node.exe,moddin-agent},
       # and tauri-build validates those resource paths during cargo's
       # build script — so cargo test/check fails without them. The folder
@@ -287,6 +261,46 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Runtime smoke test failed on the '${{ steps.runtime-cache.outputs.cache-hit }}' bundle." }
           $env:MODDIN_PROJECT_ROOT = $null
           Write-Host "runtime bundle verified (cache hit: '${{ steps.runtime-cache.outputs.cache-hit }}', node $nodeVersion)"
+
+      # ------------------------------------------------------------------
+      # Both gates are blocking. They were added reported-only while the
+      # backlog stood at 3,653 `cargo fmt` diff lines across 34 files and
+      # 144 clippy diagnostics across 30 lints (53 of them `dead_code`
+      # from the nine unwired module implementations in docs/
+      # BACKEND-MODULES.md). That backlog is now cleared, so there is
+      # nothing left to report and nothing left to justify `continue-on-error`.
+      #
+      # `cargo fmt --check` needs no flags to block: it exits non-zero on
+      # any diff. `cargo clippy` does — without `-- -D warnings` it exits
+      # 0 and only prints its findings, which is precisely why the step
+      # looked green while the lints were outstanding.
+      #
+      # Deliberately no `[lints]` allow-list in src-tauri/Cargo.toml: the
+      # tree is clean without one, and a blanket allow would turn the gate
+      # into a guard that has been switched off. The only suppressions
+      # left are three item-scoped `#[allow(dead_code, reason = ...)]` on
+      # the un-adopted `Module` contract in src-tauri/src/module.rs, each
+      # stating why the code exists and why it is not compiled into the
+      # shipped binary.
+      #
+      # These two sit BELOW the runtime bundle on purpose, and the ordering
+      # is load-bearing rather than cosmetic. `cargo fmt` does not compile,
+      # so it passed wherever it was put — but `cargo clippy` compiles the
+      # crate, which runs tauri's build script, and that script copies
+      # every path in `bundle.resources` unconditionally (tauri-build
+      # `lib.rs`: `copy_resources(ResourcePaths::new(res, true), …)`), erroring
+      # with `resource path '..\moddin-runtime\node.exe' doesn't exist` on a
+      # checkout where the gitignored bundle has not been staged. The first
+      # run with these gates above the bundle failed in the Clippy step for
+      # exactly that reason, with the gates' own history never printed.
+      # `main` had the bundle before every Rust compile and was green; these
+      # two were inserted above it and broke it. **Any new step that compiles
+      # Rust belongs after `Verify runtime bundle`, not before it.**
+      - name: Format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
