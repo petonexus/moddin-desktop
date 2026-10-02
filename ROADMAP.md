@@ -833,3 +833,9 @@ Recurring sources of drift, recorded so they stay visible:
   foi gerada a nova chave bbe4bcb7ebd11a6f, armazenada fora do Git e registrada
   no segredo do GitHub e no bootstrap do beta.6. A chave e247 foi removida
   da confiança deste build; d489 permanece apenas durante a transição.
+
+- A assinatura e os digests publicados foram verificados diretamente nos bytes
+  servidos pelo GitHub (run comunitário 36963418965). O refresh agora escolhe
+  o assinante no keyring compilado e repina a chave nova mesmo quando o cache
+  contém uma chave anterior ainda confiável. Smoke de integração contra o
+  catálogo publicado passou; esse teste é opt-in para manter CI offline estável.

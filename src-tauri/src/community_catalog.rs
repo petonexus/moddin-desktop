@@ -634,7 +634,7 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
         }
     }
 
-    let key = match ensure_bootstrap_key_material(&dir) {
+    let _bootstrap_key = match ensure_bootstrap_key_material(&dir) {
         Ok(key) => key,
         Err(error) => return empty_result(ttl_seconds, error),
     };
@@ -699,9 +699,12 @@ pub async fn fetch(force_refresh: bool, ttl_override: Option<u64>) -> CommunityF
         }
     };
 
-    if let Err(error) = verify_signature(&catalog_bytes, &signature_text, &key) {
-        return fallback_to_cache(&dir, ttl_seconds, error).await;
-    }
+    // A legitimate previous pin must not prevent an authorized rotation.
+    // Select the signer from the compiled keyring, as cached reads do.
+    let key = match verify_with_keys(&catalog_bytes, &signature_text, TRUSTED_PUBLIC_KEYS_B64) {
+        Ok(key) => key,
+        Err(error) => return fallback_to_cache(&dir, ttl_seconds, error).await,
+    };
 
     // The signature is checked before the bytes are parsed, and a
     // parse failure here is a refusal rather than a cache write: a
@@ -1398,6 +1401,28 @@ mod tests {
             Some(value) => std::env::set_var("LOCALAPPDATA", value),
             None => std::env::remove_var("LOCALAPPDATA"),
         }
+    }
+
+    /// Explicit live smoke test; ordinary CI remains independent of GitHub.
+    #[test]
+    #[ignore = "requires the live catalog published with the current bootstrap key"]
+    fn live_rotation_migrates_a_previous_trusted_pin() {
+        with_temp_community_dir("live-key-rotation", |dir| {
+            let previous = decode_public_key(TRUSTED_PUBLIC_KEYS_B64[1]).unwrap();
+            pin_pinned_public_key(dir, &previous).unwrap();
+            let result = tauri::async_runtime::block_on(fetch(true, None));
+            assert!(result.signature_verified, "{:?}", result.last_error);
+            assert!(!result.cached);
+            let anchor = decode_public_key(BOOTSTRAP_PUBLIC_KEY_B64).unwrap();
+            assert_eq!(
+                result.bootstrap_public_key_fingerprint,
+                fingerprint(&anchor)
+            );
+            assert_eq!(
+                std::fs::read(dir.join("pinned-public-key.bin")).unwrap(),
+                anchor.to_bytes()
+            );
+        });
     }
 
     /// Point `community_dir()` at a fresh temp directory for the
