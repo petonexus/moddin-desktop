@@ -8,12 +8,12 @@ const input = {
   installer: 'Moddin Desktop_0.1.0-beta.6_x64-setup.exe', signature: 'signature\n', notes: 'Release notes',
 }
 
-test('Tauri v2 manifest points to the signed executable and preserves prerelease version', () => {
+test('manifest uses the GitHub asset name after spaces become dots, preserving prerelease and signature', () => {
   const manifest = createUpdaterManifest(input)
   assert.equal(manifest.version, input.version)
   assert.equal(manifest.platforms['windows-x86_64'].signature, 'signature')
   assert.equal(manifest.platforms['windows-x86_64'].url,
-    'https://github.com/petonexus/moddin-desktop/releases/download/v0.1.0-beta.6/Moddin%20Desktop_0.1.0-beta.6_x64-setup.exe')
+    'https://github.com/petonexus/moddin-desktop/releases/download/v0.1.0-beta.6/Moddin.Desktop_0.1.0-beta.6_x64-setup.exe')
 })
 
 test('rejects a tag mismatch, unsigned artifact, and legacy zip', () => {

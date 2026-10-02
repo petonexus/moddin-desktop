@@ -110,6 +110,10 @@ missing/empty signatures, legacy ZIP filenames and ambiguous installer sets.
 The workflow passes signing secrets to the build, uploads the `.sig` and
 manifest, and hashes/uploads that exact installer.
 
+Before generating the manifest, spaces in the installer and signature filenames
+are replaced with dots, matching GitHub release asset normalization. The published
+URL must use the uploaded asset name rather than the original local filename.
+
 **Stable channel only, explicitly.** `releases/latest/…` never resolves to a
 draft and never to a prerelease — GitHub's `latest` excludes both, and
 `release.yml` marks any tag containing `-` as `--prerelease`. The Rust side

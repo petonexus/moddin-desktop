@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,7 +26,7 @@ export function createUpdaterManifest({ version, tag, repository, installer, sig
     version, notes, pub_date: now.toISOString(),
     platforms: {
       'windows-x86_64': {
-        url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(installer)}`,
+        url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(installer.replaceAll(' ', '.'))}`,
         signature: signature.trim(),
       },
     },
@@ -41,10 +41,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const bundle = join(root, 'src-tauri/target/release/bundle/nsis')
     const installers = readdirSync(bundle).filter((name) => name.endsWith('-setup.exe'))
     if (installers.length !== 1) throw new Error(`Expected exactly one NSIS installer, found ${installers.length}`)
-    const installer = installers[0]
+    const originalInstaller = installers[0]
+    const installer = originalInstaller.replaceAll(' ', '.')
+    const signature = readFileSync(join(bundle, `${originalInstaller}.sig`), 'utf8')
+    // GitHub replaces spaces with dots on upload. Normalize both files
+    // before hashing/uploading so the manifest and assets have one name.
+    if (installer !== originalInstaller) {
+      renameSync(join(bundle, originalInstaller), join(bundle, installer))
+      renameSync(join(bundle, `${originalInstaller}.sig`), join(bundle, `${installer}.sig`))
+    }
     const manifest = createUpdaterManifest({
       version, tag, repository, installer,
-      signature: readFileSync(join(bundle, `${installer}.sig`), 'utf8'),
+      signature,
       notes: readFileSync(join(root, `docs/release-notes/.release-notes-${tag}.md`), 'utf8'),
     })
     writeFileSync(join(bundle, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
