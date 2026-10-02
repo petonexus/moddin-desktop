@@ -102,7 +102,7 @@ const CATALOG_META_FILE: &str = "catalog.meta.json";
 /// — the first 16 hex chars of SHA-256 over these 32 bytes are
 /// `d489a3a0be894b19`. Rotating the maintainer key requires a new
 /// Moddin Desktop release with the updated constant.
-const BOOTSTRAP_PUBLIC_KEY_B64: &str = "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=";
+const BOOTSTRAP_PUBLIC_KEY_B64: &str = "JURnO8HhZDsJdoTFEeF4mq1pDgFnfXN0/OZgPuzJKfc=";
 
 /// Every key this build is willing to trust, newest first.
 ///
@@ -123,12 +123,10 @@ const BOOTSTRAP_PUBLIC_KEY_B64: &str = "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ
 /// on-disk cache, because the cache is only ever accepted when it
 /// matches a key that is neither absent from this list nor revoked.
 const TRUSTED_PUBLIC_KEYS_B64: &[&str] = &[
-    // @moddin-bot, active since the 2026-09-24 rotation.
+    // @moddin-bot, active since the authorized 2026-10-02 rotation.
+    BOOTSTRAP_PUBLIC_KEY_B64,
+    // Previous anchor retained during this release's transition.
     "R2oSrMGh0d6pHIWFHZwvU+sA+wK1Uo/vaBq/L1WJ6GU=",
-    // @marcoasjunior, retired at the same rotation. Kept so a user who
-    // has not updated since 2026-09-24 can still verify a catalog that
-    // was signed before the change. Safe to drop after the next release.
-    "Mh/WGQ0kCviGtiX/8wLB5fqBCLgtVR/4smlVai13xs8=",
 ];
 
 /// Fingerprints (first 16 hex of SHA-256, as shown in the UI) that

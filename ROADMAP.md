@@ -829,4 +829,7 @@ Recurring sources of drift, recorded so they stay visible:
   testado no smoke com o mesmo snapshot que será instalado.
 - Pipeline comunitário emite `yamlSha256` e recusa a chave aposentada. Em
   2026-10-02 o run 36962458600 confirmou segredo e247ca4981f22245, enquanto
-  public-keys.json exige d489a3a0be894b19; correção do segredo ainda pendente.
+  public-keys.json exigia d489a3a0be894b19. Com autorização do mantenedor,
+  foi gerada a nova chave bbe4bcb7ebd11a6f, armazenada fora do Git e registrada
+  no segredo do GitHub e no bootstrap do beta.6. A chave e247 foi removida
+  da confiança deste build; d489 permanece apenas durante a transição.
