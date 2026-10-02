@@ -15,6 +15,7 @@ import {
   listAgentClis,
   previewCapabilityPlan,
   runAiAgentPrompt,
+  cancelAiAgentPrompt,
   saveCapabilityYaml,
   validateCapabilityYaml,
   validateRecommendationsYaml,
@@ -273,6 +274,7 @@ const recommendationInstallStatus = ref<Record<string, 'pending' | 'running' | '
 const agentClis = ref<AgentCliInfo[]>([])
 const agentClisLoaded = ref(false)
 const agentBusy = ref(false)
+let agentCancelRequested = false
 const agentRun = ref<AgentRunResult | null>(null)
 const agentElapsed = ref(0)
 let agentTimer: number | undefined
@@ -300,6 +302,7 @@ function reset() {
 }
 
 async function openFor(next: AuthorPromptContext) {
+  if (agentBusy.value) return
   reset()
   mode.value = next.mode
   // Carry the user's chosen verbosity into the request, but let the
@@ -424,15 +427,18 @@ async function ensureAgentClis() {
  * - `failed`: same as noYaml, plus the truncated output in the error
  *   callout.
  */
-async function runWithAgent(agent: AgentKind) {
+async function runWithAgent(agent: AgentKind, consent = false) {
+  if (!consent) return
   if (agentBusy.value || busy.value) return
   const prompt = `${promptText.value}${AGENT_SUFFIX}`
+  agentCancelRequested = false
   agentBusy.value = true
   agentRun.value = null
   error.value = null
   startAgentTimer()
   try {
-    const result = await runAiAgentPrompt(agent, prompt)
+    const result = await runAiAgentPrompt(agent, prompt, consent)
+    if (agentCancelRequested) return
     if (result.status === 'ok' && result.yaml) {
       yamlInput.value = result.yaml
       await validateYaml()
@@ -448,6 +454,13 @@ async function runWithAgent(agent: AgentKind) {
     stopAgentTimer()
     agentBusy.value = false
   }
+}
+
+async function cancelAgentRun() {
+  if (!agentBusy.value) return
+  agentCancelRequested = true
+  try { await cancelAiAgentPrompt() }
+  catch (err) { agentCancelRequested = false; error.value = err instanceof Error ? err.message : String(err) }
 }
 
 function dismissAgentRun() {
@@ -550,7 +563,7 @@ async function openAiAssistantRecommendations(ctx: RecommendOpenContext) {
   error.value = null
   try {
     const [collections, capabilities] = await Promise.all([
-      listCollections(),
+      listCollections(ctx.gameId),
       listCapabilitiesForAssistant(),
     ])
 
@@ -771,6 +784,7 @@ async function save(overwrite = false): Promise<boolean> {
 }
 
 function close() {
+  if (agentBusy.value) return
   open.value = false
   reset()
 }
@@ -827,6 +841,7 @@ export function useAiAssistant() {
     installSelectedRecommendations,
     ensureAgentClis,
     runWithAgent,
+    cancelAgentRun,
     dismissAgentRun,
   }
 }

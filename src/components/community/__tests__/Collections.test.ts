@@ -1,3 +1,6 @@
+import { shallowRef } from 'vue'
+import { selectedGameKey, type SelectedGameContext } from '../../../composables/useSelectedGame'
+const selection = shallowRef<SelectedGameContext | null>(null)
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CollectionsPanel from '../../shell/CollectionsPanel.vue'
@@ -79,7 +82,7 @@ beforeEach(() => {
   mockedFindGame.mockReset()
   mockedResolveConfig.mockReset()
 
-  window.localStorage.setItem('moddin-selected-appId', 'elden-ring')
+  selection.value = { appId: '1245620', gameId: 'elden-ring', gameName: 'Elden Ring', engine: null }
   mockedFindGame.mockReturnValue({
     id: 'elden-ring',
     name: 'Elden Ring',
@@ -144,7 +147,7 @@ function vrBundle(overrides: Partial<CollectionSummary> = {}): CollectionSummary
 async function openPanel() {
   const wrapper = mount(CollectionsPanel, {
     attachTo: document.body,
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], provide: { [selectedGameKey as symbol]: selection } },
   })
   await wrapper.find('button.nav-item').trigger('click')
   await flushPromises()
@@ -184,6 +187,26 @@ async function requestInstall() {
 }
 
 describe('CollectionsPanel — the install path', () => {
+  it('keeps the collection run visible while a member is installing', async () => {
+    let release = () => {}
+    mockedInstallCapability.mockReturnValueOnce(new Promise((resolve) => {
+      release = () => resolve({ capabilityId: 'uevr', transaction: null, steps: [], affectedPaths: [] })
+    }))
+    await openPanel()
+    await requestInstall()
+    confirmButton()?.click()
+    await flushPromises()
+    const run = dialogs()[0]
+    expect(run.getAttribute('aria-busy')).toBe('true')
+    expect((run.querySelector('.dialog-header button') as HTMLButtonElement).disabled).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(dialogs()[0]).toBe(run)
+    release()
+    await flushPromises()
+    expect(run.textContent).toContain('Collection installed')
+  })
+
   it('installs a collection through the ordinary capability install command', async () => {
     await openPanel()
     await requestInstall()
@@ -356,7 +379,7 @@ describe('CollectionsPanel — states', () => {
   it('shows a busy state instead of an empty list while the catalog loads', async () => {
     let release = () => {}
     mockedList.mockReturnValue(new Promise((resolve) => { release = () => resolve([vrBundle()]) }))
-    const wrapper = mount(CollectionsPanel, { attachTo: document.body, global: { plugins: [i18n] } })
+    const wrapper = mount(CollectionsPanel, { attachTo: document.body, global: { plugins: [i18n], provide: { [selectedGameKey as symbol]: selection } } })
     await wrapper.find('button.nav-item').trigger('click')
     await flushPromises()
 

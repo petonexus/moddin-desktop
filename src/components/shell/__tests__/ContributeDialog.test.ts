@@ -1,3 +1,6 @@
+import { shallowRef } from 'vue'
+import { selectedGameKey, type SelectedGameContext } from '../../../composables/useSelectedGame'
+const selection = shallowRef<SelectedGameContext | null>(null)
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ContributeTrigger from '../ContributeTrigger.vue'
@@ -43,7 +46,7 @@ beforeEach(() => {
     openFor,
   } as unknown as ReturnType<typeof useAiAssistant>)
 
-  window.localStorage.setItem('moddin-selected-appId', 'elden-ring')
+  selection.value = { appId: '1245620', gameId: 'elden-ring', gameName: 'Elden Ring', engine: null }
   mockedFindGame.mockReturnValue({
     id: 'elden-ring',
     name: 'Elden Ring',
@@ -60,7 +63,7 @@ function dialog() {
 async function openFromSidebar() {
   const wrapper = mount(ContributeTrigger, {
     attachTo: document.body,
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], provide: { [selectedGameKey as symbol]: selection } },
   })
   await wrapper.find('button.nav-item').trigger('click')
   await flushPromises()
@@ -159,6 +162,17 @@ describe('ContributeTrigger', () => {
     expect(openFor).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'improve', capabilityId: 'uevr', gameId: 'elden-ring' }),
     )
+  })
+
+  it('uses a changed library selection without remounting the sidebar', async () => {
+    await openFromSidebar()
+    selection.value = { appId: '1091500', gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077', engine: null }
+    await flushPromises()
+    const card = Array.from(dialog()?.querySelectorAll('.contribute-card') ?? []).find((element) =>
+      element.textContent?.includes('Author a new mod')) as HTMLButtonElement
+    card.click()
+    await flushPromises()
+    expect(openFor).toHaveBeenCalledWith(expect.objectContaining({ gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077' }))
   })
 
   it('closes on Escape and sends nothing', async () => {

@@ -29,18 +29,17 @@ beforeEach(() => {
 
 describe('selectedGameRequest', () => {
   it('passes the catalogue id and its engine preset', () => {
-    window.localStorage.setItem('moddin-selected-appId', 'stalker-2')
     mockedFindGame.mockReturnValue({
       id: 'stalker-2',
       name: 'S.T.A.L.K.E.R. 2',
       enginePreset: 'unreal5',
     } as unknown as ReturnType<typeof findCatalogGameById>)
 
-    expect(selectedGameRequest()).toEqual({ gameId: 'stalker-2', engine: 'unreal5' })
+    expect(selectedGameRequest('stalker-2')).toEqual({ gameId: 'stalker-2', engine: 'unreal5' })
   })
 
   it('sends no game and no engine when nothing is selected', () => {
-    expect(selectedGameRequest()).toEqual({ gameId: null, engine: null })
+    expect(selectedGameRequest(null)).toEqual({ gameId: null, engine: null })
   })
 
   it('keeps the id for a game the catalogue does not describe', () => {
@@ -48,19 +47,17 @@ describe('selectedGameRequest', () => {
     // what lets the loader say "this set is curated for another game".
     // Only the engine is missing, which is the loader's noGameEngine
     // case: it gates nothing.
-    window.localStorage.setItem('moddin-selected-appId', 'steam-481516')
     mockedFindGame.mockReturnValue(undefined)
 
-    expect(selectedGameRequest()).toEqual({ gameId: 'steam-481516', engine: null })
+    expect(selectedGameRequest('steam-481516')).toEqual({ gameId: 'steam-481516', engine: null })
   })
 
   it('sends a null engine for a game that declares none', () => {
-    window.localStorage.setItem('moddin-selected-appId', 'elden-ring')
     mockedFindGame.mockReturnValue({
       id: 'elden-ring',
       name: 'Elden Ring',
     } as unknown as ReturnType<typeof findCatalogGameById>)
 
-    expect(selectedGameRequest()).toEqual({ gameId: 'elden-ring', engine: null })
+    expect(selectedGameRequest('elden-ring')).toEqual({ gameId: 'elden-ring', engine: null })
   })
 })

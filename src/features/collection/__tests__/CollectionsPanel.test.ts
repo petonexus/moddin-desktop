@@ -1,3 +1,6 @@
+import { shallowRef } from 'vue'
+import { selectedGameKey, type SelectedGameContext } from '../../../composables/useSelectedGame'
+const selection = shallowRef<SelectedGameContext | null>(null)
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CollectionsPanel from '../../../components/shell/CollectionsPanel.vue'
@@ -42,7 +45,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'en'
   mockedList.mockReset()
   mockedFindGame.mockReset()
-  window.localStorage.setItem('moddin-selected-appId', 'elden-ring')
+  selection.value = { appId: '1245620', gameId: 'elden-ring', gameName: 'Elden Ring', engine: null }
   mockedFindGame.mockReturnValue({
     id: 'elden-ring',
     name: 'Elden Ring',
@@ -75,7 +78,7 @@ function optiscalerOnly() {
 }
 
 async function openPanel() {
-  const wrapper = mount(CollectionsPanel, { attachTo: document.body, global: { plugins: [i18n] } })
+  const wrapper = mount(CollectionsPanel, { attachTo: document.body, global: { plugins: [i18n], provide: { [selectedGameKey as symbol]: selection } } })
   await wrapper.find('button.nav-item').trigger('click')
   await flushPromises()
   return wrapper
@@ -88,6 +91,28 @@ function rowInstallButtons() {
 }
 
 describe('CollectionsPanel — the list the loader sent', () => {
+  it('reloads verdicts with the catalog id when the library selection changes', async () => {
+    mockedList.mockResolvedValue([])
+    await openPanel()
+    expect(mockedList).toHaveBeenLastCalledWith('elden-ring')
+    selection.value = { appId: '1091500', gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077', engine: null }
+    await flushPromises()
+    expect(mockedList).toHaveBeenLastCalledWith('cyberpunk-2077')
+  })
+
+  it('does not show a stale collection response after a game change', async () => {
+    let resolveOlder!: (value: CollectionSummary[]) => void
+    mockedList.mockImplementationOnce(() => new Promise((resolve) => { resolveOlder = resolve }))
+    await openPanel()
+    mockedList.mockResolvedValue([])
+    selection.value = { appId: '1091500', gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077', engine: null }
+    await flushPromises()
+    resolveOlder([summary()])
+    await flushPromises()
+    expect(document.body.querySelectorAll('.collections-entry')).toHaveLength(0)
+    expect(document.body.querySelector('.empty-state')).not.toBeNull()
+  })
+
   it('renders the collections it was given', async () => {
     mockedList.mockResolvedValue([
       summary(),
@@ -210,7 +235,7 @@ describe('CollectionsPanel — a set the loader refused', () => {
   })
 
   it('reports nothing while no game is selected', async () => {
-    window.localStorage.removeItem('moddin-selected-appId')
+    selection.value = null
     mockedFindGame.mockReturnValue(undefined)
     mockedList.mockResolvedValue([
       summary({

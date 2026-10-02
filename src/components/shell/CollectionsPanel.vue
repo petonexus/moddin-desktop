@@ -7,8 +7,7 @@ import CollectionsTab from '../community/CollectionsTab.vue'
 import CollectionInstallDialog from '../community/CollectionInstallDialog.vue'
 import { useCollectionInstall } from '../../composables/useCollectionInstall'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
-import { readLocalValue } from '../../services/storage'
-import { findCatalogGameById } from '../../services/catalog'
+import { useSelectedGame } from '../../composables/useSelectedGame'
 import type { CollectionBlocker, CollectionSummary } from '../../types/collection'
 
 /**
@@ -25,13 +24,16 @@ import type { CollectionBlocker, CollectionSummary } from '../../types/collectio
 const { t } = useI18n()
 const open = ref(false)
 const pending = ref<CollectionSummary | null>(null)
+const pendingGame = ref<{ gameId: string | null; gameName: string | null }>({ gameId: null, gameName: null })
 
 const install = useCollectionInstall()
 
-const selectedGame = computed(() => {
-  const gameId = readLocalValue('moddin-selected-appId')
-  if (!gameId) return { gameId: null, gameName: null }
-  return { gameId, gameName: findCatalogGameById(gameId)?.name ?? null }
+const selection = useSelectedGame()
+const selectedGame = computed(() => ({ gameId: selection.value?.gameId ?? null, gameName: selection.value?.gameName ?? null }))
+
+watch(() => selectedGame.value.gameId, () => {
+  if (pending.value) return
+  if (open.value) void install.refreshCollections()
 })
 
 const collectionsError = computed<string | null>(() =>
@@ -97,12 +99,18 @@ function closePanel() {
   pending.value = null
 }
 
+function closeWizard() {
+  pending.value = null
+  if (open.value) void install.refreshCollections()
+}
+
 function choose(summary: CollectionSummary) {
   // A set the loader already refused must not reach the wizard. The
   // wizard installs every member in order, so the refusal would arrive
   // halfway through the run with files already written, instead of here
   // where the reason is already on screen.
   if (selectedGame.value.gameId !== null && (summary.preset?.blocked ?? []).length > 0) return
+  pendingGame.value = { ...selectedGame.value }
   pending.value = summary
 }
 
@@ -178,9 +186,9 @@ watch(open, (isOpen) => {
     <CollectionInstallDialog
       v-if="pending"
       :summary="pending"
-      :game-id="selectedGame.gameId"
-      :game-name="selectedGame.gameName"
-      @close="pending = null"
+      :game-id="pendingGame.gameId"
+      :game-name="pendingGame.gameName"
+      @close="closeWizard"
       @installed="finished"
     />
   </Teleport>

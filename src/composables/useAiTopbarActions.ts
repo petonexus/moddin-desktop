@@ -12,7 +12,7 @@ import { useAiModuleActions } from './useAiModuleActions'
  * is not a choice, the error *is* the request.
  */
 export function useAiTopbarActions(deps: {
-  selectedAppId: () => string | null
+  selectedGameId: () => string | null
   selectedGameName: () => string | null
   currentError: () => string | null
 }) {
@@ -22,7 +22,7 @@ export function useAiTopbarActions(deps: {
   async function ask() {
     await trigger.openFor({
       mode: 'author',
-      gameId: deps.selectedAppId(),
+      gameId: deps.selectedGameId(),
       gameName: deps.selectedGameName(),
       intent: '',
     })
@@ -33,7 +33,7 @@ export function useAiTopbarActions(deps: {
     if (!message) return
     aiModuleActions.openDiagnoseWithAi({
       message,
-      gameId: deps.selectedAppId(),
+      gameId: deps.selectedGameId(),
       gameName: deps.selectedGameName(),
       capabilityId: null,
     })

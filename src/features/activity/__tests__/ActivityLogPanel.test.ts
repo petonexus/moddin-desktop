@@ -24,9 +24,10 @@ vi.mock('../service', () => ({
   clearActionLogs: vi.fn(),
 }))
 
-import { listActionLogs } from '../service'
+import { clearActionLogs, listActionLogs } from '../service'
 
 const mockedList = vi.mocked(listActionLogs)
+const mockedClear = vi.mocked(clearActionLogs)
 const copy = activityCopyForLocale('en')
 
 enableAutoUnmount(afterEach)
@@ -57,6 +58,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'en'
   mockedList.mockReset()
   mockedList.mockResolvedValue([entry()])
+  mockedClear.mockReset()
 })
 
 async function openPanel(entries: ActionLogEntry[] = [entry()]) {
@@ -140,5 +142,68 @@ describe('the toolbar controls are named', () => {
     release([entry()])
     await flushPromises()
     expect(panel()?.getAttribute('aria-busy')).toBe('false')
+  })
+})
+
+describe('activity filtering and clearing', () => {
+  it('searches the translated action shown to the player', async () => {
+    await openPanel()
+    const search = document.body.querySelector('#activity-search') as HTMLInputElement
+    search.value = 'Install OptiScaler'
+    search.dispatchEvent(new Event('input'))
+    await flushPromises()
+    expect(rows()).toHaveLength(1)
+  })
+
+  it('offers filter recovery without claiming the log is empty', async () => {
+    await openPanel()
+    const level = document.body.querySelector('#activity-level') as HTMLSelectElement
+    level.value = 'error'
+    level.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const empty = document.body.querySelector('.empty-state') as HTMLElement
+    expect(empty.textContent).toContain(copy.filteredEmptyTitle)
+    expect(empty.textContent).not.toContain(copy.empty)
+    ;(empty.querySelector('button') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(rows()).toHaveLength(1)
+    expect(level.value).toBe('all')
+  })
+
+  it('confirms clearing in the app, protects the operation and keeps the parent open', async () => {
+    const wrapper = await openPanel()
+    expect(wrapper.find('.nav-item').attributes('aria-expanded')).toBe('true')
+    ;(document.body.querySelector('.dialog-footer .btn-danger') as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(mockedClear).not.toHaveBeenCalled()
+    const dialogs = document.body.querySelectorAll('[role="dialog"]')
+    expect(dialogs).toHaveLength(2)
+    expect(dialogs[1].textContent).toContain(copy.confirmClear)
+    ;(dialogs[1].querySelector('.dialog-footer .btn') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(mockedClear).not.toHaveBeenCalled()
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+
+    ;(document.body.querySelector('.dialog-footer .btn-danger') as HTMLButtonElement).click()
+    await flushPromises()
+    let release!: () => void
+    mockedClear.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    ;(document.body.querySelectorAll('[role="dialog"]')[1].querySelector('.btn-danger-solid') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(mockedClear).toHaveBeenCalledTimes(1)
+    const busyConfirmation = document.body.querySelectorAll('[role="dialog"]')[1]
+    expect(busyConfirmation.getAttribute('aria-busy')).toBe('true')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(2)
+
+    release()
+    await flushPromises()
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(rows()).toHaveLength(0)
+    expect(document.body.querySelector('.empty-state')?.textContent).toContain(copy.empty)
+    expect(wrapper.find('.nav-item').attributes('aria-expanded')).toBe('true')
   })
 })

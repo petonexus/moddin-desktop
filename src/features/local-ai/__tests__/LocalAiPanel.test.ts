@@ -85,6 +85,42 @@ async function openPanel() {
 }
 
 describe('LocalAiPanel disconnect confirmation', () => {
+  it('keeps the panel visible until the agent configuration write finishes', async () => {
+    let release = () => {}
+    mockedRemove.mockReturnValueOnce(new Promise((resolve) => {
+      release = () => resolve({
+        id: 'claudeDesktop', displayName: 'Claude Desktop', state: 'detectedNotConfigured',
+        configPath: 'C:\\Users\\marco\\.claude\\settings.json', binaryPath: 'C:\\tools\\claude.exe', detail: null,
+      })
+    }))
+    await openPanel()
+    buttonLabelled(copy.disconnect)?.click()
+    await flushPromises()
+    ;(confirmation()?.querySelector('.btn-danger-solid') as HTMLButtonElement).click()
+    await flushPromises()
+    const panel = dialogs()[0]
+    expect(panel.getAttribute('aria-busy')).toBe('true')
+    expect(buttonLabelled(copy.close)?.disabled).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(dialogs()[0]).toBe(panel)
+    release()
+    await flushPromises()
+    expect(buttonLabelled(copy.close)?.disabled).toBe(false)
+  })
+
+  it('allows dismissing the panel during read-only agent detection', async () => {
+    let release = () => {}
+    mockedDetect.mockReturnValueOnce(new Promise((resolve) => { release = () => resolve([]) }))
+    await openPanel()
+    expect(dialogs()).toHaveLength(1)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(dialogs()).toHaveLength(0)
+    release()
+    await flushPromises()
+  })
+
   it('detects the agents on first open and asks nothing', async () => {
     await openPanel()
 
@@ -160,15 +196,19 @@ describe('LocalAiPanel disconnect confirmation', () => {
     await openPanel()
     buttonLabelled(copy.disconnect)?.click()
     await flushPromises()
-    // Both the panel and the confirmation teleport to document.body.
-    const dialog = () => document.querySelector('[role="dialog"]')
-    expect(dialog()).not.toBeNull()
+    const panel = dialogs()[0]
+    expect(dialogs()).toHaveLength(2)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
 
-    expect(dialog()).toBeNull()
+    expect(dialogs()).toHaveLength(1)
+    expect(dialogs()[0]).toBe(panel)
     expect(mockedRemove).not.toHaveBeenCalled()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(dialogs()).toHaveLength(0)
   })
 })
 

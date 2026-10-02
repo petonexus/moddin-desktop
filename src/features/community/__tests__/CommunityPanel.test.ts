@@ -1,3 +1,6 @@
+import { shallowRef } from 'vue'
+import { selectedGameKey, type SelectedGameContext } from '../../../composables/useSelectedGame'
+const selection = shallowRef<SelectedGameContext | null>(null)
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CommunityPanel from '../CommunityPanel.vue'
@@ -84,7 +87,7 @@ function fetchResult(entries: CommunityCatalogEntry[]): CommunityFetchResult {
 }
 
 async function openPanel(entries: CommunityCatalogEntry[], gameId = 'doom-2016') {
-  window.localStorage.setItem('moddin-selected-appId', gameId)
+  selection.value = { appId: '1245620', gameId, gameName: 'Elden Ring', engine: null }
   mockedResolve.mockResolvedValue({
     gameId,
     gameName: 'Cyberpunk 2077',
@@ -92,7 +95,7 @@ async function openPanel(entries: CommunityCatalogEntry[], gameId = 'doom-2016')
     executableDir: 'C:\\games\\cyberpunk',
   })
   mockedFetch.mockResolvedValue(fetchResult(entries))
-  const wrapper = mount(CommunityPanel, { attachTo: document.body, global: { plugins: [i18n] } })
+  const wrapper = mount(CommunityPanel, { attachTo: document.body, global: { plugins: [i18n], provide: { [selectedGameKey as symbol]: selection } } })
   await wrapper.find('button.nav-item').trigger('click')
   await flushPromises()
   return wrapper
@@ -143,6 +146,33 @@ beforeEach(() => {
 })
 
 describe('a community recipe with required config', () => {
+  it('installs for the live library selection even if legacy storage names another game', async () => {
+    window.localStorage.setItem('moddin-selected-appId', 'wrong-game')
+    await openPanel([entry({ status: 'available', configSchema: [] })], 'elden-ring')
+    selection.value = { appId: '1091500', gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077', engine: null }
+    mockedResolve.mockResolvedValue({ gameId: 'cyberpunk-2077', gameName: 'Cyberpunk 2077',
+      installDir: 'C:\\games\\cyberpunk', executableDir: 'C:\\games\\cyberpunk' })
+    await flushPromises()
+    installButton().click()
+    await flushPromises()
+    expect(mockedResolve).toHaveBeenCalledWith('cyberpunk-2077')
+    expect(mockedInstall).toHaveBeenCalledWith(expect.objectContaining({ gameId: 'cyberpunk-2077' }))
+    window.localStorage.removeItem('moddin-selected-appId')
+  })
+
+  it('keeps the dialog open while the install is running', async () => {
+    let complete!: (value: CommunityInstallResult) => void
+    mockedInstall.mockImplementation(() => new Promise((resolve) => { complete = resolve }))
+    await openPanel([entry({ status: 'available', configSchema: [] })])
+    installButton().click()
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    complete({ capabilityId: 'community-fps-unlocker', transaction: null, steps: [], affectedPaths: [] })
+    await flushPromises()
+  })
+
   it('renders the recipe\'s own fields rather than a button that cannot work', async () => {
     await openPanel([entry()])
 

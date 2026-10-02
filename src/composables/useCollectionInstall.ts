@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { useSelectedGame } from './useSelectedGame'
 import { listCollections } from '../features/collection/service'
 import { installCommunityCapability } from '../features/community/service'
 import { resolveCapabilityConfig } from '../features/capability-modules/config'
@@ -44,6 +45,7 @@ import type {
  *                   \-> error                  (nothing could be resolved)
  */
 export function useCollectionInstall() {
+  const selectedGame = useSelectedGame()
   const collections = ref<CollectionSummary[]>([])
   const collectionsLoading = ref(false)
   const collectionsError = ref<string | null>(null)
@@ -97,16 +99,19 @@ export function useCollectionInstall() {
     return err instanceof Error ? err.message : String(err)
   }
 
+  let collectionRequest = 0
   async function refreshCollections() {
+    const generation = ++collectionRequest
     collectionsLoading.value = true
     collectionsError.value = null
     collectionsErrorContext.value = 'load'
     try {
-      collections.value = await listCollections()
+      const result = await listCollections(selectedGame.value?.gameId ?? null)
+      if (generation === collectionRequest) collections.value = result
     } catch (err) {
-      collectionsError.value = messageOf(err)
+      if (generation === collectionRequest) collectionsError.value = messageOf(err)
     } finally {
-      collectionsLoading.value = false
+      if (generation === collectionRequest) collectionsLoading.value = false
     }
   }
 

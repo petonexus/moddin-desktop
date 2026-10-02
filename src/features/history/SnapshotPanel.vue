@@ -9,6 +9,7 @@ import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useF
 import type { TransactionRecord } from '../../types/transaction'
 import type { Snapshot } from './types'
 import { useSnapshots } from './useSnapshots'
+import { historyCopyForLocale } from './copy'
 
 /**
  * Point-in-time restore points for the History panel.
@@ -30,12 +31,14 @@ const props = defineProps<{
   transactions: TransactionRecord[]
   gameName: (gameId: string) => string
   formatDate: (timestamp: number) => string
+  externalBusy?: boolean
 }>()
 
 /** Fired after a rollback, so the transaction list can be reloaded. */
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; busy: [busy: boolean] }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const copy = computed(() => historyCopyForLocale(locale.value))
 
 const {
   snapshots,
@@ -52,6 +55,8 @@ const {
   rollback,
   remove,
 } = useSnapshots()
+const working = computed(() => loading.value || busyId.value !== null || Boolean(props.externalBusy))
+watch(busyId, (id) => emit('busy', id !== null), { flush: 'sync' })
 
 const errorRules = computed<FriendlyErrorRule[]>(() => [
   {
@@ -141,6 +146,7 @@ const pendingRollback = ref<{ snapshot: Snapshot; changeCount: number; fileCount
 const pendingDelete = ref<{ snapshot: Snapshot; changeCount: number } | null>(null)
 
 function askRollback(snapshot: Snapshot) {
+  if (working.value) return
   pendingRollback.value = {
     snapshot,
     changeCount: remainingChanges(snapshot),
@@ -150,12 +156,17 @@ function askRollback(snapshot: Snapshot) {
 
 async function confirmRollback() {
   const pending = pendingRollback.value
-  if (!pending) return
+  if (!pending || working.value) return
+  await rollback(pending.snapshot.id)
   pendingRollback.value = null
-  if (await rollback(pending.snapshot.id)) emit('changed')
+  // Rollback runs one captured change at a time. A later failure can leave
+  // earlier changes already undone, so both outcomes must reload History.
+  emit('changed')
+  await refresh({ preserveError: true })
 }
 
 function askDelete(snapshot: Snapshot) {
+  if (working.value) return
   // The recorded count, not the live one: the line says what the
   // snapshot captured, which does not stop being true after a rollback.
   pendingDelete.value = { snapshot, changeCount: snapshot.transactionIds.length }
@@ -163,9 +174,9 @@ function askDelete(snapshot: Snapshot) {
 
 async function confirmDelete() {
   const pending = pendingDelete.value
-  if (!pending) return
-  pendingDelete.value = null
+  if (!pending || working.value) return
   await remove(pending.snapshot.id)
+  pendingDelete.value = null
 }
 
 const rollbackDetails = computed(() => {
@@ -183,6 +194,7 @@ const rollbackDetails = computed(() => {
 })
 
 function submitCreate() {
+  if (working.value) return
   void create()
 }
 
@@ -192,18 +204,20 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="panel snapshot-panel" :aria-label="t('historySnapshotTitle')">
+  <section class="panel snapshot-panel" :aria-label="t('historySnapshotTitle')" :aria-busy="loading || busyId !== null">
     <header class="snapshot-header">
       <div>
         <h2>{{ t('historySnapshotTitle') }}</h2>
-        <p>{{ t('historySnapshotHint') }}</p>
+        <p>{{ copy.snapshotHint }}</p>
       </div>
       <button
         class="btn btn-sm"
         type="button"
         :class="{ 'is-loading': loading }"
-        :disabled="loading"
-        @click="refresh"
+        :disabled="working"
+        :aria-label="copy.snapshotRefresh"
+        :aria-busy="loading"
+        @click="refresh()"
       >
         <AppIcon v-if="!loading" name="refresh" :size="14" />
         {{ t('historyRefresh') }}
@@ -213,7 +227,7 @@ onMounted(() => {
     <form class="snapshot-create" @submit.prevent="submitCreate">
       <label class="field">
         <span>{{ t('historySnapshotGame') }}</span>
-        <select v-model="gameId" class="select" required aria-required="true">
+        <select v-model="gameId" class="select" required aria-required="true" :disabled="working || !gameChoices.length">
           <option value="">{{ t('historySnapshotGamePick') }}</option>
           <option v-for="choice in gameChoices" :key="choice.gameId" :value="choice.gameId">
             {{ choice.label }}
@@ -230,6 +244,7 @@ onMounted(() => {
           type="text"
           required
           aria-required="true"
+          :disabled="working || !gameChoices.length"
           :placeholder="t('historySnapshotNamePlaceholder')"
         />
       </label>
@@ -238,7 +253,8 @@ onMounted(() => {
         class="btn btn-primary snapshot-create-button"
         type="submit"
         :class="{ 'is-loading': busyId === 'new' }"
-        :disabled="!canCreate || busyId !== null"
+        :disabled="!canCreate || working"
+        :aria-busy="busyId === 'new'"
       >
         <AppIcon v-if="busyId !== 'new'" name="shield" :size="14" />
         {{ busyId === 'new' ? t('historySnapshotCreating') : t('historySnapshotCreate') }}
@@ -256,7 +272,7 @@ onMounted(() => {
       v-else-if="!snapshots.length"
       icon="shield"
       :title="t('historySnapshotEmptyTitle')"
-      :description="t('historySnapshotEmptyHint')"
+      :description="copy.snapshotEmptyHint"
     />
 
     <ul v-else class="snapshot-list">
@@ -273,7 +289,9 @@ onMounted(() => {
             class="btn btn-sm"
             type="button"
             :class="{ 'is-loading': busyId === snapshot.id && busyAction === 'rollback' }"
-            :disabled="busyId === snapshot.id || remainingChanges(snapshot) === 0"
+            :disabled="working || remainingChanges(snapshot) === 0"
+            :aria-busy="busyId === snapshot.id && busyAction === 'rollback'"
+            :aria-label="copy.snapshotRestoreNamed.replace('{name}', snapshot.name)"
             :title="remainingChanges(snapshot) === 0 ? t('historySnapshotSpent') : undefined"
             @click="askRollback(snapshot)"
           >
@@ -287,10 +305,13 @@ onMounted(() => {
           <button
             class="btn btn-sm btn-danger"
             type="button"
-            :disabled="busyId === snapshot.id"
+            :class="{ 'is-loading': busyId === snapshot.id && busyAction === 'delete' }"
+            :disabled="working"
+            :aria-busy="busyId === snapshot.id && busyAction === 'delete'"
+            :aria-label="copy.snapshotDeleteNamed.replace('{name}', snapshot.name)"
             @click="askDelete(snapshot)"
           >
-            <AppIcon name="close" :size="14" />
+            <AppIcon v-if="!(busyId === snapshot.id && busyAction === 'delete')" name="close" :size="14" />
             {{ busyId === snapshot.id && busyAction === 'delete' ? t('historySnapshotDeleting') : t('historySnapshotDelete') }}
           </button>
         </div>
@@ -299,12 +320,13 @@ onMounted(() => {
 
     <ConfirmDialog
       v-if="pendingRollback"
-      :title="t('historySnapshotRollbackTitle')"
+      :title="copy.snapshotRollbackTitle"
       :description="t('historySnapshotRollbackDescription', { name: pendingRollback.snapshot.name })"
       :confirm-label="t('historySnapshotRollbackConfirm')"
       :cancel-label="t('cancel')"
       :details="rollbackDetails"
       :footnote="t('historySnapshotRollbackFootnote')"
+      :busy="busyId !== null"
       @close="pendingRollback = null"
       @confirm="confirmRollback"
     />
@@ -317,8 +339,9 @@ onMounted(() => {
       :cancel-label="t('cancel')"
       :details="[
         t('historySnapshotDeleteDetailKept', { count: pendingDelete.changeCount }),
-        t('historySnapshotDeleteDetailLost'),
+        copy.snapshotDeleteDetailLost,
       ]"
+      :busy="busyId !== null"
       @close="pendingDelete = null"
       @confirm="confirmDelete"
     />
@@ -326,7 +349,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.snapshot-panel { display: grid; gap: var(--moddin-space-3); padding: var(--moddin-space-3); }
+.snapshot-panel { display: grid; gap: var(--moddin-space-3); padding: var(--moddin-space-3); max-height: 48vh; overflow-y: auto; }
 
 .snapshot-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-3); }
 .snapshot-header h2 { font-size: var(--moddin-text-md); }
@@ -351,8 +374,20 @@ onMounted(() => {
 .snapshot-row + .snapshot-row { border-top: 1px solid var(--moddin-line-soft); }
 
 .snapshot-copy { min-width: 0; }
-.snapshot-copy strong { display: block; font-size: var(--moddin-text-md); }
+.snapshot-copy strong { display: block; font-size: var(--moddin-text-md); overflow-wrap: anywhere; }
 .snapshot-copy p { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
 
-.snapshot-actions { display: flex; gap: var(--moddin-space-2); }
+.snapshot-actions { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); }
+@media (max-width: 1180px) {
+  .snapshot-create { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .snapshot-create-button { grid-column: 1 / -1; justify-self: start; }
+  .snapshot-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .snapshot-actions { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .snapshot-create { grid-template-columns: minmax(0, 1fr); }
+  .snapshot-header { flex-wrap: wrap; }
+  .snapshot-row { grid-template-columns: minmax(0, 1fr); }
+  .snapshot-row > .badge { justify-self: start; }
+}
 </style>

@@ -227,7 +227,7 @@ describe('SnapshotPanel — rolling back', () => {
     await askRollback(wrapper)
 
     expect(dialog()).not.toBeNull()
-    expect(dialog()?.textContent).toContain('Roll back to this snapshot?')
+    expect(dialog()?.textContent).toContain('Undo the saved changes?')
     expect(dialog()?.textContent).toContain('Before the texture overhaul')
     // Two changes, three files — distinct numbers, so a swapped count
     // cannot pass by accident.
@@ -316,7 +316,43 @@ describe('SnapshotPanel — rolling back', () => {
     // The untranslated string stays reachable, but only under the
     // disclosure — that is where a bug report gets it from.
     expect(callout.find('.callout-raw code').text()).toContain('Backup no longer exists')
-    expect(wrapper.emitted('changed')).toBeUndefined()
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(mockedList).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads after a partial failure, keeps the recovery message and uses the updated active count', async () => {
+    let release!: () => void
+    mockedRollback.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      release = () => reject(new Error('Could not restore second file: C:\\games\\scene.json'))
+    }))
+    const wrapper = await render()
+    await askRollback(wrapper)
+    confirmButton()?.click()
+    await flushPromises()
+
+    expect(dialog()?.getAttribute('aria-busy')).toBe('true')
+    expect(wrapper.emitted('busy')).toEqual([[true]])
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(dialog()).not.toBeNull()
+
+    release()
+    await flushPromises()
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+    expect(wrapper.emitted('busy')).toEqual([[true], [false]])
+    expect(mockedList).toHaveBeenCalledTimes(2)
+    expect(dialog()).toBeNull()
+    expect(wrapper.find('.callout-danger').text()).toContain('Some changes may already be undone')
+
+    // The host reload discovers that the first captured change finished.
+    await wrapper.setProps({ transactions: [
+      record({ id: 'tx-1', status: 'rolled_back' }),
+      record({ id: 'tx-2' }),
+      record({ id: 'tx-3', gameId: 'cyberpunk-2077' }),
+    ] })
+    expect(wrapper.find('.snapshot-row .badge').text()).toBe('1 change(s)')
+    await askRollback(wrapper)
+    expect(dialog()?.textContent).toContain('1 change(s) in History are undone by this.')
   })
 })
 
@@ -330,7 +366,7 @@ describe('SnapshotPanel — deleting', () => {
     expect(dialog()?.textContent).toContain('Delete this snapshot?')
     expect(dialog()?.textContent).toContain('Before the texture overhaul')
     expect(dialog()?.textContent).toContain('The 2 change(s) it recorded stay in History')
-    expect(dialog()?.textContent).toContain('the one-click way back to this exact point')
+    expect(dialog()?.textContent).toContain('the saved group for undoing these changes together')
     expect(mockedDelete).not.toHaveBeenCalled()
 
     confirmButton()?.click()

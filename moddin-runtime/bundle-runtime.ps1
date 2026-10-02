@@ -43,6 +43,8 @@ $prodDeps = @('@modelcontextprotocol/sdk', 'ajv', 'ajv-formats', 'yaml')
 function Remove-BuildScratch {
     param([string[]]$Path)
     foreach ($p in $Path) {
+        $resolved = [System.IO.Path]::GetFullPath($p)
+        if (-not $resolved.StartsWith($outDir + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Build scratch path is outside the runtime: $resolved" }
         if (Test-Path -LiteralPath $p) {
             Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -109,6 +111,15 @@ try {
     Get-ChildItem -LiteralPath $agentSrc -Force |
         Where-Object { $_.Name -ne 'node_modules' } |
         Copy-Item -Destination $agentDst -Recurse -Force
+
+    # Ship the catalog so the installed MCP needs no development checkout.
+    $dataRoot = Join-Path $agentDst 'data'
+    Remove-BuildScratch @($dataRoot)
+    $capData = Join-Path $dataRoot 'src-tauri/capabilities'
+    $gameData = Join-Path $dataRoot 'src/catalog/games'
+    New-Item -ItemType Directory -Path $capData, $gameData -Force | Out-Null
+    Copy-Item -Path (Join-Path $runtimeRoot 'src-tauri/capabilities/*.yaml') -Destination $capData -Force
+    Copy-Item -Path (Join-Path $runtimeRoot 'src/catalog/games/*.yaml') -Destination $gameData -Force
 
     # 3) Generate the production manifest, then install with `npm ci`.
     #
@@ -187,10 +198,12 @@ process.stdout.write(JSON.stringify(out));
     # project root (repo root) so the server resolves src/catalog/games and
     # src-tauri/capabilities -- the staged moddin-runtime/ folder itself is
     # not one. Same layout the standalone CI smoke step relies on.
-    $env:MODDIN_PROJECT_ROOT = $runtimeRoot
-    & (Join-Path $outDir 'node.exe') (Join-Path $agentDst 'scripts\smoke-test.mjs') | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'smoke test failed; refusing to mark runtime OK' }
-    Remove-Item Env:MODDIN_PROJECT_ROOT
+    $previousProjectRoot = $env:MODDIN_PROJECT_ROOT
+    try {
+        $env:MODDIN_PROJECT_ROOT = $dataRoot
+        & (Join-Path $outDir 'node.exe') (Join-Path $agentDst 'scripts\smoke-test.mjs') | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'smoke test failed; refusing to mark runtime OK' }
+    } finally { $env:MODDIN_PROJECT_ROOT = $previousProjectRoot }
 
     # Nothing this run created may survive it -- including a run that
     # failed, which is when the old script left the most behind.

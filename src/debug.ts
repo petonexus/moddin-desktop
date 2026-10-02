@@ -117,7 +117,7 @@ export function installDebugInstrumentation(app: App) {
   const report = (title: string, error: unknown) => {
     const details = errorDetails(error)
     debug.error('runtime', title, details)
-    showDebugErrorPanel(title, details)
+    if (isDebugEnabled()) showDebugErrorPanel(title, details)
   }
 
   window.addEventListener('error', (event) => {

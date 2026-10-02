@@ -91,6 +91,9 @@ function lookup<K extends string, V>(table: Readonly<Record<K, V>>, id: string):
  * adding a label here is a red build.
  */
 export const ACTION_IDS = [
+  'capability_install',
+  'capability_uninstall',
+  'community_capability_install',
   'configure_obs_vr',
   'uninstall_obs_vr',
   'install_optiscaler',
@@ -112,6 +115,9 @@ export const ACTION_IDS = [
 export type ActionId = (typeof ACTION_IDS)[number]
 
 const ACTION_LABELS: Readonly<Record<ActionId, BackendTextKey>> = {
+  capability_install: 'activityActionInstallCapability',
+  capability_uninstall: 'activityActionUninstallCapability',
+  community_capability_install: 'activityActionInstallCommunityCapability',
   configure_obs_vr: 'activityActionConfigureObs',
   uninstall_obs_vr: 'activityActionUninstallObs',
   install_optiscaler: 'activityActionInstallOptiscaler',

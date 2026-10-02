@@ -5,6 +5,9 @@ export type PersistentActionLevel = 'info' | 'success' | 'warning' | 'error'
 // Keep this list limited to user-visible operations that mutate state or launch
 // a configured game. Preview/inspection commands intentionally remain ephemeral.
 const PERSISTENT_ACTION_COMMANDS = new Set([
+  'capability_install',
+  'capability_uninstall',
+  'community_capability_install',
   'configure_obs_vr',
   'uninstall_obs_vr',
   'install_optiscaler',

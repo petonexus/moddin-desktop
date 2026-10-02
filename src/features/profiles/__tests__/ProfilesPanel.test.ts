@@ -330,6 +330,30 @@ describe('ProfilesPanel — previewing an import', () => {
 })
 
 describe('ProfilesPanel — applying an import', () => {
+  it('keeps the preview visible until an in-flight install completes', async () => {
+    let release = () => {}
+    mockedInstall.mockReturnValueOnce(new Promise((resolve) => {
+      release = () => resolve({ capabilityId: 'reshade', transaction: null, steps: [], affectedPaths: [] })
+    }))
+    await render()
+    await readProfile()
+    await pressApply()
+    await click(footerButton('Apply 1', confirmDialog()))
+    expect(mockedInstall).toHaveBeenCalledTimes(1)
+    const activePanel = panel()
+    expect((footerButton('Cancel') as HTMLButtonElement).disabled).toBe(true)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(panel()).toBe(activePanel)
+    expect(panel()?.getAttribute('aria-busy')).toBe('true')
+
+    release()
+    await flushPromises()
+    expect(panel()?.textContent).toContain('1 change(s) applied')
+    expect((footerButton('Cancel') as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('asks first, names the change, and keeps the focus off the confirm button', async () => {
     await render()
     await readProfile()
@@ -405,6 +429,24 @@ describe('ProfilesPanel — applying an import', () => {
 })
 
 describe('ProfilesPanel — exporting a profile', () => {
+  it('retains the save result when Escape is pressed while exporting', async () => {
+    mockedList.mockResolvedValue([APPLIED])
+    let release = () => {}
+    mockedSave.mockReturnValueOnce(new Promise((resolve) => {
+      release = () => resolve({ path: 'C:\\Users\\you\\Desktop\\p.json', bytes: 64 })
+    }))
+    await render()
+    await click(panelRowButtons()[0])
+    const activePanel = panel()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    await flushPromises()
+    expect(panel()).toBe(activePanel)
+    expect((footerButton('Cancel') as HTMLButtonElement).disabled).toBe(true)
+    release()
+    await flushPromises()
+    expect(panel()?.textContent).toContain('C:\\Users\\you\\Desktop\\p.json')
+  })
+
   it('writes the file and shows where it went', async () => {
     mockedList.mockResolvedValue([APPLIED])
     await render()

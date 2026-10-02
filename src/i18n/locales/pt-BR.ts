@@ -210,6 +210,7 @@ const ptBR = {
   moduleOpenXr: 'Ferramentas de VR',
   moduleOpenXrDescription: 'Ajustes do sistema de VR usado por este jogo.',
   moduleDesktopShortcut: 'Atalho na área de trabalho',
+  moduleDesktopShortcutDescription: 'Cria um atalho para abrir este jogo direto da área de trabalho.',
   moduleNoAction: 'Este mod ainda não pode ser instalado pelo Moddin.',
   moduleDependenciesEyebrow: 'Pré-requisitos',
   moduleDependenciesDescription: 'Este mod é um complemento e precisa destes antes:',
@@ -384,8 +385,9 @@ const ptBR = {
   cheekyGuideRisksSummary: 'Algumas pessoas relatam travamentos ou queda de desempenho. Se acontecer, remova o mod pelo Moddin — tudo volta como estava.',
 
   // Capability mods (receitas salvas pela IA + comunidade, instaladas na tela do jogo)
-  capabilityModsHeading: 'Mods da IA',
-  capabilityModsSubtitle: 'Mods que você criou com a IA ou instalou da comunidade.',
+  capabilityModsHeading: 'Mais mods para este jogo',
+  capabilityModsSubtitle: 'Mods do Moddin, criados por você ou adicionados pela comunidade.',
+  capabilityOriginBuiltIn: 'Incluído no Moddin',
   capabilityOriginLocal: 'Local',
   capabilityOriginCommunity: 'Comunidade',
   capabilityConfigTitle: 'Configuração',
@@ -413,7 +415,7 @@ const ptBR = {
 
   // History
   historyTitle: 'Histórico',
-  historySubtitle: 'Tudo o que o Moddin mudou nos seus jogos. Qualquer mudança ativa pode ser desfeita com um clique.',
+  historySubtitle: 'Revise as mudanças feitas nos seus jogos e desfaça as que não quiser manter.',
   historyRefresh: 'Atualizar',
   historyFilterAll: 'Tudo',
   historyFilterActive: 'Ativas',
@@ -593,6 +595,9 @@ const ptBR = {
   profileErrorGenericTitle: 'A ação de perfil não terminou',
   profileErrorGenericWhy: 'Abra o detalhe técnico abaixo para ver o que o aplicativo reportou.',
   // Ids do backend (UX-21) — registro de ações, traduzido em features/activity/service.ts
+  activityActionInstallCapability: 'Instalar receita de mod',
+  activityActionUninstallCapability: 'Remover receita de mod',
+  activityActionInstallCommunityCapability: 'Instalar mod da comunidade',
   activityActionConfigureObs: 'Configurar o OBS VR',
   activityActionUninstallObs: 'Remover o OBS VR',
   activityActionInstallOptiscaler: 'Instalar o OptiScaler',
@@ -663,6 +668,10 @@ const ptBR = {
   ariaRemoveNamed: 'Remover {name}',
   ariaUndoNamed: 'Desfazer {name}',
   capabilityFieldRequired: 'Este campo é obrigatório.',
+  aiAgentConsentTitle: "Enviar contexto para {agent}?",
+  aiAgentConsentDescription: "O pedido, os dados do jogo e os erros incluídos no prompt serão enviados ao provedor de IA usando sua conta. A execução pode consumir sua cota.",
+  aiAgentConsentSend: "Enviar e gerar",
+  aiAgentConsentReview: "A resposta será validada e exibida para revisão antes de salvar ou instalar.",
 } as const
 
 export default ptBR

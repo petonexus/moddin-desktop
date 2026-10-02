@@ -43,6 +43,7 @@ const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
 
 const open = ref(false)
+const exporting = ref(false)
 
 const {
   fileName,
@@ -68,6 +69,18 @@ const {
   reveal,
   reset,
 } = useProfiles({ configFor: props.configFor })
+
+const mutationBusy = computed(() => exporting.value || applying.value)
+
+async function exportProfile() {
+  if (busy.value) return
+  exporting.value = true
+  try {
+    await runExport()
+  } finally {
+    exporting.value = false
+  }
+}
 
 const errorRules = computed<FriendlyErrorRule[]>(() => [
   {
@@ -238,6 +251,7 @@ function openPanel() {
 }
 
 function closePanel() {
+  if (mutationBusy.value) return
   open.value = false
 }
 </script>
@@ -255,6 +269,7 @@ function closePanel() {
       size="lg"
       :title="t('profilePanelTitle')"
       :description="t('profilePanelSubtitle')"
+      :busy="mutationBusy"
       @close="closePanel"
     >
       <ErrorCallout :error="friendlyError ?? noticeError" />
@@ -290,7 +305,7 @@ function closePanel() {
             type="button"
             :class="{ 'is-loading': busy }"
             :disabled="!canExport || busy"
-            @click="runExport"
+            @click="exportProfile"
           >
             <AppIcon v-if="!busy" name="folder" :size="14" />
             {{ t('profileExportAction') }}
@@ -378,7 +393,7 @@ function closePanel() {
       </section>
 
       <template #footer>
-        <button class="btn" type="button" @click="closePanel">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="mutationBusy" @click="closePanel">{{ t('cancel') }}</button>
         <template v-if="preview">
           <button class="btn" type="button" :disabled="busy" @click="cancelImport">
             {{ t('profileImportDiscard') }}

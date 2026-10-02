@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import EmptyState from '../../components/ui/EmptyState.vue'
+import ErrorCallout from '../../components/ui/ErrorCallout.vue'
 import ModuleCard, { type ModuleCardState, type ModuleCardVerification } from '../library/ModuleCard.vue'
 import type { TransactionRecord } from '../../types/transaction'
-import type { CapabilityOrigin, CapabilitySummary } from '../../types/capability'
+import type { CapabilityCategory, CapabilityOrigin, CapabilitySummary } from '../../types/capability'
 import type { ModuleVerificationCheck } from '../../types/module-verification'
 import { useBackendText } from '../../composables/useBackendText'
+import { useFriendlyError } from '../../composables/useFriendlyError'
 import { useCapabilityModules } from './useCapabilityModules'
+import { capabilitySectionCopyForLocale } from './copy'
 import type {
   CapabilityCardState,
   CapabilityConfigValue,
@@ -24,13 +27,18 @@ const props = defineProps<{
   engine: string | null
   excludeIds: string[]
   transactions: TransactionRecord[]
+  categoryFilter?: 'all' | CapabilityCategory
+  externalBusy?: boolean
 }>()
 
 const emit = defineEmits<{
   'refresh-request': []
+  'busy-change': [busy: boolean]
+  'category-counts-change': [counts: Partial<Record<CapabilityCategory, number>>]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const copy = computed(() => capabilitySectionCopyForLocale(locale.value))
 const { keyed } = useBackendText()
 
 const modules = useCapabilityModules({
@@ -58,8 +66,40 @@ const {
   verify,
 } = modules
 
+/** Category tabs affect presentation; cached specs and card state stay intact. */
+const filteredCapabilities = computed(() => visibleCapabilities.value.filter((capability) =>
+  !props.categoryFilter || props.categoryFilter === 'all' || capability.category === props.categoryFilter,
+))
+const capabilityCategories = ['vr', 'graphics', 'qol', 'system'] as const
+const categoryCounts = computed(() => {
+  const counts: Partial<Record<CapabilityCategory, number>> = {}
+  for (const capability of visibleCapabilities.value) {
+    counts[capability.category] = (counts[capability.category] ?? 0) + 1
+  }
+  return counts
+})
+watch(categoryCounts, (counts, previous) => {
+  // Parent renders can recreate excludeIds without changing any cards.
+  // Only report changed totals, otherwise count updates feed a render loop.
+  if (previous && capabilityCategories.every((category) => (counts[category] ?? 0) === (previous[category] ?? 0))) return
+  emit('category-counts-change', counts)
+}, { immediate: true })
+const friendlyLoadError = useFriendlyError({
+  error: loadError,
+  rules: () => [{ title: copy.value.loadErrorTitle, why: copy.value.loadErrorHint, showRaw: true }],
+})
+
+const mutationBusy = ref(false)
+const pendingRefresh = ref(false)
+const actionsLocked = computed(() => mutationBusy.value || Boolean(props.externalBusy))
 const dirsMissing = computed(() => !props.installDir || !props.executableDir)
-const blockedReasonText = computed(() => (dirsMissing.value ? t('capabilityNoDirs') : undefined))
+const blockedReasonText = computed(() => dirsMissing.value ? t('capabilityNoDirs') : actionsLocked.value ? copy.value.mutationBusyHint : undefined)
+
+function setMutationBusy(busy: boolean) {
+  if (mutationBusy.value === busy) return
+  mutationBusy.value = busy
+  emit('busy-change', busy)
+}
 
 function schemaOf(capabilityId: string) {
   return stateFor(capabilityId).spec?.configSchema ?? []
@@ -166,6 +206,7 @@ function setNumberValue(state: CapabilityCardState, name: string, raw: string) {
 }
 
 function originLabel(origin: CapabilityOrigin) {
+  if (origin === 'builtIn') return t('capabilityOriginBuiltIn')
   return origin === 'local' ? t('capabilityOriginLocal') : t('capabilityOriginCommunity')
 }
 
@@ -182,26 +223,32 @@ function cardErrorText(state: CapabilityCardState): string | null {
 
 async function onInstall(capability: CapabilitySummary, force = false) {
   const state = stateFor(capability.id)
-  if (state.busy || state.verifyBusy) return
-  await modules.ensureSpec(capability)
-  const missing = missingRequiredFields(capability.id)
-  if (missing.length) {
-    state.error = t('capabilityRequiredMissing', { fields: missing.join(', ') })
-    state.errorKind = 'validation'
-    return
+  if (actionsLocked.value || state.busy || state.verifyBusy) return
+  setMutationBusy(true)
+  try {
+    await modules.ensureSpec(capability)
+    if (props.externalBusy) return
+    const missing = missingRequiredFields(capability.id)
+    if (missing.length) {
+      state.error = t('capabilityRequiredMissing', { fields: missing.join(', ') })
+      state.errorKind = 'validation'
+      return
+    }
+    // A plain install is refused by the backend for an unsupported game
+    // build, so the card routes the user through the explicit override
+    // instead of letting them click into an error.
+    if (!force && compatibilityBlocks(capability.id)) return
+    await install(capability, { force })
+  } finally {
+    setMutationBusy(false)
   }
-  // A plain install is refused by the backend for an unsupported game
-  // build, so the card routes the user through the explicit override
-  // instead of letting them click into an error.
-  if (!force && compatibilityBlocks(capability.id)) return
-  await install(capability, { force })
 }
 
 const pendingRemoval = ref<CapabilitySummary | null>(null)
 
 async function onRemove(capability: CapabilitySummary) {
   const state = stateFor(capability.id)
-  if (state.busy) return
+  if (actionsLocked.value || state.busy || state.verifyBusy) return
   // Removing a capability writes into the game folder. The transaction
   // store can undo it, but "can be undone" is not the same as "asked
   // first" — so ask first.
@@ -210,22 +257,37 @@ async function onRemove(capability: CapabilitySummary) {
 
 async function confirmRemoval() {
   const capability = pendingRemoval.value
-  if (!capability) return
+  if (!capability || actionsLocked.value) return
   pendingRemoval.value = null
-  await uninstall(capability)
+  setMutationBusy(true)
+  try {
+    await uninstall(capability)
+  } finally {
+    setMutationBusy(false)
+  }
 }
 
 async function onVerify(capability: CapabilitySummary) {
   const state = stateFor(capability.id)
-  if (state.busy || state.verifyBusy) return
+  if (actionsLocked.value || state.busy || state.verifyBusy) return
   await verify(capability)
 }
 
 // The AI dialog dispatches this after a successful save so a mod saved
 // mid-session shows up here without a restart.
 function handleCapabilitySaved() {
+  if (actionsLocked.value) {
+    pendingRefresh.value = true
+    return
+  }
   void modules.refresh()
 }
+
+watch(actionsLocked, (locked) => {
+  if (locked || !pendingRefresh.value) return
+  pendingRefresh.value = false
+  void modules.refresh()
+})
 
 onMounted(() => {
   void ensureLoaded()
@@ -233,13 +295,16 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  pendingRefresh.value = false
+  setMutationBusy(false)
+  emit('category-counts-change', {})
   window.removeEventListener('moddin:capability-saved', handleCapabilitySaved)
 })
 </script>
 
 <template>
   <section
-    v-if="visibleCapabilities.length > 0 || loadError"
+    v-if="filteredCapabilities.length > 0 || loading || loadError || pendingRemoval"
     class="capability-mods"
     :aria-busy="loading"
   >
@@ -250,20 +315,21 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="loadError && !visibleCapabilities.length" class="callout callout-danger" role="alert">
-      <AppIcon class="callout-icon" name="alert" />
-      <div>
-        <strong>{{ t('capabilityLoadFailed', { error: loadError }) }}</strong>
-      </div>
+    <div v-if="loadError && !loading" class="capability-load-error">
+      <ErrorCallout :error="friendlyLoadError" />
+      <button class="btn btn-sm" type="button" :disabled="loading" @click="modules.refresh()">
+        <AppIcon name="refresh" :size="14" />
+        {{ copy.retry }}
+      </button>
     </div>
 
     <EmptyState
-      v-else-if="loading && !visibleCapabilities.length"
+      v-else-if="loading && !filteredCapabilities.length"
       busy
       :description="t('capabilityLoading')"
     />
 
-    <div v-if="visibleCapabilities.length" class="mod-grid">
+    <div v-if="filteredCapabilities.length" class="mod-grid">
       <!--
         UX-29: the cell is the region that changes while an install or a
         check runs, so it is the region that says so. Without this the
@@ -271,7 +337,7 @@ onUnmounted(() => {
         only visible.
       -->
       <div
-        v-for="capability in visibleCapabilities"
+        v-for="capability in filteredCapabilities"
         :key="capability.id"
         class="capability-cell"
         :aria-busy="stateFor(capability.id).busy || stateFor(capability.id).verifyBusy"
@@ -291,7 +357,7 @@ onUnmounted(() => {
               type="button"
               class="btn btn-sm"
               :class="{ 'is-loading': stateFor(capability.id).busy }"
-              :disabled="stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || dirsMissing"
+              :disabled="actionsLocked || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || dirsMissing"
               @click="onInstall(capability, true)"
             >
               {{ t('capabilityCompatForce') }}
@@ -340,7 +406,7 @@ onUnmounted(() => {
           :action-label="isInstalled(capability.id) ? t('actionReinstall') : t('actionInstall')"
           :action-primary="!isInstalled(capability.id)"
           :action-busy="stateFor(capability.id).busy"
-          :action-disabled="dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || (!isInstalled(capability.id) && compatibilityBlocks(capability.id))"
+          :action-disabled="actionsLocked || dirsMissing || stateFor(capability.id).busy || stateFor(capability.id).verifyBusy || (!isInstalled(capability.id) && compatibilityBlocks(capability.id))"
           :blocked-reason="blockedReasonText"
           :verification="cardVerification(stateFor(capability.id))"
           :verify-busy="stateFor(capability.id).verifyBusy"
@@ -437,7 +503,8 @@ onUnmounted(() => {
       :confirm-label="t('actionRemove')"
       :cancel-label="t('actionCancel')"
       :details="[t('capabilityRemoveDetailFiles'), t('capabilityRemoveDetailUndo')]"
-      :footnote="t('capabilityRemoveFootnote')"
+      :footnote="actionsLocked ? copy.mutationBusyHint : t('capabilityRemoveFootnote')"
+      :busy="actionsLocked"
       @close="pendingRemoval = null"
       @confirm="confirmRemoval"
     />
@@ -449,9 +516,11 @@ onUnmounted(() => {
 .section-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--moddin-space-3); }
 .section-heading p { margin-top: 2px; color: var(--moddin-text-muted); font-size: var(--moddin-text-md); }
 
-.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--moddin-space-3); }
-.capability-cell { display: flex; flex-direction: column; gap: var(--moddin-space-2); }
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: var(--moddin-space-3); }
+.capability-cell { display: flex; min-width: 0; flex-direction: column; gap: var(--moddin-space-2); }
 .capability-cell .module-card { flex: 1; }
+.capability-load-error { display: grid; justify-items: start; gap: var(--moddin-space-2); }
+.capability-load-error :deep(.callout) { width: 100%; }
 
 .capability-detail { display: grid; gap: var(--moddin-space-2); }
 .capability-detail-title { margin: 0; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }

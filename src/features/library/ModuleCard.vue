@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AppIcon from '../../components/ui/AppIcon.vue'
+import AppIcon, { type IconName } from '../../components/ui/AppIcon.vue'
 import type { ModuleVerification } from '../../types/module-verification'
+import { libraryCopyForLocale } from './copy'
 
 export type ModuleCardState = 'active' | 'available' | 'attention' | 'unknown' | 'checking' | 'planned'
 
@@ -46,7 +47,12 @@ const emit = defineEmits<{
   'open-release': []
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const copy = computed(() => libraryCopyForLocale(locale.value))
+const cardId = useId()
+const titleId = `${cardId}-title`
+const stateHintId = `${cardId}-state`
+const blockedReasonId = `${cardId}-blocked`
 
 const stateMeta = computed(() => {
   switch (props.state) {
@@ -62,23 +68,60 @@ const stateMeta = computed(() => {
 const failedChecks = computed(() => props.verification?.checks.filter((item) => !item.passed) ?? [])
 const passedCount = computed(() => (props.verification?.checks.length ?? 0) - failedChecks.value.length)
 const isPlanned = computed(() => props.state === 'planned')
+const showStateHint = computed(() => props.state !== 'active' && props.state !== 'available')
+const stateHint = computed(() => {
+  switch (props.state) {
+    case 'active': return copy.value.cardActiveHint
+    case 'available': return copy.value.cardAvailableHint
+    case 'attention': return copy.value.cardAttentionHint
+    case 'checking': return copy.value.cardCheckingHint
+    case 'planned': return copy.value.cardPlannedHint
+    default: return copy.value.cardUnknownHint
+  }
+})
+const stateIcon = computed<IconName>(() => props.state === 'active' ? 'check' : props.state === 'attention' ? 'alert' : 'info')
 </script>
 
 <template>
-  <article class="module-card" :class="[`is-${state}`]" :aria-busy="actionBusy || verifyBusy">
+  <article
+    class="module-card"
+    :class="[`is-${state}`]"
+    :aria-labelledby="titleId"
+    :aria-describedby="showStateHint ? stateHintId : undefined"
+    :aria-busy="actionBusy || verifyBusy || state === 'checking'"
+  >
     <header class="module-card-header">
-      <h4>{{ name }}</h4>
+      <h4 :id="titleId">{{ name }}</h4>
       <span class="badge" :class="stateMeta.tone">{{ stateMeta.label }}</span>
     </header>
 
     <p class="module-card-description">{{ description }}</p>
 
+    <div v-if="showStateHint" class="module-card-status">
+      <AppIcon :name="stateIcon" :size="14" />
+      <div>
+        <p :id="stateHintId">{{ stateHint }}</p>
+      </div>
+    </div>
+
     <div v-if="tag || update?.available" class="module-card-tags">
       <span v-if="tag" class="badge badge-plain" :class="`badge-${tag.tone}`">{{ tag.label }}</span>
-      <button v-if="update?.available" type="button" class="update-pill" @click="emit('open-release')">
+      <button
+        v-if="update?.available && update.releaseUrl"
+        type="button"
+        class="update-pill"
+        :aria-label="t('ariaActionNamed', { action: t('updateOpenRelease'), name })"
+        @click="emit('open-release')"
+      >
         <AppIcon name="arrow-up" :size="12" />
         {{ update.summary }}
       </button>
+      <span v-else-if="update?.available" class="badge badge-info">{{ update.summary }}</span>
+    </div>
+
+    <div v-if="blockedReason && !isPlanned" :id="blockedReasonId" class="module-card-blocked" role="note">
+      <AppIcon name="alert" :size="14" />
+      <p>{{ blockedReason }}</p>
     </div>
 
     <div v-if="state === 'attention' && failedChecks.length" class="module-card-issues">
@@ -106,6 +149,7 @@ const isPlanned = computed(() => props.state === 'planned')
         type="button"
         :disabled="actionDisabled"
         :title="blockedReason"
+        :aria-describedby="blockedReason ? blockedReasonId : undefined"
         :aria-label="t('ariaActionNamed', { action: actionLabel, name })"
         :aria-busy="actionBusy"
         @click="emit('action')"
@@ -118,6 +162,7 @@ const isPlanned = computed(() => props.state === 'planned')
         type="button"
         :disabled="verifyBusy || actionBusy || Boolean(blockedReason)"
         :title="blockedReason"
+        :aria-describedby="blockedReason ? blockedReasonId : undefined"
         :aria-label="t('ariaActionNamed', { action: verifyBusy ? t('actionChecking') : t('actionCheck'), name })"
         :aria-busy="verifyBusy"
         @click="emit('verify')"
@@ -130,6 +175,7 @@ const isPlanned = computed(() => props.state === 'planned')
         type="button"
         :disabled="actionDisabled"
         :title="blockedReason"
+        :aria-describedby="blockedReason ? blockedReasonId : undefined"
         :aria-label="t('ariaRemoveNamed', { name })"
         @click="emit('remove')"
       >
@@ -137,19 +183,19 @@ const isPlanned = computed(() => props.state === 'planned')
       </button>
     </footer>
 
-    <details v-if="!isPlanned && (verification || update || $slots.details)" class="disclosure module-card-details">
+    <details v-if="!isPlanned && (verification || checkedAtLabel || update || $slots.details)" class="disclosure module-card-details">
       <summary>
         {{ t('cardDetails') }}
         <small v-if="verification">· {{ t('checklistSummary', { passed: passedCount, total: verification.checks.length }) }}</small>
       </summary>
 
       <div class="module-card-details-body">
+        <p v-if="checkedAtLabel" class="module-card-last-check">{{ checkedAtLabel }}</p>
         <slot name="details" />
 
         <section v-if="verification" class="detail-block">
           <div class="detail-heading">
             <h5>{{ t('checklistTitle') }}</h5>
-            <small v-if="checkedAtLabel">{{ checkedAtLabel }}</small>
           </div>
           <ul class="checklist">
             <li v-for="item in verification.checks" :key="item.label" :class="item.passed ? 'ok' : 'fail'">
@@ -173,11 +219,18 @@ const isPlanned = computed(() => props.state === 'planned')
               :class="{ 'is-loading': update.busy }"
               type="button"
               :disabled="update.busy"
+              :aria-label="t('ariaActionNamed', { action: update.busy ? t('updateChecking') : t('updateCheck'), name })"
               @click="emit('check-update')"
             >
               {{ update.busy ? t('updateChecking') : t('updateCheck') }}
             </button>
-            <button v-if="update.releaseUrl" class="btn btn-ghost btn-sm" type="button" @click="emit('open-release')">
+            <button
+              v-if="update.releaseUrl"
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :aria-label="t('ariaActionNamed', { action: t('updateOpenRelease'), name })"
+              @click="emit('open-release')"
+            >
               <AppIcon name="external" :size="13" />
               {{ t('updateOpenRelease') }}
             </button>
@@ -196,18 +249,25 @@ const isPlanned = computed(() => props.state === 'planned')
   border: 1px solid var(--moddin-line);
   border-radius: var(--moddin-radius-lg);
   padding: var(--moddin-space-4);
-  background: var(--moddin-surface-2);
-  transition: border-color var(--moddin-normal) var(--moddin-ease);
+  background: var(--moddin-surface-1);
+  box-shadow: var(--moddin-shadow-sm);
+  transition: border-color var(--moddin-normal) var(--moddin-ease), box-shadow var(--moddin-normal) var(--moddin-ease);
 }
-.module-card:hover { border-color: var(--moddin-line-strong); }
+.module-card:hover { border-color: var(--moddin-line-strong); box-shadow: var(--moddin-shadow-md); }
 .module-card.is-active { border-color: var(--moddin-success-line); }
 .module-card.is-attention { border-color: var(--moddin-warning-line); }
-.module-card.is-planned { opacity: 0.7; }
+.module-card.is-planned { background: var(--moddin-surface-sunken); }
 
-.module-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-3); }
-.module-card-header h4 { font-size: var(--moddin-text-base); }
+.module-card-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-2) var(--moddin-space-3); }
+.module-card-header h4 { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; font-size: var(--moddin-text-lg); }
+.module-card-header .badge { margin-top: 1px; }
 
 .module-card-description { color: var(--moddin-text-muted); font-size: var(--moddin-text-md); line-height: 1.5; }
+.module-card-status { display: flex; align-items: flex-start; gap: var(--moddin-space-2); color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); line-height: 1.5; }
+.module-card-status > .app-icon { margin-top: 2px; }
+.module-card-status small { display: block; margin-top: var(--moddin-space-1); font-size: var(--moddin-text-xs); }
+.is-active .module-card-status > .app-icon { color: var(--moddin-success); }
+.is-attention .module-card-status > .app-icon { color: var(--moddin-warning); }
 
 .module-card-tags { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); }
 
@@ -240,14 +300,19 @@ const isPlanned = computed(() => props.state === 'planned')
 .module-card-issues li::before { content: '✕ '; color: var(--moddin-warning); }
 .module-card-issues li.more::before { content: ''; }
 
-.module-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-2); margin-top: auto; }
+.module-card-blocked { display: flex; align-items: flex-start; gap: var(--moddin-space-2); padding: var(--moddin-space-3); border: 1px solid var(--moddin-warning-line); border-radius: var(--moddin-radius-md); color: var(--moddin-warning); background: var(--moddin-warning-bg); font-size: var(--moddin-text-sm); line-height: 1.5; }
+.module-card-blocked > .app-icon { margin-top: 2px; }
+.module-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-2); margin-top: auto; border-top: 1px solid var(--moddin-line-soft); padding-top: var(--moddin-space-3); }
+.module-card-actions > .btn { min-height: 36px; }
+.module-card-actions > .btn:first-child { flex: 1 1 auto; }
 .push-right { margin-left: auto; }
 
 .module-card-details { border-top: 1px solid var(--moddin-line-soft); padding-top: var(--moddin-space-3); }
 .module-card-details > summary { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); font-weight: 600; }
 .module-card-details > summary:hover { color: var(--moddin-text); }
-.module-card-details > summary small { color: var(--moddin-text-faint); font-weight: 500; }
+.module-card-details > summary small { color: var(--moddin-text-muted); font-weight: 500; }
 .module-card-details-body { display: grid; gap: var(--moddin-space-4); margin-top: var(--moddin-space-3); }
+.module-card-last-check { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
 
 .detail-block { display: grid; gap: var(--moddin-space-2); }
 .detail-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--moddin-space-2); }
@@ -261,5 +326,11 @@ const isPlanned = computed(() => props.state === 'planned')
 .checklist li .app-icon { margin-top: 2px; }
 .checklist li.ok .app-icon { color: var(--moddin-success); }
 .checklist li.fail .app-icon { color: var(--moddin-warning); }
-.checklist small { display: block; color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
+.checklist small { display: block; color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
+
+@media (max-width: 420px) {
+  .module-card-header { flex-wrap: wrap; }
+  .module-card-actions > .btn { flex: 1 1 auto; }
+  .push-right { margin-left: 0; }
+}
 </style>

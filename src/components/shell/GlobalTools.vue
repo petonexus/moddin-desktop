@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActivityLogPanel from '../../features/activity/ActivityLogPanel.vue'
 import AiAssistantTrigger from './AiAssistantTrigger.vue'
@@ -9,31 +10,30 @@ import ContributeTrigger from './ContributeTrigger.vue'
 import LocalAiPanel from '../../features/local-ai/LocalAiPanel.vue'
 import OpenXrManager from '../../features/openxr/OpenXrManager.vue'
 import ProfilesPanel from '../../features/profiles/ProfilesPanel.vue'
+import { globalToolsCopyForLocale } from './global-tools-copy'
 
-const { t } = useI18n()
+const { locale } = useI18n()
+const copy = computed(() => globalToolsCopyForLocale(locale.value))
 </script>
 
 <template>
   <!--
     Global utilities render as sidebar navigation items. Each feature still
     owns its trigger and its dialog; the shell only decides where they sit.
-    The two groups answer "what am I changing" vs "what can help me", so a
-    player scanning the sidebar can tell them apart before reading either.
+    Groups follow the player's task: organize mods, manage the app and VR,
+    or get help creating a mod.
   -->
   <div class="nav-group">
-    <span class="nav-label">{{ t('navToolsMods') }}</span>
-    <nav class="nav-section" :aria-label="t('navToolsMods')">
-      <OpenXrManager />
+    <span class="nav-label">{{ copy.organize }}</span>
+    <nav class="nav-section" :aria-label="copy.organize">
       <CommunityPanel />
       <CollectionsPanel />
       <ProfilesPanel />
-      <ContributeTrigger />
     </nav>
 
-    <span class="nav-label">{{ t('navToolsHelp') }}</span>
-    <nav class="nav-section" :aria-label="t('navToolsHelp')">
-      <AiAssistantTrigger />
-      <LocalAiPanel />
+    <span class="nav-label">{{ copy.system }}</span>
+    <nav class="nav-section" :aria-label="copy.system">
+      <OpenXrManager />
       <!--
         The updater sits with the tools rather than the mods because it is
         about the app itself. It is an entry, not a banner: nothing checks
@@ -41,6 +41,13 @@ const { t } = useI18n()
       -->
       <AppUpdatePanel />
       <ActivityLogPanel />
+    </nav>
+
+    <span class="nav-label">{{ copy.create }}</span>
+    <nav class="nav-section" :aria-label="copy.create">
+      <AiAssistantTrigger />
+      <LocalAiPanel />
+      <ContributeTrigger />
     </nav>
   </div>
 </template>

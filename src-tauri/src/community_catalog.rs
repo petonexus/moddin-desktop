@@ -158,6 +158,9 @@ pub struct CommunityCatalogEntry {
     pub homepage: Option<String>,
     #[serde(default)]
     pub download_url: Option<String>,
+    /// Digest of the exact YAML bytes, covered by the catalog signature.
+    #[serde(default)]
+    pub yaml_sha256: Option<String>,
     #[serde(default)]
     pub config_schema: serde_json::Value,
     #[serde(default)]
@@ -288,7 +291,7 @@ fn verify_with_keys(
 }
 
 /// Is this key one this build is willing to trust?
-fn is_trusted(key: &VerifyingKey) -> bool {
+pub(crate) fn is_trusted(key: &VerifyingKey) -> bool {
     is_trusted_in(key, TRUSTED_PUBLIC_KEYS_B64)
 }
 
@@ -912,16 +915,19 @@ pub async fn fetch_capability_yaml(
         .build()
         .map_err(|error| format!("community: could not build HTTP client: {error}"))?;
 
-    let yaml = client
+    let yaml_bytes = client
         .get(parsed)
         .send()
         .await
         .map_err(|error| format!("community: YAML GET failed: {error}"))?
         .error_for_status()
         .map_err(|error| format!("community: YAML GET returned an error: {error}"))?
-        .text()
+        .bytes()
         .await
         .map_err(|error| format!("community: YAML read failed: {error}"))?;
+    // Preserve the exact signed bytes, including BOM and line endings.
+    let yaml = String::from_utf8(yaml_bytes.to_vec())
+        .map_err(|error| format!("community: YAML is not UTF-8: {error}"))?;
 
     // The `SIGNED-BY` sibling lives in the same directory, so the base
     // URL already passed the allow-list; it inherits the decision.

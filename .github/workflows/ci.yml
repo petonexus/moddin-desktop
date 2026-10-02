@@ -53,6 +53,9 @@ jobs:
       - name: Check bundled-build features
         run: node scripts/check-bundle-features.mjs
 
+      - name: Check release artifact contract
+        run: node --test scripts/release-artifacts.test.mjs
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -135,7 +138,9 @@ jobs:
                           'moddin-agent/src/**',
                           'moddin-agent/scripts/**',
                           'moddin-agent/templates/**',
-                          'moddin-agent/schema/**') }}
+                          'moddin-agent/schema/**',
+                          'src-tauri/capabilities/*.yaml',
+                          'src/catalog/games/*.yaml') }}
         run: |
           # hashFiles returns the empty string when a pattern matches
           # nothing. Left unchecked, that collapses the key to one entry
@@ -256,7 +261,7 @@ jobs:
 
           # The same smoke test the bundler runs before writing
           # BUNDLE_OK: a cached bundle is re-proven, not assumed.
-          $env:MODDIN_PROJECT_ROOT = (Resolve-Path '.').Path
+          $env:MODDIN_PROJECT_ROOT = (Resolve-Path (Join-Path $agent 'data')).Path
           & (Join-Path $out 'node.exe') (Join-Path $agent 'scripts\smoke-test.mjs')
           if ($LASTEXITCODE -ne 0) { throw "Runtime smoke test failed on the '${{ steps.runtime-cache.outputs.cache-hit }}' bundle." }
           $env:MODDIN_PROJECT_ROOT = $null

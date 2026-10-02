@@ -1,15 +1,14 @@
 //! Headless "agent mode": the app drives an AI CLI the user already has
 //! installed (Codex, Claude Code or Cursor agent) so authoring a
 //! capability never involves copy-pasting. The prompt asks the agent to
-//! use the Moddin MCP tools (available when the client reads the config
-//! `setup_ai_assistant` maintains) and to finish with the final
+//! use the supplied context with restricted CLI permissions and finish with the final
 //! capability YAML in a fenced block. The app then routes the result
 //! through the same validate → preview → save flow as the paste path —
 //! nothing is saved without the user confirming the preview.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +61,8 @@ pub struct AgentCliInfo {
 pub struct AgentRunRequest {
     pub agent: AgentKind,
     pub prompt: String,
+    #[serde(default)]
+    pub consent: bool,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
@@ -191,25 +192,24 @@ pub fn list_agent_clis() -> Vec<AgentCliInfo> {
 // Argument vectors
 // -----------------------------------------------------------------------------
 
-/// Extra Codex flags. `--approve-for-me` routes approval requests
-/// (including MCP tool calls) through automatic review while keeping a
-/// sandbox; it cannot be combined with an explicit `--sandbox` flag. The
-/// run is also `--ephemeral` and scoped to a scratch directory, so a
-/// stuck approval fails loudly instead of hanging on an invisible
-/// prompt.
-///
-/// These belong to the `exec` subcommand, not the bare `codex` command.
-/// Current Codex (0.158.x) only accepts them after `exec`; passing them
-/// to the top level fails with "unexpected argument
-/// '--skip-git-repo-check' found", and the bare command would launch the
-/// interactive TUI anyway.
-#[cfg(target_os = "windows")]
+/// Headless authoring receives the context in the prompt. It has no
+/// reason to run shell commands or access the user's configured MCPs.
 const CODEX_EXTRA_ARGS: &[&str] = &[
     "--skip-git-repo-check",
     "--ephemeral",
     "--color",
     "never",
-    "--approve-for-me",
+    "--ignore-user-config",
+    "--sandbox",
+    "read-only",
+    "--disable",
+    "shell_tool",
+    "--disable",
+    "unified_exec",
+    "-c",
+    "approval_policy=\"never\"",
+    "-c",
+    "web_search=\"disabled\"",
 ];
 
 /// Build the argv for one headless run. Extracted from the spawn call so
@@ -235,11 +235,23 @@ fn build_argv(agent: AgentKind, prompt: &str, scratch: &Path, last_message: &Pat
             "text".to_owned(),
             "--max-turns".to_owned(),
             "12".to_owned(),
-            "--dangerously-skip-permissions".to_owned(),
+            "--tools".to_owned(),
+            "".to_owned(),
+            "--strict-mcp-config".to_owned(),
+            "--mcp-config".to_owned(),
+            "{\"mcpServers\":{}}".to_owned(),
+            "--permission-mode".to_owned(),
+            "dontAsk".to_owned(),
+            "--setting-sources".to_owned(),
+            "".to_owned(),
+            "--no-session-persistence".to_owned(),
         ],
         AgentKind::CursorAgent => vec![
             "-p".to_owned(),
-            "--force".to_owned(),
+            "--mode".to_owned(),
+            "ask".to_owned(),
+            "--sandbox".to_owned(),
+            "enabled".to_owned(),
             "--output-format".to_owned(),
             "text".to_owned(),
             prompt.to_owned(),
@@ -326,14 +338,72 @@ fn truncate_chars(s: &str, max: usize) -> String {
 
 /// Only one agent run at a time per app instance: two LLM runs racing
 /// would burn quota and confuse the single dialog state.
-static RUNNING: AtomicBool = AtomicBool::new(false);
+// 0 = idle, 1 = running, 2 = cancellation requested.
+static RUN_STATE: AtomicU8 = AtomicU8::new(0);
+
+struct RunGuard;
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        RUN_STATE.store(0, Ordering::SeqCst);
+    }
+}
+
+struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[tauri::command]
+pub fn cancel_ai_agent_prompt() {
+    let _ = RUN_STATE.compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+fn kill_run(child: &mut std::process::Child) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Only the child spawned by this run, including its descendants.
+        let _ = std::process::Command::new("taskkill.exe")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn capture_output(
+    mut reader: impl std::io::Read + Send + 'static,
+) -> std::sync::mpsc::Receiver<String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut tail = std::collections::VecDeque::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    tail.extend(&chunk[..count]);
+                    if tail.len() > 1_048_576 {
+                        tail.drain(..tail.len() - 1_048_576);
+                    }
+                }
+            }
+        }
+        let bytes: Vec<u8> = tail.into_iter().collect();
+        let _ = send.send(String::from_utf8_lossy(&bytes).into_owned());
+    });
+    receive
+}
 
 fn scratch_dir(agent: AgentKind) -> Option<PathBuf> {
     let dir = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)?
         .join("Moddin")
         .join("agent-runs")
-        .join(format!("{}-{}", agent.id(), std::process::id()));
+        .join(format!("{}-{}", agent.id(), uuid::Uuid::new_v4()));
     if std::fs::create_dir_all(&dir).is_ok() {
         Some(dir)
     } else {
@@ -343,26 +413,48 @@ fn scratch_dir(agent: AgentKind) -> Option<PathBuf> {
 
 #[tauri::command]
 pub async fn run_ai_agent_prompt(request: AgentRunRequest) -> Result<AgentRunResult, String> {
+    if !request.consent {
+        return Err("Confirm sending this context to the selected AI provider first.".to_owned());
+    }
     if request.prompt.trim().is_empty() {
         return Err("The prompt is empty.".to_owned());
     }
-    if RUNNING
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    if RUN_STATE
+        .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
         return Err("Another AI run is already in progress.".to_owned());
     }
-    let result = run_inner(&request).await;
-    RUNNING.store(false, Ordering::SeqCst);
-    result
+    let guard = RunGuard;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        run_inner(&request)
+    })
+    .await
+    .map_err(|error| format!("AI worker failed: {error}"))?
 }
 
-async fn run_inner(request: &AgentRunRequest) -> Result<AgentRunResult, String> {
+fn run_inner(request: &AgentRunRequest) -> Result<AgentRunResult, String> {
     let started = Instant::now();
     let exe = resolve_cli(request.agent)
         .ok_or_else(|| format!("{} CLI was not found.", request.agent.display_name()))?;
     let scratch = scratch_dir(request.agent)
         .ok_or_else(|| "Could not create a scratch directory for the AI run.".to_owned())?;
+    let _scratch_cleanup = Scratch(scratch.clone());
+    if request.agent == AgentKind::CursorAgent {
+        let config = scratch.join(".cursor");
+        std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
+        std::fs::write(
+            config.join("cli.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "permissions": { "allow": [], "deny": [
+                    "Shell(*)", "Read(**)", "Write(**)", "WebFetch(*)", "Mcp(*:*)"
+                ] }
+            }))
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+    }
     let last_message = scratch.join("last-message.txt");
     let _ = std::fs::remove_file(&last_message);
 
@@ -387,35 +479,40 @@ async fn run_inner(request: &AgentRunRequest) -> Result<AgentRunResult, String> 
         .map_err(|error| format!("Could not start {}: {error}", exe.display()))?;
 
     // Poll-wait so the timeout actually kills a stuck CLI.
-    let timeout = std::time::Duration::from_secs(request.timeout_secs.max(30));
+    let stdout_capture = capture_output(child.stdout.take().expect("piped stdout"));
+    let stderr_capture = capture_output(child.stderr.take().expect("piped stderr"));
+    let timeout = std::time::Duration::from_secs(request.timeout_secs.clamp(30, 600));
+    let mut cancelled = false;
     let status = loop {
+        if RUN_STATE.load(Ordering::SeqCst) == 2 {
+            cancelled = true;
+            kill_run(&mut child);
+            break None;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if started.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    kill_run(&mut child);
                     break None;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            Err(error) => return Err(format!("Could not wait on {}: {error}", exe.display())),
+            Err(error) => {
+                kill_run(&mut child);
+                return Err(format!("Could not wait on {}: {error}", exe.display()));
+            }
         }
     };
 
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        use std::io::Read;
-        let _ = out.read_to_string(&mut stdout);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        use std::io::Read;
-        let _ = err.read_to_string(&mut stderr);
-    }
+    let stdout = stdout_capture
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or_default();
+    let stderr = stderr_capture
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or_default();
 
     let duration_ms = started.elapsed().as_millis() as u64;
-    let _ = std::fs::remove_dir_all(&scratch);
 
     let status = match status {
         Some(status) => status,
@@ -423,11 +520,15 @@ async fn run_inner(request: &AgentRunRequest) -> Result<AgentRunResult, String> 
             return Ok(AgentRunResult {
                 agent: request.agent,
                 status: AgentRunStatus::Failed,
-                output: format!(
-                    "{} did not finish within {} minutes.",
-                    request.agent.display_name(),
-                    request.timeout_secs.max(30) / 60
-                ),
+                output: if cancelled {
+                    "AI run cancelled.".to_owned()
+                } else {
+                    format!(
+                        "{} did not finish within {} minutes.",
+                        request.agent.display_name(),
+                        request.timeout_secs.clamp(30, 600) / 60
+                    )
+                },
                 yaml: None,
                 duration_ms,
             });
@@ -521,8 +622,10 @@ mod tests {
         let joined = argv.join(" ");
         assert!(joined.contains("--skip-git-repo-check"), "{}", joined);
         assert!(joined.contains("--ephemeral"), "{}", joined);
-        assert!(joined.contains("--approve-for-me"), "{}", joined);
-        assert!(!joined.contains("--sandbox"), "{}", joined);
+        assert!(!joined.contains("--approve-for-me"), "{}", joined);
+        assert!(joined.contains("--sandbox read-only"), "{}", joined);
+        assert!(joined.contains("--ignore-user-config"), "{}", joined);
+        assert!(joined.contains("--disable shell_tool"), "{}", joined);
         assert!(joined.contains("-C S"), "{}", joined);
         // Regression: these flags moved under the `exec` subcommand in
         // current Codex. Against the bare command it dies with
@@ -534,7 +637,7 @@ mod tests {
             "--skip-git-repo-check",
             "--ephemeral",
             "--color",
-            "--approve-for-me",
+            "--sandbox",
         ] {
             let index = argv
                 .iter()
@@ -563,7 +666,9 @@ mod tests {
         );
         assert!(argv.contains(&"-p".to_owned()));
         assert!(argv.contains(&"PROMPT".to_owned()));
-        assert!(argv.contains(&"--dangerously-skip-permissions".to_owned()));
+        assert!(!argv.contains(&"--dangerously-skip-permissions".to_owned()));
+        assert!(argv.windows(2).any(|pair| pair == ["--tools", ""]));
+        assert!(argv.contains(&"--strict-mcp-config".to_owned()));
 
         let argv = build_argv(
             AgentKind::CursorAgent,
@@ -571,7 +676,8 @@ mod tests {
             Path::new("S"),
             Path::new("L"),
         );
-        assert!(argv.contains(&"--force".to_owned()));
+        assert!(!argv.contains(&"--force".to_owned()));
+        assert!(argv.windows(2).any(|pair| pair == ["--sandbox", "enabled"]));
         assert!(argv.last().is_some_and(|a| a == "PROMPT"));
     }
 
@@ -596,5 +702,22 @@ mod tests {
         let cut = truncate_chars(&long, 20_000);
         assert_eq!(cut.chars().count(), 20_001);
         assert!(cut.starts_with('…'));
+    }
+
+    #[tokio::test]
+    async fn refuses_external_context_without_consent() {
+        let request: AgentRunRequest =
+            serde_json::from_str(r#"{"agent":"codex","prompt":"private context"}"#).unwrap();
+        let error = run_ai_agent_prompt(request).await.unwrap_err();
+        assert!(error.contains("Confirm sending"));
+    }
+
+    #[test]
+    fn drains_large_cli_output_with_bounded_memory() {
+        let reader = std::io::Cursor::new(vec![b'x'; 2_000_000]);
+        let output = capture_output(reader)
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(output.len(), 1_048_576);
     }
 }

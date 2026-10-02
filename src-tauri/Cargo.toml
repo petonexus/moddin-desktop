@@ -1,6 +1,6 @@
 [package]
 name = "moddin-desktop"
-version = "0.1.0"
+version = "0.1.0-beta.6"
 description = "Moddin Desktop — Windows-first PC game mod and tooling manager"
 authors = ["Marco Antonio da Silva Junior"]
 edition = "2021"

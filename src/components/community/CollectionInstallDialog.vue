@@ -169,6 +169,7 @@ async function confirmInstall() {
 }
 
 function close() {
+  if (busy.value) return
   emit('close')
 }
 
@@ -194,6 +195,7 @@ watch(
     :title="dialogTitle"
     :eyebrow="t('collection')"
     :description="dialogDescription"
+    :busy="busy"
     size="lg"
     @close="close"
   >

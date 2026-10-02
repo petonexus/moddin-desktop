@@ -46,6 +46,7 @@ export interface CommunityCatalogEntry {
   status: string
   homepage: string | null
   downloadUrl: string | null
+  yamlSha256?: string | null
   configSchema: unknown[]
   safetyNotes: string[]
   /** True when the entry ships a SIGNED-BY in the community repo. */

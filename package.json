@@ -1,7 +1,7 @@
 {
   "name": "moddin-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-beta.6",
   "description": "Moddin Desktop — Windows-first PC game mod and tooling manager (Tauri 2 + Vue 3).",
   "type": "module",
   "repository": {

@@ -18,7 +18,6 @@
  */
 import { invokeDebug as invoke } from '../../debug'
 import { findCatalogGameById } from '../../services/catalog'
-import { readLocalValue } from '../../services/storage'
 import type { EngineMatch } from '../../types/capability'
 
 /**
@@ -104,13 +103,12 @@ export interface CollectionRequest {
  * lost, and a missing engine is the loader's `noGameEngine` case, which
  * gates nothing.
  */
-export function selectedGameRequest(): CollectionRequest {
-  const gameId = readLocalValue('moddin-selected-appId')
+export function selectedGameRequest(gameId: string | null): CollectionRequest {
   if (!gameId) return { gameId: null, engine: null }
   const game = findCatalogGameById(gameId)
   return { gameId: game?.id ?? gameId, engine: game?.enginePreset ?? null }
 }
 
-export function listCollections(): Promise<CollectionSummary[]> {
-  return invoke<CollectionSummary[]>('collection_list', { request: selectedGameRequest() })
+export function listCollections(gameId: string | null = null): Promise<CollectionSummary[]> {
+  return invoke<CollectionSummary[]>('collection_list', { request: selectedGameRequest(gameId) })
 }

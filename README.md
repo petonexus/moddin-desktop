@@ -84,7 +84,7 @@ The fingerprint of the pinned signing key is shown in the panel header so you ca
 
 ## Safety and trust
 
-Moddin never asks for admin rights and never disables your game anti-cheat. Every action runs in your user account, writes only to the game directory or per-user registry paths, and is recorded in an activity log so you can audit what changed.
+Most Moddin installs need no administrator rights. Moddin never disables your game anti-cheat. Every action runs in your user account, writes only to the game directory or per-user registry paths, and is recorded in an activity log so you can audit what changed.
 
 For community capabilities, the catalog is signed with Ed25519 by the maintainers. Moddin verifies the signature against a public key **pinned in the app binary** before installing anything. Unsigned capabilities are accepted only when you tick a confirmation box in the UI.
 

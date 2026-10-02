@@ -33,6 +33,35 @@ the one that ships, and the rule that cannot is written down as a known gap inst
 lesson generalises to the three previous cases: find the whole inventory before writing the
 check, not after it fails.
 
+## October 1 assessment follow-up
+
+Implemented locally, pending the signed release dry-run:
+
+- Release artifacts use Tauri v2's setup executable and `.sig`; CI generates
+  `latest.json`, supplies secrets during the build, validates all three versions
+  against the tag, and supports a manual dry-run without publication.
+- Capability installation rolls back on planning, backup extension, execution
+  and commit failures. Rollback errors report the transaction and original error.
+- Community YAML must match `yamlSha256` inside the signed catalog. `SIGNED-BY`
+  keys must be compiled/trusted and non-revoked. Consent cannot bypass either
+  requirement or downgrade an entry marked signed.
+- Community, Collections and Contribute consume the reactive library selection;
+  AI receives catalog game IDs. Regression fixtures provide that same channel.
+- Runtime debug overlays require opt-in/development mode and can be dismissed.
+  Vue template checking is strict; the prior UI pass already imported GameList's
+  empty state and isolated capability cards when switching games.
+- `kill-process` resolves `processNameField` and refuses missing/broad targets.
+  Capability install/removal and community installation enter activity history.
+
+Remaining release/community work: run the Release workflow manually with the
+signing secrets, inspect/install its artifacts, then publish the intended tag;
+regenerate the external community catalog with YAML digests and re-sign it.
+See [UPDATER.md](docs/UPDATER.md) for the dry-run contract.
+
+Next cycle still includes AI permissions/portable resource discovery, safe Undo
+across overlapping mods, a beta updater channel, and Authenticode. This follow-up
+does not close those items or claim the external catalog was changed.
+
 ## How to read this
 
 - **Now** — blocks the next beta. One item needs a maintainer's key; the rest are closed, and one of them was found by auditing a branch this roadmap had repeatedly deferred closing.
@@ -789,3 +818,15 @@ Recurring sources of drift, recorded so they stay visible:
 6. **Deleting a command is not the same as resolving one.** An unreachable command is a
    question: wire it, or say why it is not wanted. Deleting it because wiring it was outside
    the current file ownership trades a visible problem for an invisible one.
+
+
+### Fechamento beta.6 — IA e MCP (2026-10-02)
+
+- Consentimento obrigatório por execução antes de enviar contexto ao provedor.
+- CLIs sem bypass; autoria restrita, cancelamento da árvore do processo e timeout.
+- Leitura concorrente e limitada das saídas; resposta final lida antes da limpeza.
+- Recursos MCP mapeados explicitamente no instalador e catálogo embarcado,
+  testado no smoke com o mesmo snapshot que será instalado.
+- Pipeline comunitário emite `yamlSha256` e recusa a chave aposentada. Em
+  2026-10-02 o run 36962458600 confirmou segredo e247ca4981f22245, enquanto
+  public-keys.json exige d489a3a0be894b19; correção do segredo ainda pendente.

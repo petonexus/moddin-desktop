@@ -233,6 +233,7 @@ const LOCALIZED_MODULE_DESCRIPTION_KEYS: Record<string, string> = {
   'cheeky-foveated-dlss': 'moduleCheekyDescription',
   uevr: 'moduleUevrDescription',
   openxr: 'moduleOpenXrDescription',
+  'desktop-shortcut': 'moduleDesktopShortcutDescription',
 }
 
 /** Localized card title for a module id, falling back to `fallback`. */

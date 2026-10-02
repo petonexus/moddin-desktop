@@ -192,6 +192,7 @@ pub fn run() {
             ai_assistant_setup::remove_ai_assistant,
             ai_agent_runner::list_agent_clis,
             ai_agent_runner::run_ai_agent_prompt,
+            ai_agent_runner::cancel_ai_agent_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Moddin");

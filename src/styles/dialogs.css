@@ -45,6 +45,8 @@
   display: grid;
   gap: var(--moddin-space-5);
   overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
   padding: var(--moddin-space-5) var(--moddin-space-6);
 }
 

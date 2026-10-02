@@ -236,9 +236,10 @@ fn resolve_mcp_server(resource_dir: &Path) -> Option<McpRuntime> {
 const MCP_SERVER_KEY: &str = "moddin";
 
 /// Value the bundled MCP server expects for `MODDIN_PROJECT_ROOT`.
-/// NOTE: hard-coded to the dev checkout on this branch; production builds
-/// must derive it from the install/resource layout.
-const MODDIN_PROJECT_ROOT_ENV_VALUE: &str = "C:/mods/moddin/moddin";
+/// Derived from the installed resource layout, independent of the build machine.
+fn bundled_project_root(resource_dir: &Path) -> PathBuf {
+    resource_dir.join("moddin-agent").join("data")
+}
 
 // -----------------------------------------------------------------------------
 // Codex CLI MCP registration
@@ -335,11 +336,15 @@ fn codex_toml_path() -> Option<PathBuf> {
     codex_config_dir().map(|dir| dir.join("config.toml"))
 }
 
-fn write_codex_toml_entry(command: &str, args: &[String]) -> Result<(), String> {
+fn write_codex_toml_entry(
+    command: &str,
+    args: &[String],
+    project_root: &str,
+) -> Result<(), String> {
     let path = codex_toml_path()
         .ok_or_else(|| "Could not resolve the Codex config directory.".to_owned())?;
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let updated = upsert_codex_toml_entry(&existing, command, args, MODDIN_PROJECT_ROOT_ENV_VALUE);
+    let updated = upsert_codex_toml_entry(&existing, command, args, project_root);
     if updated == existing {
         return Ok(());
     }
@@ -493,6 +498,9 @@ pub fn setup_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<AiA
     })?;
     let mcp_command = mcp_server.command.to_string_lossy().into_owned();
     let mcp_args = mcp_server.args.clone();
+    let project_root = bundled_project_root(&resource_path)
+        .to_string_lossy()
+        .into_owned();
 
     let mut config = read_mcp_config(&config_path)?;
     let mcp_servers = config
@@ -508,7 +516,7 @@ pub fn setup_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<AiA
             "args": mcp_args,
             "env": {
                 "MODDIN_LOCAL_CAPABILITIES_DIR": "",
-                "MODDIN_PROJECT_ROOT": MODDIN_PROJECT_ROOT_ENV_VALUE,
+                "MODDIN_PROJECT_ROOT": project_root,
             },
         }),
     );
@@ -523,7 +531,7 @@ pub fn setup_ai_assistant(agent_id: AgentId, resource_dir: String) -> Result<AiA
     // `$CODEX_HOME/config.toml`. Mirror the entry there so headless
     // `codex exec` runs (agent mode) see the Moddin tools.
     if agent_id == AgentId::Codex {
-        write_codex_toml_entry(&mcp_command, &mcp_args)?;
+        write_codex_toml_entry(&mcp_command, &mcp_args, &project_root)?;
     }
 
     Ok(inspect_agent(agent_id, &resource_path))
@@ -735,6 +743,14 @@ mod tests {
             "hindsight entry must survive setup"
         );
         let moddin = &parsed["mcpServers"]["moddin"];
+        assert_eq!(
+            moddin["env"]["MODDIN_PROJECT_ROOT"].as_str().unwrap(),
+            res_dir
+                .join("moddin-agent")
+                .join("data")
+                .to_string_lossy()
+                .as_ref()
+        );
         assert_eq!(
             moddin["command"].as_str().unwrap(),
             res_dir.join("node.exe").to_string_lossy().as_ref()

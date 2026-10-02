@@ -204,6 +204,7 @@ const en = {
   moduleOpenXr: 'VR tools',
   moduleOpenXrDescription: 'Settings for the VR system this game uses.',
   moduleDesktopShortcut: 'Desktop shortcut',
+  moduleDesktopShortcutDescription: 'Create a shortcut to open this game directly from your desktop.',
   moduleNoAction: 'Moddin cannot install this mod yet.',
   moduleDependenciesEyebrow: 'Prerequisites',
   moduleDependenciesDescription: 'This mod is an add-on and needs these first:',
@@ -378,8 +379,9 @@ const en = {
   cheekyGuideRisksSummary: 'Some people report freezes or lower performance. If that happens, remove the mod through Moddin — everything goes back to how it was.',
 
   // Capability mods (AI-saved + community recipes installed from the game detail)
-  capabilityModsHeading: 'AI mods',
-  capabilityModsSubtitle: 'Mods you created with the AI assistant or installed from the community.',
+  capabilityModsHeading: 'More mods for this game',
+  capabilityModsSubtitle: 'Mods bundled with Moddin, created by you or added from the community.',
+  capabilityOriginBuiltIn: 'Included with Moddin',
   capabilityOriginLocal: 'Local',
   capabilityOriginCommunity: 'Community',
   capabilityConfigTitle: 'Configuration',
@@ -407,7 +409,7 @@ const en = {
 
   // History
   historyTitle: 'History',
-  historySubtitle: 'Everything Moddin changed in your games. Any active change can be undone with one click.',
+  historySubtitle: 'Review the changes made to your games and undo those you no longer want.',
   historyRefresh: 'Refresh',
   historyFilterAll: 'Everything',
   historyFilterActive: 'Active',
@@ -587,6 +589,9 @@ const en = {
   profileErrorGenericTitle: 'The profile action did not finish',
   profileErrorGenericWhy: 'Open the technical detail below to see what the app reported.',
   // Backend ids (UX-21) — action log, mapped in features/activity/service.ts
+  activityActionInstallCapability: 'Install mod recipe',
+  activityActionUninstallCapability: 'Remove mod recipe',
+  activityActionInstallCommunityCapability: 'Install community mod',
   activityActionConfigureObs: 'Set up OBS VR',
   activityActionUninstallObs: 'Remove OBS VR',
   activityActionInstallOptiscaler: 'Install OptiScaler',
@@ -656,6 +661,10 @@ const en = {
   ariaRemoveNamed: 'Remove {name}',
   ariaUndoNamed: 'Undo {name}',
   capabilityFieldRequired: 'This field is required.',
+  aiAgentConsentTitle: "Send context to {agent}?",
+  aiAgentConsentDescription: "Your request, game details and errors included in the prompt will be sent to the AI provider using your account. This run may use your quota.",
+  aiAgentConsentSend: "Send and generate",
+  aiAgentConsentReview: "The response will be validated and shown for review before saving or installing.",
 } as const
 
 export default en

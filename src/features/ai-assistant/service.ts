@@ -206,18 +206,12 @@ export interface AgentRunResult {
   durationMs: number
 }
 
-/**
- * Instructions appended to the generated prompt when it is handed to an
- * installed AI CLI. The agent has the Moddin MCP server available, so it
- * can ground itself in the real catalog and check its own YAML before
- * replying — and it must NOT save anything (the app saves after the user
- * reviews). Diagnose tasks legitimately answer in plain text instead of
- * YAML, which the backend reports as `noYaml`.
- */
+/** Headless runs receive all context in the prompt. Tool permissions are
+ * restricted by the backend; generated output still needs review. */
 export const AGENT_SUFFIX = `
 
 ---
-You have the Moddin MCP server available (tools: list_supported_games, get_game_info, get_capability_template, list_capabilities, validate_capability_yaml, preview_capability_plan). Use them to ground your answer in the real catalog and to check your work. Do NOT call save_capability_yaml — the Moddin app saves after the user reviews. Finish your reply with the final result as a single fenced \`\`\`yaml block (\`\`\`yaml ...\`\`\`). If the task is a diagnosis (no YAML expected), just answer in plain language.`
+Use only the context supplied in this prompt. Do not run commands, read local files, call MCP tools, save recipes or install anything. Moddin validates your answer and asks the user to review before saving. Finish your reply with the final result as a single fenced \`\`\`yaml block (\`\`\`yaml ...\`\`\`). If the task is a diagnosis (no YAML expected), just answer in plain language.`
 
 /** Detect which AI CLIs are installed on this machine. */
 export function listAgentClis(): Promise<AgentCliInfo[]> {
@@ -231,8 +225,13 @@ export function listAgentClis(): Promise<AgentCliInfo[]> {
 export function runAiAgentPrompt(
   agent: AgentKind,
   prompt: string,
+  consent: boolean,
 ): Promise<AgentRunResult> {
   return invoke<AgentRunResult>('run_ai_agent_prompt', {
-    request: { agent, prompt },
+    request: { agent, prompt, consent },
   })
+}
+
+export function cancelAiAgentPrompt(): Promise<void> {
+  return invoke<void>('cancel_ai_agent_prompt')
 }

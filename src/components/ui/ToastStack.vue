@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from './AppIcon.vue'
 
@@ -10,20 +10,75 @@ const emit = defineEmits<{ 'dismiss-success': []; 'dismiss-error': [] }>()
 const { t } = useI18n()
 
 let timer: number | null = null
+let startedAt = 0
+let remaining = SUCCESS_TIMEOUT_MS
+let hovered = false
+let focused = false
 
 function clearTimer() {
   if (timer !== null) window.clearTimeout(timer)
   timer = null
 }
 
+function pauseTimer() {
+  if (timer !== null) remaining = Math.max(0, remaining - (Date.now() - startedAt))
+  clearTimer()
+}
+
+function resumeTimer() {
+  if (!props.success || timer !== null || hovered || focused || document.hidden) return
+  startedAt = Date.now()
+  timer = window.setTimeout(() => {
+    timer = null
+    emit('dismiss-success')
+  }, remaining)
+}
+
+function setHovered(value: boolean) {
+  hovered = value
+  if (value) pauseTimer()
+  else resumeTimer()
+}
+
+function onFocusOut(event: FocusEvent) {
+  if (event.currentTarget instanceof HTMLElement && event.relatedTarget instanceof Node
+    && event.currentTarget.contains(event.relatedTarget)) return
+  focused = false
+  resumeTimer()
+}
+
+function onFocusIn() {
+  focused = true
+  pauseTimer()
+}
+
+function dismissSuccess() {
+  clearTimer()
+  emit('dismiss-success')
+}
+
+function onVisibilityChange() {
+  if (document.hidden) pauseTimer()
+  else resumeTimer()
+}
+
 // Success messages confirm something the user just did; they should not
 // linger. Errors stay until dismissed because they usually need reading.
 watch(() => props.success, (value) => {
   clearTimer()
-  if (value) timer = window.setTimeout(() => emit('dismiss-success'), SUCCESS_TIMEOUT_MS)
-})
+  remaining = SUCCESS_TIMEOUT_MS
+  if (!value) {
+    hovered = false
+    focused = false
+  }
+  resumeTimer()
+}, { immediate: true })
 
-onUnmounted(clearTimer)
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
+onUnmounted(() => {
+  clearTimer()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 </script>
 
 <template>
@@ -47,13 +102,22 @@ onUnmounted(clearTimer)
           <AppIcon name="close" />
         </button>
       </div>
-      <div v-if="success" key="success" class="toast toast-success" role="status">
+      <div
+        v-if="success"
+        key="success"
+        class="toast toast-success"
+        role="status"
+        @pointerenter="setHovered(true)"
+        @pointerleave="setHovered(false)"
+        @focusin="onFocusIn"
+        @focusout="onFocusOut"
+      >
         <AppIcon class="toast-icon" name="check" :size="18" />
         <div>
           <strong>{{ t('toastSuccess') }}</strong>
           <p>{{ success }}</p>
         </div>
-        <button class="btn btn-icon" type="button" :aria-label="t('dismiss')" @click="emit('dismiss-success')">
+        <button class="btn btn-icon" type="button" :aria-label="t('dismiss')" @click="dismissSuccess">
           <AppIcon name="close" />
         </button>
       </div>
@@ -86,7 +150,7 @@ onUnmounted(clearTimer)
 .toast strong { display: block; font-size: var(--moddin-text-md); }
 .toast p { margin-top: 2px; color: var(--moddin-text-soft); font-size: var(--moddin-text-md); overflow-wrap: anywhere; }
 .toast-icon { margin-top: 1px; }
-.toast .btn-icon { width: 28px; min-height: 28px; margin-top: -2px; }
+.toast .btn-icon { width: 36px; min-height: 36px; margin-top: -2px; }
 .toast-success { border-color: var(--moddin-success-line); }
 .toast-success .toast-icon { color: var(--moddin-success); }
 .toast-error { border-color: var(--moddin-danger-line); }

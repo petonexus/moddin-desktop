@@ -20,13 +20,13 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <BaseDialog :eyebrow="t('previewEyebrow')" :title="moduleName" @close="emit('close')">
+  <BaseDialog :eyebrow="t('previewEyebrow')" :title="moduleName" :busy="busy" @close="emit('close')">
     <ChangePreview
       :changes="[preview.willReplace ? t('desktopShortcutWillReplace') : t('desktopShortcutWillCreate')]"
       :location="preview.shortcutPath"
     />
     <template #footer>
-      <button class="btn" type="button" @click="emit('close')">{{ t('cancel') }}</button>
+      <button class="btn" type="button" :disabled="busy" @click="emit('close')">{{ t('cancel') }}</button>
       <button
         class="btn btn-primary"
         :class="{ 'is-loading': busy }"

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Moddin Desktop",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.6",
   "identifier": "dev.petonexus.moddin-desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,9 +30,16 @@
         "form-action": ["'self'"],
         "script-src": ["'self'"],
         "style-src": ["'self'"],
-        "img-src": ["'self'", "data:"],
+        "img-src": [
+          "'self'",
+          "data:"
+        ],
         "font-src": ["'self'"],
-        "connect-src": ["'self'", "ipc:", "http://ipc.localhost"]
+        "connect-src": [
+          "'self'",
+          "ipc:",
+          "http://ipc.localhost"
+        ]
       },
       "devCsp": {
         "default-src": ["'self'"],
@@ -40,9 +47,18 @@
         "object-src": ["'none'"],
         "frame-ancestors": ["'none'"],
         "form-action": ["'self'"],
-        "script-src": ["'self'", "'unsafe-inline'"],
-        "style-src": ["'self'", "'unsafe-inline'"],
-        "img-src": ["'self'", "data:"],
+        "script-src": [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+        "img-src": [
+          "'self'",
+          "data:"
+        ],
         "font-src": ["'self'"],
         "connect-src": [
           "'self'",
@@ -62,13 +78,11 @@
     "category": "Utility",
     "shortDescription": "Moddin Desktop — manage game mods the safe way",
     "longDescription": "Moddin Desktop installs, previews, and rolls back game mods (VR mods, performance mods, overlays) for Steam, Epic, and GOG games on Windows. Every change is previewed, backed up, and reversible.",
-    "icon": [
-      "icons/icon.ico"
-    ],
-    "resources": [
-      "../moddin-runtime/node.exe",
-      "../moddin-runtime/moddin-agent"
-    ],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "../moddin-runtime/node.exe": "node.exe",
+      "../moddin-runtime/moddin-agent/": "moddin-agent/"
+    },
     "windows": {
       "wix": {
         "language": ["en-US"]
@@ -81,9 +95,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzN0RGQzM4MjVGMDM5NzYKUldSMk9mQWxPUHg5ZzdoSzVSZ1I2eXVOWlFUM0YvUVY1MGFhK0dXOUw3VFJyRkxJS1lOdm1abWoK",
-      "endpoints": [
-        "https://github.com/petonexus/moddin-desktop/releases/latest/download/latest.json"
-      ],
+      "endpoints": ["https://github.com/petonexus/moddin-desktop/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
       }

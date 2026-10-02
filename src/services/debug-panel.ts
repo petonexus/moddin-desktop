@@ -32,7 +32,11 @@ export function showDebugErrorPanel(title: string, details: string) {
   const pre = document.createElement('pre')
   pre.style.cssText = 'white-space:pre-wrap;margin:16px 0 0;color:#ffdfe3'
   pre.textContent = details
-  panel.append(heading, message, pre)
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.textContent = 'Fechar / Close'
+  close.addEventListener('click', hideDebugErrorPanel)
+  panel.append(close, heading, message, pre)
 }
 
 export function hideDebugErrorPanel() {

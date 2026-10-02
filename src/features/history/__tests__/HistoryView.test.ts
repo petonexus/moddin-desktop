@@ -1,8 +1,9 @@
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import HistoryView from '../HistoryView.vue'
 import { i18n } from '../../../i18n'
 import type { TransactionRecord } from '../../../types/transaction'
+import { createSnapshot } from '../service'
 
 /**
  * ROADMAP UX-11, call site 4: history undo.
@@ -30,6 +31,7 @@ enableAutoUnmount(afterEach)
 // machine configured differently. Pin it.
 beforeEach(() => {
   i18n.global.locale.value = 'en'
+  vi.mocked(createSnapshot).mockReset()
 })
 
 function record(overrides: Partial<TransactionRecord> = {}): TransactionRecord {
@@ -170,5 +172,114 @@ describe('HistoryView row accessibility', () => {
       global: { plugins: [i18n] },
     })
     expect(loading.find('.history-list').attributes('aria-busy')).toBe('true')
+  })
+})
+
+describe('HistoryView discovery and recovery', () => {
+  it('keeps filtered-empty distinct from a history that has never had a change', async () => {
+    const wrapper = render([record({ status: 'rolled_back' })])
+    await wrapper.findAll('.segmented button')[1].trigger('click')
+
+    const empty = wrapper.find('.history-list .empty-state')
+    expect(empty.text()).toContain('No matching changes')
+    expect(empty.text()).not.toContain('Nothing here yet')
+    await empty.find('button').trigger('click')
+    expect(wrapper.findAll('.history-row')).toHaveLength(1)
+    expect(wrapper.findAll('.segmented button')[0].attributes('aria-pressed')).toBe('true')
+
+    const newHistory = render([])
+    expect(newHistory.find('.history-list .empty-state').text()).toContain('Nothing here yet')
+    expect(newHistory.find('.history-list .empty-state button').exists()).toBe(false)
+  })
+
+  it('searches game and mod names, resets both filters and sorts newest first', async () => {
+    const wrapper = render([
+      record({ id: 'older', label: 'OBS VR Capture', createdAt: 100 }),
+      record({ id: 'newer', label: 'OptiScaler', createdAt: 200, status: 'rolled_back' }),
+    ])
+    expect(wrapper.findAll('.history-title strong').map((label) => label.text())).toEqual(['OptiScaler', 'OBS VR Capture'])
+
+    await wrapper.find('#history-search').setValue('ELDEN RING')
+    expect(wrapper.findAll('.history-row')).toHaveLength(2)
+    await wrapper.findAll('.segmented button')[2].trigger('click')
+    await wrapper.find('#history-search').setValue('opti')
+    expect(wrapper.findAll('.history-row')).toHaveLength(1)
+    expect(wrapper.find('.history-title strong').text()).toBe('OptiScaler')
+    expect(wrapper.find('.history-results').text()).toContain('1 of 2 changes')
+
+    await wrapper.find('.history-reset').trigger('click')
+    expect(wrapper.find<HTMLInputElement>('#history-search').element.value).toBe('')
+    expect(wrapper.findAll('.history-row')).toHaveLength(2)
+  })
+
+  it('does not describe a prepared change as undone or offer undo for it', () => {
+    const wrapper = render([record({ status: 'prepared', label: '' })])
+    expect(wrapper.find('.history-title').text()).toContain('Not applied')
+    expect(wrapper.find('.history-title').text()).not.toContain('Undone')
+    expect(wrapper.find('.history-title strong').text()).toBe('Módulo')
+    expect(wrapper.find('.history-row button').exists()).toBe(false)
+  })
+
+  it('shows why undo is blocked and disables other actions while an undo runs', async () => {
+    const wrapper = render([record(), record({ id: 'tx-2', label: 'OptiScaler' })])
+    await wrapper.setProps({ blockedReason: () => 'Close the game first.' })
+    expect(wrapper.find('.history-blocked').text()).toContain('Close the game first.')
+    expect(wrapper.find('.history-row button').attributes('aria-describedby')).toBe('history-blocked-tx-1')
+    await wrapper.find('.history-row button').trigger('click')
+    expect(dialog()).toBeNull()
+
+    await wrapper.setProps({ blockedReason: () => undefined, busyId: 'tx-1' })
+    expect(wrapper.findAll('.history-row button').every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.find('.history-row').attributes('aria-busy')).toBe('true')
+    expect(wrapper.find('.history-refresh').attributes('disabled')).toBeDefined()
+    await wrapper.setProps({ busyId: null })
+    await wrapper.findAll('.history-row button')[1].trigger('click')
+    expect(dialog()?.textContent).toContain('OptiScaler')
+  })
+
+  it('waits for a mutation in another view before refreshing, undoing or saving a restore point', async () => {
+    const wrapper = render()
+    await wrapper.setProps({ externalBusy: true })
+    expect(wrapper.find('.history-refresh').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.history-row button').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.history-list').attributes('aria-busy')).toBe('true')
+    expect(wrapper.find('.snapshot-panel select').attributes('disabled')).toBeDefined()
+    await wrapper.find('.history-row button').trigger('click')
+    expect(dialog()).toBeNull()
+
+    await wrapper.setProps({ externalBusy: false })
+    await wrapper.find('.history-row button').trigger('click')
+    expect(dialog()?.textContent).toContain('OBS VR Capture')
+  })
+
+  it('reports snapshot mutations to the shell and releases its busy state on completion and unmount', async () => {
+    let release!: (value: Awaited<ReturnType<typeof createSnapshot>>) => void
+    vi.mocked(createSnapshot).mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.find('.snapshot-panel select').setValue('elden-ring')
+    await wrapper.find('.snapshot-panel input').setValue('Before new mods')
+    await wrapper.find('.snapshot-create').trigger('submit')
+    await flushPromises()
+    expect(wrapper.emitted('busy-change')).toEqual([[true]])
+    expect(wrapper.find('.history-row button').attributes('disabled')).toBeDefined()
+
+    release({ id: 'saved-group', name: 'Before new mods', gameId: 'elden-ring', createdAt: 100, transactionIds: ['tx-1'] })
+    await flushPromises()
+    expect(wrapper.emitted('busy-change')).toEqual([[true], [false]])
+    expect(wrapper.find('.history-row button').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+    expect(wrapper.emitted('busy-change')?.at(-1)).toEqual([false])
+  })
+
+  it.each([
+    ['pt-BR', 'Nenhuma mudança encontrada', 'Limpar filtros'],
+    ['es', 'No hay cambios coincidentes', 'Limpiar filtros'],
+  ])('localizes search recovery in %s', async (locale, title, reset) => {
+    i18n.global.locale.value = locale as 'pt-BR' | 'es'
+    const wrapper = render()
+    await wrapper.find('#history-search').setValue('no-result')
+    expect(wrapper.find('.history-list .empty-state').text()).toContain(title)
+    expect(wrapper.find('.history-list .empty-state button').text()).toBe(reset)
   })
 })

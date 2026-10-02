@@ -6,8 +6,7 @@ import BaseDialog from '../ui/BaseDialog.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import { useAiAssistant } from '../../composables/useAiAssistant'
 import { listCapabilitiesForAssistant } from '../../features/ai-assistant/service'
-import { readLocalValue } from '../../services/storage'
-import { findCatalogGameById } from '../../services/catalog'
+import { useSelectedGame } from '../../composables/useSelectedGame'
 import type { CatalogCapability } from '../../types/ai-assistant'
 
 /**
@@ -30,16 +29,8 @@ const capabilities = ref<CatalogCapability[]>([])
 const loading = ref(false)
 const loadFailed = ref(false)
 
-/**
- * The selected game lives in local storage so the panels that need it do
- * not have to be handed a prop; the catalog turns that id into the name
- * the prompt shows, so the assistant still says which game it means.
- */
-const game = computed(() => {
-  const gameId = readLocalValue('moddin-selected-appId')
-  if (!gameId) return { gameId: null, gameName: null }
-  return { gameId, gameName: findCatalogGameById(gameId)?.name ?? null }
-})
+const selection = useSelectedGame()
+const game = computed(() => ({ gameId: selection.value?.gameId ?? null, gameName: selection.value?.gameName ?? null }))
 
 async function openImprove() {
   mode.value = 'improve'

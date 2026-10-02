@@ -204,6 +204,7 @@ const es = {
   moduleOpenXr: 'Herramientas de VR',
   moduleOpenXrDescription: 'Ajustes del sistema de VR que usa este juego.',
   moduleDesktopShortcut: 'Acceso directo en el escritorio',
+  moduleDesktopShortcutDescription: 'Crea un acceso directo para abrir este juego desde el escritorio.',
   moduleNoAction: 'Moddin todavía no puede instalar este mod.',
   moduleDependenciesEyebrow: 'Requisitos previos',
   moduleDependenciesDescription: 'Este mod es un complemento y necesita estos primero:',
@@ -378,8 +379,9 @@ const es = {
   cheekyGuideRisksSummary: 'Algunas personas reportan cuelgues o menor rendimiento. Si pasa, quita el mod con Moddin y todo vuelve a como estaba.',
 
   // Capability mods (recetas guardadas por IA + comunidad, instaladas desde la ficha del juego)
-  capabilityModsHeading: 'Mods de IA',
-  capabilityModsSubtitle: 'Mods que creaste con la IA o instalaste de la comunidad.',
+  capabilityModsHeading: 'Más mods para este juego',
+  capabilityModsSubtitle: 'Mods incluidos con Moddin, creados por ti o añadidos por la comunidad.',
+  capabilityOriginBuiltIn: 'Incluido con Moddin',
   capabilityOriginLocal: 'Local',
   capabilityOriginCommunity: 'Comunidad',
   capabilityConfigTitle: 'Configuración',
@@ -407,7 +409,7 @@ const es = {
 
   // History
   historyTitle: 'Historial',
-  historySubtitle: 'Todo lo que Moddin cambió en tus juegos. Cualquier cambio activo se puede deshacer con un clic.',
+  historySubtitle: 'Revisa los cambios realizados en tus juegos y deshaz los que ya no quieras mantener.',
   historyRefresh: 'Actualizar',
   historyFilterAll: 'Todo',
   historyFilterActive: 'Activos',
@@ -587,6 +589,9 @@ const es = {
   profileErrorGenericTitle: 'La acción de perfil no terminó',
   profileErrorGenericWhy: 'Abre el detalle técnico abajo para ver lo que informó la aplicación.',
   // Ids del backend (UX-21) — registro de acciones, traducido en features/activity/service.ts
+  activityActionInstallCapability: 'Instalar receta de mod',
+  activityActionUninstallCapability: 'Quitar receta de mod',
+  activityActionInstallCommunityCapability: 'Instalar mod de la comunidad',
   activityActionConfigureObs: 'Configurar OBS VR',
   activityActionUninstallObs: 'Quitar OBS VR',
   activityActionInstallOptiscaler: 'Instalar OptiScaler',
@@ -657,6 +662,10 @@ const es = {
   ariaRemoveNamed: 'Quitar {name}',
   ariaUndoNamed: 'Deshacer {name}',
   capabilityFieldRequired: 'Este campo es obligatorio.',
+  aiAgentConsentTitle: "¿Enviar contexto a {agent}?",
+  aiAgentConsentDescription: "La solicitud, los datos del juego y los errores incluidos en el prompt se enviarán al proveedor de IA con tu cuenta. Esta ejecución puede consumir tu cuota.",
+  aiAgentConsentSend: "Enviar y generar",
+  aiAgentConsentReview: "La respuesta se validará y mostrará para revisión antes de guardar o instalar.",
 } as const
 
 export default es

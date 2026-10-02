@@ -50,6 +50,7 @@ function openDialog() {
 }
 
 function closeDialog() {
+  if (busyAgent.value !== null) return
   open.value = false
 }
 
@@ -154,6 +155,7 @@ async function confirmDisconnect() {
       size="lg"
       :title="copy.title"
       :description="copy.subtitle"
+      :busy="busyAgent !== null"
       @close="closeDialog"
     >
       <p class="callout callout-info">{{ copy.banner }}</p>
@@ -163,7 +165,7 @@ async function confirmDisconnect() {
           type="button"
           class="btn btn-ghost btn-sm"
           :class="{ 'is-loading': loading }"
-          :disabled="loading"
+          :disabled="loading || busyAgent !== null"
           @click="refresh"
         >
           <AppIcon v-if="!loading" name="refresh" :size="14" />
@@ -215,7 +217,7 @@ async function confirmDisconnect() {
               type="button"
               class="btn btn-primary btn-sm"
               :class="{ 'is-loading': busyAgent === agent.id }"
-              :disabled="busyAgent === agent.id"
+              :disabled="busyAgent !== null"
               :aria-label="agentActionLabel(copy.connect, agent.displayName)"
               @click="connect(agent)"
             >
@@ -225,7 +227,7 @@ async function confirmDisconnect() {
               v-else-if="agent.state === 'configured'"
               type="button"
               class="btn btn-ghost btn-sm"
-              :disabled="busyAgent === agent.id"
+              :disabled="busyAgent !== null"
               :aria-label="agentActionLabel(copy.disconnect, agent.displayName)"
               @click="disconnect(agent)"
             >
@@ -244,7 +246,7 @@ async function confirmDisconnect() {
           <AppIcon name="check" :size="14" />
           {{ copy.configured }}
         </span>
-        <button type="button" class="btn btn-ghost" @click="closeDialog">{{ copy.close }}</button>
+        <button type="button" class="btn btn-ghost" :disabled="busyAgent !== null" @click="closeDialog">{{ copy.close }}</button>
       </template>
     </BaseDialog>
 
@@ -255,6 +257,7 @@ async function confirmDisconnect() {
       :confirm-label="copy.disconnect"
       :cancel-label="copy.disconnectCancel"
       :details="[copy.disconnectConfirmDetail]"
+      :busy="busyAgent !== null"
       @close="pendingDisconnect = null"
       @confirm="confirmDisconnect"
     />

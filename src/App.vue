@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { selectedGameKey } from './composables/useSelectedGame'
 import { useI18n } from 'vue-i18n'
 import { invokeDebug as invoke } from './debug'
 import { findCatalogGameByInstalledGame, gameCatalog, getMissingDependenciesForModule } from './services/catalog'
@@ -24,6 +25,12 @@ import AppIcon from './components/ui/AppIcon.vue'
 import BaseDialog from './components/ui/BaseDialog.vue'
 import ChangePreview from './components/ui/ChangePreview.vue'
 import EmptyState from './components/ui/EmptyState.vue'
+import ErrorCallout from './components/ui/ErrorCallout.vue'
+import { useFriendlyError } from './composables/useFriendlyError'
+import { localizedCopyFor } from './i18n/localizedCopy'
+import { readLocalValue, writeLocalValue } from './services/storage'
+import { filterInstalledGames, selectedDetectedGame } from './features/library/library-view'
+import { workspaceCopy } from './features/library/workspace-copy'
 import ToastStack from './components/ui/ToastStack.vue'
 import GlobalTools from './components/shell/GlobalTools.vue'
 import GameList from './features/library/GameList.vue'
@@ -54,7 +61,6 @@ import {
 } from './features/modules/module-registry'
 import {
   availableModuleCategories,
-  countModulesInCategory,
   moduleActionLabel,
   moduleActionsBlocked,
   moduleCardView,
@@ -91,9 +97,12 @@ const success = ref<string | null>(null)
 const search = ref('')
 const supportedOnly = ref(true)
 const activeModuleFilter = ref<ModuleFilter>('all')
-const selectedAppId = ref<string | null>(null)
+const selectedAppId = ref<string | null>(readLocalValue('moddin-selected-game'))
 const activeView = ref<ViewName>('library')
 const moduleBusy = ref(false)
+const capabilityBusy = ref(false)
+const capabilityCategoryCounts = ref<Partial<Record<ToolModuleDefinition['category'], number>>>({})
+const historyBusy = ref(false)
 const busyModuleId = ref<string | null>(null)
 const rollbackBusyId = ref<string | null>(null)
 const SELECTION_DEBOUNCE_MS = 180
@@ -105,6 +114,7 @@ let selectionBackgroundTimer: number | null = null
 let selectionGeneration = 0
 let appUnmounted = false
 const inspectionRequests = new Map<string, Promise<GameEnvironmentInspection>>()
+let scanInFlight = false
 const obsDialog = ref<{ request: ObsVrRequest; preview: ObsVrPreview } | null>(null)
 const optiScalerDialog = ref<{ request: OptiScalerRequest; preview: OptiScalerPreview } | null>(null)
 /**
@@ -127,6 +137,16 @@ const vrLaunchDialog = ref<{ request: VrLaunchRequest; preview: VrLaunchPreview 
 const uevrBackendSelections = ref<Record<string, UevrBackend>>({})
 
 const { t, locale } = useI18n()
+const copy = computed(() => localizedCopyFor(workspaceCopy, locale.value))
+const libraryError = useFriendlyError({
+  error,
+  rules: () => [{ title: t('libraryScanFailed'), why: copy.value.scanError, showRaw: true }],
+})
+const environmentError = useFriendlyError({
+  error: inspectionError,
+  rules: () => [{ title: copy.value.inspectError, why: copy.value.inspectHint, showRaw: true }],
+})
+const gameDetail = ref<HTMLElement | null>(null)
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : String(error)
@@ -145,7 +165,7 @@ const desktopShortcut = useDesktopShortcut({
 // AI topbar wiring: the menu emits dumb events; this composable turns
 // them into AI dialog opens (audit / diagnose / contribute / etc.).
 const aiTopbar = useAiTopbarActions({
-  selectedAppId: () => selectedAppId.value,
+  selectedGameId: () => selectedGame.value?.catalog?.id ?? null,
   selectedGameName: () => selectedGame.value?.catalog?.name ?? null,
   currentError: () => (typeof error.value === 'string' ? error.value : null),
 })
@@ -209,19 +229,8 @@ const supportedInstalledGames = computed(() =>
 )
 
 const filteredGames = computed(() => {
-  const term = search.value.trim().toLowerCase()
-  const ordered = [...installedGames.value].sort((a, b) => {
-    const aSupported = Boolean(findCatalogGameByInstalledGame(a))
-    const bSupported = Boolean(findCatalogGameByInstalledGame(b))
-    if (aSupported !== bSupported) return aSupported ? -1 : 1
-    return a.name.localeCompare(b.name)
-  })
-
-  return ordered.filter((game) => {
-    const matchesSupport = !supportedOnly.value || Boolean(findCatalogGameByInstalledGame(game))
-    const matchesSearch = !term || game.name.toLowerCase().includes(term)
-    return matchesSupport && matchesSearch
-  })
+  return filterInstalledGames(installedGames.value, search.value, supportedOnly.value,
+    (game) => Boolean(findCatalogGameByInstalledGame(game)), gameDisplayName)
 })
 
 const selectedGame = computed(() => {
@@ -278,7 +287,22 @@ const primaryModule = computed(() => {
 /** Every module the selected game declares, and the grid's share of them. */
 const gameModules = computed(() => selectedGame.value?.catalog?.modules ?? [])
 const ownedModules = computed(() => libraryOwnedModules(gameModules.value))
-const categoryTabs = computed(() => availableModuleCategories(gameModules.value))
+const categoryTabs = computed(() => {
+  const catalogCategories = availableModuleCategories(ownedModules.value)
+  return (['vr', 'graphics', 'qol', 'system'] as const).filter((category) =>
+    catalogCategories.includes(category) || (capabilityCategoryCounts.value[category] ?? 0) > 0)
+})
+
+function categoryCount(category: ToolModuleDefinition['category']) {
+  return ownedModules.value.filter((module) => module.category === category).length
+    + (capabilityCategoryCounts.value[category] ?? 0)
+}
+
+provide(selectedGameKey, computed(() => {
+  const game = selectedGame.value
+  return game ? { appId: game.installed.appId, gameId: game.catalog?.id ?? game.installed.appId,
+    gameName: game.catalog?.name ?? game.installed.name, engine: game.catalog?.enginePreset ?? null } : null
+}))
 
 const moduleProgress = computed(() =>
   summariseModuleProgress(
@@ -320,7 +344,7 @@ function moduleCardInput(module: ToolModuleDefinition): ModuleCardViewInput {
     verification: moduleVerification.verificationFor(module),
     verifying: moduleVerification.isVerifying(module),
     loading: inspectionLoading.value,
-    busy: moduleBusy.value,
+    busy: moduleBusy.value || capabilityBusy.value || rollbackBusyId.value !== null || loading.value,
     actionBusy: busyModuleId.value === module.id,
     gameRunning: selectedGameRunning.value,
     blockedReason: blockedReason.value,
@@ -479,6 +503,7 @@ function missingDependenciesFor(module: ToolModuleDefinition): ToolModuleDefinit
 }
 
 async function configureModule(module: ToolModuleDefinition) {
+  if (moduleBusy.value || capabilityBusy.value || rollbackBusyId.value !== null || loading.value) return
   actionError.value = null
   success.value = null
 
@@ -731,6 +756,7 @@ async function applyUevr() {
  * recorded.
  */
 async function removeModule(module: ToolModuleDefinition) {
+  if (moduleBusy.value || capabilityBusy.value || rollbackBusyId.value !== null || loading.value) return
   if (selectedGameRunning.value) {
     actionError.value = t('gameRunningActionBlocked')
     return
@@ -763,6 +789,7 @@ async function removeModule(module: ToolModuleDefinition) {
 }
 
 async function rollback(transaction: TransactionRecord) {
+  if (moduleBusy.value || capabilityBusy.value || rollbackBusyId.value !== null) return
   if (selectedGameRunning.value && transaction.gameId === selectedGame.value?.catalog?.id) {
     actionError.value = t('gameRunningActionBlocked')
     return
@@ -865,20 +892,27 @@ function onUevrBackendChange(module: ToolModuleDefinition, event: Event) {
 }
 
 async function refreshGames() {
+  if (scanInFlight || moduleBusy.value || capabilityBusy.value || rollbackBusyId.value !== null) return
+  scanInFlight = true
   loading.value = true
   error.value = null
   try {
     installedGames.value = await invoke<InstalledGame[]>('detect_installed_games')
     if (!supportedInstalledGames.value.length) supportedOnly.value = false
-    if (!selectedAppId.value || !installedGames.value.some((game) => game.appId === selectedAppId.value)) {
-      selectedAppId.value = supportedInstalledGames.value[0]?.appId ?? installedGames.value[0]?.appId ?? null
+    const nextSelection = selectedDetectedGame(installedGames.value, selectedAppId.value,
+      (game) => Boolean(findCatalogGameByInstalledGame(game)))
+    const nextGame = installedGames.value.find((game) => game.appId === nextSelection)
+    if (nextGame && !findCatalogGameByInstalledGame(nextGame)) supportedOnly.value = false
+    if (nextSelection !== selectedAppId.value) {
+      selectedAppId.value = nextSelection
     } else {
-      await inspectSelectedGame()
+      scheduleSelectedGameWork()
     }
   } catch (err) {
     error.value = messageOf(err)
   } finally {
     loading.value = false
+    scanInFlight = false
   }
 }
 
@@ -941,6 +975,7 @@ async function refreshTransactions() {
 }
 
 async function switchView(view: ViewName) {
+  if (moduleBusy.value || capabilityBusy.value || historyBusy.value || rollbackBusyId.value !== null) return
   activeView.value = view
   actionError.value = null
   success.value = null
@@ -997,6 +1032,8 @@ function scheduleGameStatePoll() {
 
 watch(selectedAppId, () => {
   activeModuleFilter.value = 'all'
+  if (selectedAppId.value) writeLocalValue('moddin-selected-game', selectedAppId.value)
+  gameDetail.value?.scrollTo?.({ top: 0 })
   scheduleSelectedGameWork()
 })
 
@@ -1024,6 +1061,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell" :lang="locale">
+    <a class="skip-link" href="#main-content">{{ copy.skip }}</a>
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">M</div>
@@ -1037,6 +1075,7 @@ onUnmounted(() => {
         <button
           class="nav-item"
           type="button"
+          :disabled="moduleBusy || capabilityBusy || historyBusy || rollbackBusyId !== null"
           :aria-current="activeView === 'library' ? 'page' : undefined"
           @click="switchView('library')"
         >
@@ -1047,6 +1086,7 @@ onUnmounted(() => {
         <button
           class="nav-item"
           type="button"
+          :disabled="moduleBusy || capabilityBusy || historyBusy || rollbackBusyId !== null"
           :aria-current="activeView === 'history' ? 'page' : undefined"
           @click="switchView('history')"
         >
@@ -1069,21 +1109,25 @@ onUnmounted(() => {
       </footer>
     </aside>
 
-    <main class="main-content">
+    <main id="main-content" class="main-content" tabindex="-1">
       <section v-if="activeView === 'library'" class="page">
-        <div v-if="error" class="callout callout-danger" role="alert">
-          <AppIcon class="callout-icon" name="alert" />
-          <div class="callout-body">
-            <strong>{{ t('libraryScanFailed') }}</strong>
-            <p>{{ error }}</p>
+        <header class="page-header library-page-header">
+          <div>
+            <p class="overline">Moddin / {{ t('navLibrary') }}</p>
+            <h1>{{ copy.title }}</h1>
+            <p>{{ copy.subtitle }}</p>
           </div>
-          <button
-            class="btn btn-sm callout-action"
-            type="button"
-            @click="aiTopbar.diagnose"
-          >
-            {{ t('aiExplainError') }}
-          </button>
+          <div class="library-stats" aria-live="polite">
+            <div><strong>{{ installedGames.length }}</strong><span>{{ copy.detected }}</span></div>
+            <div><strong>{{ supportedInstalledGames.length }}</strong><span>{{ copy.supported }}</span></div>
+          </div>
+        </header>
+        <div v-if="error" class="library-error">
+          <ErrorCallout :error="libraryError" />
+          <div class="library-error-actions">
+            <button class="btn btn-sm" type="button" :disabled="loading || moduleBusy || capabilityBusy || rollbackBusyId !== null" @click="refreshGames">{{ copy.retry }}</button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="aiTopbar.diagnose">{{ t('aiExplainError') }}</button>
+          </div>
         </div>
 
         <div class="library-layout">
@@ -1092,6 +1136,7 @@ onUnmounted(() => {
             v-model:supported-only="supportedOnly"
             :games="filteredGames"
             :selected-app-id="selectedAppId"
+            :selection-busy="moduleBusy || capabilityBusy || rollbackBusyId !== null"
             :loading="loading"
             :total-count="installedGames.length"
             :supported-count="supportedInstalledGames.length"
@@ -1101,20 +1146,24 @@ onUnmounted(() => {
             @rescan="refreshGames"
           />
 
-          <div class="panel game-detail">
+          <div ref="gameDetail" class="panel game-detail">
             <EmptyState
               v-if="!selectedGame"
               class="game-detail-empty"
               icon="gamepad"
-              :title="t('selectGameTitle')"
-              :description="t('selectGameHint')"
+              :busy="loading"
+              :title="loading ? copy.loading : installedGames.length ? t('selectGameTitle') : copy.empty"
+              :description="loading ? copy.loadingHint : installedGames.length ? t('selectGameHint') : copy.emptyHint"
             />
 
             <template v-else>
               <header class="game-hero">
                 <div class="game-hero-copy">
-                  <p class="overline">{{ storeLabel(selectedGame.installed.store) }}</p>
-                  <h1>{{ selectedGame.catalog?.name ?? selectedGame.installed.name }}</h1>
+                  <div class="game-meta">
+                    <span class="game-store"><AppIcon name="gamepad" :size="14" />{{ storeLabel(selectedGame.installed.store) }}</span>
+                    <span v-if="gameInspection?.engine" class="game-engine">{{ gameInspection.engine }}</span>
+                  </div>
+                  <h2 class="game-title">{{ selectedGame.catalog?.name ?? selectedGame.installed.name }}</h2>
                   <div v-if="selectedGame.catalog && moduleProgress.total" class="game-progress">
                     <div class="progress-track" aria-hidden="true">
                       <span :style="{ width: `${(moduleProgress.active / moduleProgress.total) * 100}%` }" />
@@ -1151,18 +1200,17 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <AiGameSuggestions
-                v-if="selectedGame.catalog"
-                :game-id="selectedGame.catalog.id"
-                :game-name="selectedGame.catalog.name"
-              />
+              <div v-if="inspectionError" class="library-error">
+                <ErrorCallout :error="environmentError" />
+                <button class="btn btn-sm" type="button" :disabled="inspectionLoading" @click="inspectSelectedGame()">{{ copy.retry }}</button>
+              </div>
 
               <template v-if="selectedGame.catalog">
                 <section class="mods-section">
                   <div class="section-heading">
                     <div>
                       <h2>{{ t('modsTitle') }}</h2>
-                      <p>{{ t('modsSubtitle') }}</p>
+                      <p>{{ copy.previewHint }}</p>
                     </div>
                     <div v-if="categoryTabs.length > 1" class="segmented" role="group" :aria-label="t('modsTitle')">
                       <button type="button" :aria-pressed="activeModuleFilter === 'all'" @click="activeModuleFilter = 'all'">
@@ -1175,7 +1223,7 @@ onUnmounted(() => {
                         :aria-pressed="activeModuleFilter === category"
                         @click="activeModuleFilter = category"
                       >
-                        {{ categoryLabel(category) }} <span class="count">{{ countModulesInCategory(gameModules, category) }}</span>
+                        {{ categoryLabel(category) }} <span class="count">{{ categoryCount(category) }}</span>
                       </button>
                     </div>
                   </div>
@@ -1243,14 +1291,24 @@ onUnmounted(() => {
                 </section>
 
                 <CapabilityModulesSection
+                  :key="selectedGame.installed.appId"
                   :game-id="selectedGame.catalog.id"
                   :game-name="selectedGame.catalog.name"
                   :install-dir="selectedGame.installed.installDir"
                   :executable-dir="gameInspection?.executableDirectory ?? null"
                   :engine="selectedGame.catalog.enginePreset ?? null"
                   :exclude-ids="ownedModules.map((module) => module.id)"
+                  :category-filter="activeModuleFilter"
+                  :external-busy="moduleBusy || rollbackBusyId !== null || loading"
                   :transactions="transactions"
                   @refresh-request="refreshTransactions"
+                  @busy-change="capabilityBusy = $event"
+                  @category-counts-change="capabilityCategoryCounts = $event"
+                />
+
+                <AiGameSuggestions
+                  :game-id="selectedGame.catalog.id"
+                  :game-name="selectedGame.catalog.name"
                 />
 
                 <details class="disclosure advanced-panel">
@@ -1316,12 +1374,14 @@ onUnmounted(() => {
         :transactions="transactions"
         :loading="transactionsLoading"
         :busy-id="rollbackBusyId"
+        :external-busy="moduleBusy || capabilityBusy"
         :game-name="gameNameById"
         :kind-label="moduleNameById"
         :format-date="formatTransactionDate"
         :blocked-reason="transactionBlockedReason"
         @refresh="refreshTransactions"
         @undo="rollback"
+        @busy-change="historyBusy = $event"
       />
     </main>
 
@@ -1334,6 +1394,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="obsDialog"
+      :busy="moduleBusy"
       :eyebrow="t('previewEyebrow')"
       :title="moduleNameById('obs-vr')"
       :description="obsDialog.request.gameName"
@@ -1347,7 +1408,7 @@ onUnmounted(() => {
       <ChangePreview :changes="obsDialog.preview.changes" :warnings="obsDialog.preview.warnings" :location="obsDialog.preview.collectionFile" />
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="obsDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="obsDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!obsDialog.preview.canApply || dialogBlocked" @click="applyObsConfiguration">
           {{ moduleBusy ? t('previewWorking') : t('previewApply') }}
         </button>
@@ -1356,6 +1417,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="optiScalerDialog"
+      :busy="moduleBusy"
       :eyebrow="t('previewEyebrow')"
       :title="moduleNameById('optiscaler')"
       :description="optiScalerDialog.request.gameName"
@@ -1400,7 +1462,7 @@ onUnmounted(() => {
       </ChangePreview>
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="optiScalerDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!optiScalerDialog.preview.canApply || dialogBlocked" @click="applyOptiScaler">
           {{ moduleBusy ? t('previewWorking') : (optiScalerDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
         </button>
@@ -1409,6 +1471,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="cheekyDialog"
+      :busy="moduleBusy"
       :eyebrow="t('previewEyebrow')"
       :title="moduleNameById('cheeky-foveated-dlss')"
       :description="cheekyDialog.request.gameName"
@@ -1421,7 +1484,7 @@ onUnmounted(() => {
       <ChangePreview :changes="cheekyDialog.preview.changes" :warnings="cheekyDialog.preview.warnings" :location="cheekyDialog.preview.addonPath" />
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="cheekyDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="cheekyDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!cheekyDialog.preview.canApply || dialogBlocked" @click="applyCheeky">
           {{ moduleBusy ? t('previewWorking') : (cheekyDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
         </button>
@@ -1430,6 +1493,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="uevrDialog"
+      :busy="moduleBusy"
       :eyebrow="t('previewEyebrow')"
       :title="moduleNameById('uevr')"
       :description="uevrDialog.request.gameName"
@@ -1446,7 +1510,7 @@ onUnmounted(() => {
       <ChangePreview :changes="uevrDialog.preview.changes" :warnings="uevrDialog.preview.warnings" :location="uevrDialog.preview.installDirectory" />
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="uevrDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="uevrDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!uevrDialog.preview.canApply || dialogBlocked" @click="applyUevr">
           {{ moduleBusy ? t('previewWorking') : (uevrDialog.preview.installed ? t('actionReinstall') : t('previewInstall')) }}
         </button>
@@ -1455,6 +1519,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="ofxrDialog"
+      :busy="moduleBusy"
       :eyebrow="t('previewEyebrow')"
       :title="moduleNameById('ofxr-framegen')"
       :description="ofxrDialog.request.gameName"
@@ -1473,7 +1538,7 @@ onUnmounted(() => {
       />
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="ofxrDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="ofxrDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!ofxrDialog.preview.canApply || dialogBlocked" @click="applyOfxr">
           {{ moduleBusy ? t('previewWorking') : t('ofxrInstallAndArm') }}
         </button>
@@ -1482,6 +1547,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="vrLaunchDialog"
+      :busy="moduleBusy"
       :eyebrow="t('vrLaunchEyebrow')"
       :title="vrLaunchDialog.request.gameName"
       :description="t('vrLaunchDescription')"
@@ -1531,7 +1597,7 @@ onUnmounted(() => {
       />
       <template #footer>
         <span v-if="blockedReason" class="footer-hint">{{ blockedReason }}</span>
-        <button class="btn" type="button" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="vrLaunchDialog = null">{{ t('cancel') }}</button>
         <button class="btn btn-primary" :class="{ 'is-loading': moduleBusy }" type="button" :disabled="!vrLaunchDialog.preview.canLaunch || dialogBlocked" @click="launchVrGame">
           <AppIcon v-if="!moduleBusy" name="play" />
           {{ moduleBusy ? t('launching') : (ofxrReadyForLaunch ? t('launchVr') : t('activateAndLaunch')) }}
@@ -1611,6 +1677,7 @@ onUnmounted(() => {
 
     <BaseDialog
       v-if="dependencyDialog"
+      :busy="moduleBusy"
       :eyebrow="t('moduleDependenciesEyebrow')"
       :title="moduleName(dependencyDialog.module)"
       :description="t('moduleDependenciesDescription')"
@@ -1634,7 +1701,7 @@ onUnmounted(() => {
         </li>
       </ul>
       <template #footer>
-        <button class="btn" type="button" @click="dependencyDialog = null">{{ t('close') }}</button>
+        <button class="btn" type="button" :disabled="moduleBusy" @click="dependencyDialog = null">{{ t('close') }}</button>
       </template>
     </BaseDialog>
 
@@ -1656,10 +1723,22 @@ onUnmounted(() => {
 .library-layout {
   display: grid;
   flex: 1;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(248px, 272px) minmax(0, 1fr);
   gap: var(--moddin-space-4);
   min-height: 0;
 }
+
+.library-page-header { flex: 0 0 auto; }
+.library-page-header > div:first-child { flex: 1; min-width: 220px; }
+.library-page-header .overline { margin: 0 0 var(--moddin-space-2); font-size: var(--moddin-text-xs); }
+.library-stats { display: flex; flex: 0 0 auto; gap: var(--moddin-space-6); }
+.library-stats > div { display: grid; gap: 2px; }
+.library-stats > div + div { padding-left: var(--moddin-space-6); border-left: 1px solid var(--moddin-line); }
+.library-stats strong { font-size: var(--moddin-text-xl); font-weight: 750; font-variant-numeric: tabular-nums; }
+.library-stats span { color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.library-error { display: grid; gap: var(--moddin-space-2); }
+.library-error-actions { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); }
+.library-error > .btn { justify-self: start; }
 
 .game-detail {
   display: flex;
@@ -1670,13 +1749,17 @@ onUnmounted(() => {
 }
 .game-detail-empty { flex: 1; }
 
-.game-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-5); }
+.game-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--moddin-space-4); }
 .game-hero-copy { display: grid; gap: var(--moddin-space-2); min-width: 0; }
-.game-hero h1 { overflow-wrap: anywhere; }
-.game-hero-actions { display: flex; align-items: center; gap: var(--moddin-space-3); flex-wrap: wrap; }
+.game-title { font-size: var(--moddin-text-2xl); line-height: 1.2; overflow-wrap: anywhere; }
+.game-hero { padding-bottom: var(--moddin-space-5); border-bottom: 1px solid var(--moddin-line-soft); }
+.game-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--moddin-space-3); }
+.game-store { display: inline-flex; align-items: center; gap: 6px; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
+.game-engine { border-left: 1px solid var(--moddin-line-strong); padding-left: var(--moddin-space-3); color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.game-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: var(--moddin-space-2); flex: 0 0 auto; }
 
-.game-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-3); color: var(--moddin-text-muted); font-size: var(--moddin-text-md); }
-.progress-track { width: 120px; height: 6px; overflow: hidden; border-radius: var(--moddin-radius-pill); background: var(--moddin-surface-3); }
+.game-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-2); color: var(--moddin-text-muted); font-size: var(--moddin-text-sm); }
+.progress-track { width: 64px; height: 5px; overflow: hidden; border-radius: var(--moddin-radius-pill); background: var(--moddin-surface-3); }
 .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--moddin-success); transition: width var(--moddin-normal) var(--moddin-ease); }
 
 .mods-section { display: grid; gap: var(--moddin-space-5); }
@@ -1685,7 +1768,7 @@ onUnmounted(() => {
 
 .mod-group { display: grid; gap: var(--moddin-space-3); }
 .mod-group-title { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--moddin-space-3); }
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: var(--moddin-space-4); }
 
 .detail-block { display: grid; gap: var(--moddin-space-2); }
 .detail-title { margin: 0; color: var(--moddin-text-soft); font-size: var(--moddin-text-sm); }
@@ -1714,11 +1797,30 @@ onUnmounted(() => {
 .opti-replace span { display: flex; align-items: center; gap: var(--moddin-space-2); }
 .opti-replace input { width: 15px; height: 15px; accent-color: var(--moddin-accent); }
 
-@media (max-width: 960px) {
+@media (max-width: 860px) {
   .library-layout { display: flex; flex: none; flex-direction: column; }
   .library-layout :deep(.game-list) { flex: none; height: 300px; }
   .game-detail { flex: none; overflow: visible; padding: var(--moddin-space-4); }
   .game-hero { flex-direction: column; }
+  .game-hero-actions { flex-direction: row; align-items: center; flex-wrap: wrap; }
   .info-list > div { grid-template-columns: 1fr; gap: 2px; }
+}
+
+@media (max-width: 1100px) {
+  .library-layout { grid-template-columns: 248px minmax(0, 1fr); gap: var(--moddin-space-3); }
+  .game-detail { padding: var(--moddin-space-4); }
+  .library-stats { gap: var(--moddin-space-4); }
+  .library-stats > div + div { padding-left: var(--moddin-space-4); }
+  .game-hero { flex-wrap: wrap; }
+  .game-hero-actions { flex-direction: row; align-items: center; flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  .library-page-header { align-items: flex-start; }
+  .library-stats { width: 100%; }
+  .library-layout :deep(.game-list) { height: 360px; }
+  .game-hero-actions { width: 100%; }
+  .game-progress { gap: var(--moddin-space-2); }
+  .advanced-panel > summary { flex-wrap: wrap; }
 }
 </style>

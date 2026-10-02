@@ -29,8 +29,9 @@ withDefaults(
     details?: string[]
     /** Shown under the details, usually pointing at History. */
     footnote?: string
+    busy?: boolean
   }>(),
-  { tone: 'danger', cancelLabel: '', details: () => [] },
+  { tone: 'danger', cancelLabel: '', details: () => [], busy: false },
 )
 
 const emit = defineEmits<{ close: []; confirm: [] }>()
@@ -41,6 +42,7 @@ const { t } = useI18n()
   <BaseDialog
     :title="title"
     :description="description"
+    :busy="busy"
     @close="emit('close')"
   >
     <ul v-if="details.length" class="confirm-details">
@@ -52,6 +54,8 @@ const { t } = useI18n()
       <button
         class="btn"
         type="button"
+        v-bind="{ 'data-dialog-initial-focus': '' }"
+        :disabled="busy"
         :aria-label="cancelLabel || t('actionCancel')"
         @click="emit('close')"
       >
@@ -59,11 +63,13 @@ const { t } = useI18n()
       </button>
       <button
         class="btn"
-        :class="tone === 'danger' ? 'btn-danger-solid' : 'btn-primary'"
+        :class="[tone === 'danger' ? 'btn-danger-solid' : 'btn-primary', { 'is-loading': busy }]"
         type="button"
+        :disabled="busy"
+        :aria-busy="busy || undefined"
         @click="emit('confirm')"
       >
-        <AppIcon v-if="tone === 'danger'" name="alert" :size="16" />
+        <AppIcon v-if="tone === 'danger' && !busy" name="alert" :size="16" />
         {{ confirmLabel }}
       </button>
     </template>

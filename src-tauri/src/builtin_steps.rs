@@ -1605,10 +1605,19 @@ fn run_move_file(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResul
     })
 }
 
-fn run_kill_process(step: &StepSpec, _context: &StepContext<'_>) -> Result<StepResult, String> {
-    let process_name = param_string(step, "processName")
-        .or_else(|| param_string(step, "processNameField"))
-        .ok_or_else(|| "kill-process: processName or processNameField is required.".to_owned())?;
+fn kill_process_name(step: &StepSpec, config: &ResolvedConfig) -> Result<String, String> {
+    let name = path_param(step, config, "processNameField", "processName")?;
+    if name.trim().is_empty() || name.contains(['*', '?', '/', '\\']) || name.starts_with('-') {
+        return Err(
+            "kill-process: process name must be a non-empty image name without wildcards or paths."
+                .to_owned(),
+        );
+    }
+    Ok(name)
+}
+
+fn run_kill_process(step: &StepSpec, context: &StepContext<'_>) -> Result<StepResult, String> {
+    let process_name = kill_process_name(step, context.config)?;
     let force = param(step, "force")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
@@ -4163,6 +4172,22 @@ pub(crate) mod tests {
             .status
             .success()
             .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    #[test]
+    fn kill_process_resolves_a_config_value_and_rejects_missing_or_broad_names() {
+        let mut config = ResolvedConfig::default();
+        config.values.insert("image".to_owned(), json!("game.exe"));
+        let step = step_of("kill-process", &[("processNameField", json!("image"))]);
+        assert_eq!(
+            kill_process_name(&step, &config).expect("field resolves"),
+            "game.exe"
+        );
+        assert!(kill_process_name(&step, &ResolvedConfig::default()).is_err());
+        for name in ["", "*.exe", "game?.exe", "C:\\game.exe"] {
+            let step = step_of("kill-process", &[("processName", json!(name))]);
+            assert!(kill_process_name(&step, &config).is_err(), "{name}");
+        }
     }
 
     #[test]

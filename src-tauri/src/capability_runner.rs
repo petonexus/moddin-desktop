@@ -299,6 +299,14 @@ fn execute_install(
     spec: &CapabilitySpec,
     scope: &InstallScope<'_>,
 ) -> Result<InstallResult, String> {
+    execute_install_with_commit(spec, scope, transaction::mark_applied)
+}
+
+fn execute_install_with_commit(
+    spec: &CapabilitySpec,
+    scope: &InstallScope<'_>,
+    commit: impl FnOnce(TransactionRecord) -> Result<TransactionRecord, String>,
+) -> Result<InstallResult, String> {
     let InstallScope {
         game_id,
         game_name,
@@ -323,70 +331,79 @@ fn execute_install(
     let mut record: Option<transaction::TransactionRecord> = None;
     let mut outside_root: Vec<String> = Vec::new();
 
-    for step in &spec.install {
-        let planned = builtin_steps::plan_step_targets(step, &step_context)?;
+    let outcome = (|| -> Result<InstallResult, String> {
+        for step in &spec.install {
+            let planned = builtin_steps::plan_step_targets(step, &step_context)?;
 
-        // Only paths under the install directory are inside the game's
-        // rollback scope. A recipe that writes elsewhere (an OpenXR
-        // runtime manifest, a tray INI) is still allowed to do so, but
-        // the user is told it is not covered by Undo.
-        let mut in_scope = Vec::new();
-        for path in planned {
-            if path.starts_with(install_directory) {
-                in_scope.push(path);
-            } else {
-                outside_root.push(path.to_string_lossy().into_owned());
+            // Only paths under the install directory are inside the game's
+            // rollback scope. A recipe that writes elsewhere (an OpenXR
+            // runtime manifest, a tray INI) is still allowed to do so, but
+            // the user is told it is not covered by Undo.
+            let mut in_scope = Vec::new();
+            for path in planned {
+                if path.starts_with(install_directory) {
+                    in_scope.push(path);
+                } else {
+                    outside_root.push(path.to_string_lossy().into_owned());
+                }
             }
+
+            if !in_scope.is_empty() {
+                record = Some(match record.as_ref() {
+                    Some(existing) => transaction::add_files_to_transaction(
+                        existing.clone(),
+                        install_directory,
+                        &in_scope,
+                    )?,
+                    None => transaction::begin_file_set_transaction(
+                        install_directory,
+                        &in_scope,
+                        &spec.id,
+                        &label,
+                        game_id,
+                        metadata.clone(),
+                    )?,
+                });
+            }
+
+            let result = builtin_steps::execute_step(step, &step_context)?;
+            affected.extend(result.affected_paths.clone());
+            step_results.push(result);
         }
 
-        if !in_scope.is_empty() {
-            record = Some(match record {
-                Some(existing) => {
-                    transaction::add_files_to_transaction(existing, install_directory, &in_scope)?
-                }
-                None => transaction::begin_file_set_transaction(
-                    install_directory,
-                    &in_scope,
-                    &spec.id,
-                    &label,
-                    game_id,
-                    metadata.clone(),
-                )?,
-            });
-        }
-
-        let result = match builtin_steps::execute_step(step, &step_context) {
-            Ok(result) => result,
-            Err(error) => {
-                // Roll back whatever this install already wrote instead
-                // of leaving orphaned files with no undo record.
-                if let Some(prepared) = record {
-                    let _ = transaction::restore_record(prepared);
-                }
-                return Err(error);
-            }
+        let transaction = match record.as_ref() {
+            Some(prepared) => Some(commit(prepared.clone())?),
+            None => None,
         };
-        affected.extend(result.affected_paths.clone());
-        step_results.push(result);
+
+        if !outside_root.is_empty() {
+            affected.extend(outside_root);
+        }
+
+        Ok(InstallResult {
+            capability_id: spec.id.clone(),
+            transaction,
+            steps: step_results,
+            affected_paths: affected,
+            installed_dependencies: Vec::new(),
+            compatibility: None,
+        })
+    })();
+
+    // Keep the last complete backup until planning, extending, executing,
+    // and committing have all succeeded. Every failure uses this path.
+    match outcome {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if let Some(prepared) = record {
+                let id = prepared.id.clone();
+                if let Err(rollback_error) = transaction::restore_record(prepared) {
+                    return Err(format!("{error}. Rollback of transaction '{id}' failed: {rollback_error}. Review the recovery backups before retrying."));
+                }
+            }
+            Err(error)
+        }
     }
-
-    let transaction = match record {
-        Some(prepared) => Some(transaction::mark_applied(prepared)?),
-        None => None,
-    };
-
-    if !outside_root.is_empty() {
-        affected.extend(outside_root);
-    }
-
-    Ok(InstallResult {
-        capability_id: spec.id.clone(),
-        transaction,
-        steps: step_results,
-        affected_paths: affected,
-        installed_dependencies: Vec::new(),
-        compatibility: None,
-    })
 }
 
 /// A capability counts as installed for a game when the transaction
@@ -1075,6 +1092,9 @@ fn verify_signed_by(yaml_text: &str, signed_by_text: &str) -> Result<(), String>
         .map_err(|error: std::array::TryFromSliceError| error.to_string())?;
     let public_key = VerifyingKey::from_bytes(&public_array)
         .map_err(|error| format!("SIGNED-BY publicKey is not a valid Ed25519 key: {error}"))?;
+    if !crate::community_catalog::is_trusted(&public_key) {
+        return Err("SIGNED-BY publicKey is not in the trusted, non-revoked keyring.".to_owned());
+    }
     let signature_bytes = BASE64
         .decode(signed_by.signature.as_bytes())
         .map_err(|error| format!("SIGNED-BY signature is not valid base64: {error}"))?;
@@ -1125,6 +1145,7 @@ pub async fn community_capability_install(
     // closed, so an install never runs off an entry the app has not just
     // proved is still signed and still live.
     let entry = crate::community_catalog::verified_entry_for_install(&request.capability_id)?;
+    validate_yaml_digest(entry.yaml_sha256.as_deref())?;
     let download_url = entry.download_url.clone().ok_or_else(|| {
         format!(
             "Community catalog entry '{}' has no downloadUrl.",
@@ -1134,6 +1155,7 @@ pub async fn community_capability_install(
 
     let (yaml_text, signed_by_text) =
         crate::community_catalog::fetch_capability_yaml(&download_url, None).await?;
+    verify_yaml_digest(&yaml_text, entry.yaml_sha256.as_deref())?;
 
     if let Some(signed_by) = signed_by_text.as_deref() {
         if let Err(error) = verify_signed_by(&yaml_text, signed_by) {
@@ -1142,9 +1164,9 @@ pub async fn community_capability_install(
                 request.capability_id
             ));
         }
-    } else if !request.accept_unsigned {
+    } else if entry.signed || !request.accept_unsigned {
         return Err(format!(
-            "Community capability '{}' is not signed. Re-run with acceptUnsigned=true after the UI confirmation.",
+            "Community capability '{}' is missing SIGNED-BY. Signed catalog entries cannot be downgraded; unsigned entries require UI confirmation.",
             request.capability_id
         ));
     }
@@ -1176,6 +1198,24 @@ pub async fn community_capability_install(
     )
 }
 
+fn validate_yaml_digest(digest: Option<&str>) -> Result<&str, String> {
+    let digest = digest.filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| "Community catalog entry is missing a valid yamlSha256. Refresh a re-signed catalog before installing.".to_owned())?;
+    Ok(digest)
+}
+
+fn verify_yaml_digest(yaml_text: &str, expected: Option<&str>) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let expected = validate_yaml_digest(expected)?;
+    let actual = format!("{:x}", Sha256::digest(yaml_text.as_bytes()));
+    if !actual.eq_ignore_ascii_case(expected) {
+        return Err(
+            "Community capability YAML does not match the signed catalog's yamlSha256.".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1193,6 +1233,110 @@ mod tests {
                 .map(|(key, value)| ((*key).to_owned(), json!(value)))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn planning_and_backup_extension_failures_restore_previous_writes() {
+        let _appdata = IsolatedAppdata::new("rollback-planning");
+        let work = temp_root("rollback-planning-game");
+        fs::create_dir_all(&work).expect("game directory");
+        for path in ["../escape.ini", "inner/../second.ini"] {
+            let victim = work.join("first.ini");
+            fs::write(&victim, "original").expect("seed file");
+            let spec: CapabilitySpec = serde_yaml::from_str(&format!(
+                "id: rollback-test\ndisplayName: Rollback\ncategory: qol\nstatus: available\ninstall:\n  - kind: write-text-file\n    description: Overwrite\n    params:\n      path: first.ini\n      template: changed\n  - kind: write-text-file\n    description: Invalid target\n    params:\n      path: {path}\n      template: changed\n"
+            )).expect("recipe");
+            let config = ResolvedConfig::default();
+            let error = execute_install(
+                &spec,
+                &InstallScope {
+                    game_id: "rollback-game",
+                    game_name: "Game",
+                    config: &config,
+                    install_directory: &work,
+                    executable_directory: &work,
+                },
+            )
+            .expect_err("unsafe target fails during planning or backup extension");
+            assert!(
+                error.contains("escapes") || error.contains("traversal"),
+                "{error}"
+            );
+            assert_eq!(
+                fs::read_to_string(&victim).expect("restored file"),
+                "original"
+            );
+            assert!(!work.join("second.ini").exists());
+            assert!(transaction::list_transactions_sync()
+                .expect("history")
+                .iter()
+                .all(|record| record.status == "rolled_back"));
+        }
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn commit_failure_restores_files_and_reports_a_failed_rollback() {
+        let _appdata = IsolatedAppdata::new("rollback-commit");
+        let work = temp_root("rollback-commit-game");
+        fs::create_dir_all(&work).expect("game directory");
+        let victim = work.join("first.ini");
+        let spec: CapabilitySpec = serde_yaml::from_str(
+            "id: commit-test\ndisplayName: Commit\ncategory: qol\nstatus: available\ninstall:\n  - kind: write-text-file\n    description: Overwrite\n    params:\n      path: first.ini\n      template: changed\n"
+        ).expect("recipe");
+        let config = ResolvedConfig::default();
+        let scope = InstallScope {
+            game_id: "commit-game",
+            game_name: "Game",
+            config: &config,
+            install_directory: &work,
+            executable_directory: &work,
+        };
+        fs::write(&victim, "original").expect("seed file");
+        let error = execute_install_with_commit(&spec, &scope, |_| Err("commit failed".to_owned()))
+            .expect_err("commit fails");
+        assert_eq!(error, "commit failed");
+        assert_eq!(fs::read_to_string(&victim).expect("restored"), "original");
+        let error = execute_install_with_commit(&spec, &scope, |record| {
+            fs::remove_file(record.files[0].backup_path.as_ref().expect("backup"))
+                .expect("inject missing backup");
+            Err("commit failed".to_owned())
+        })
+        .expect_err("rollback fails too");
+        assert!(
+            error.contains("commit failed")
+                && error.contains("Rollback of transaction '")
+                && error.contains("Backup no longer exists"),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn community_yaml_is_bound_to_exact_signed_catalog_bytes() {
+        use sha2::{Digest, Sha256};
+        let yaml = "id: safe\n";
+        let digest = format!("{:x}", Sha256::digest(yaml.as_bytes()));
+        assert!(verify_yaml_digest(yaml, Some(&digest)).is_ok());
+        assert!(verify_yaml_digest("id: altered\n", Some(&digest)).is_err());
+        for missing in [None, Some(""), Some("bad")] {
+            assert!(verify_yaml_digest(yaml, missing).is_err());
+        }
+    }
+
+    #[test]
+    fn a_self_signed_community_yaml_cannot_supply_its_own_trust_anchor() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let key = SigningKey::from_bytes(&[42; 32]);
+        let yaml = "id: attacker\n";
+        let signed_by = format!(
+            "signed-by:\n  algorithm: ed25519\n  publicKey: {}\n  signature: {}\n",
+            BASE64.encode(key.verifying_key().as_bytes()),
+            BASE64.encode(key.sign(yaml.as_bytes()).to_bytes())
+        );
+        let error =
+            verify_signed_by(yaml, &signed_by).expect_err("valid signature from untrusted key");
+        assert!(error.contains("trusted, non-revoked keyring"), "{error}");
     }
 
     #[test]

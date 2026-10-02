@@ -32,14 +32,17 @@ export function useSnapshots() {
     errorContext.value = action
   }
 
-  async function refresh() {
+  async function refresh(options: { preserveError?: boolean } = {}) {
+    if (loading.value || busyId.value !== null) return
     loading.value = true
-    error.value = null
-    errorContext.value = 'load'
+    if (!options.preserveError) {
+      error.value = null
+      errorContext.value = 'load'
+    }
     try {
       snapshots.value = await listSnapshots()
     } catch (err) {
-      fail('load', err)
+      if (!options.preserveError || !error.value) fail('load', err)
     } finally {
       loading.value = false
     }
@@ -54,7 +57,7 @@ export function useSnapshots() {
   const canCreate = computed(() => name.value.trim().length > 0 && gameId.value.length > 0)
 
   async function create() {
-    if (!canCreate.value) return false
+    if (!canCreate.value || loading.value || busyId.value !== null) return false
     busyId.value = 'new'
     busyAction.value = 'create'
     error.value = null
@@ -82,6 +85,7 @@ export function useSnapshots() {
    * already in `error` for the callout to explain.
    */
   async function rollback(id: string) {
+    if (loading.value || busyId.value !== null) return false
     busyId.value = id
     busyAction.value = 'rollback'
     error.value = null
@@ -99,6 +103,7 @@ export function useSnapshots() {
   }
 
   async function remove(id: string) {
+    if (loading.value || busyId.value !== null) return false
     busyId.value = id
     busyAction.value = 'delete'
     error.value = null

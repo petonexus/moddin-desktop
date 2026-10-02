@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useSelectedGame } from '../../composables/useSelectedGame'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import BaseDialog from '../../components/ui/BaseDialog.vue'
@@ -23,6 +24,7 @@ import {
 import type { CapabilitySummary } from './types'
 
 const { locale } = useI18n()
+const selectedGame = useSelectedGame()
 const copy = computed(() => communityCopyForLocale(locale.value))
 
 const open = ref(false)
@@ -141,8 +143,17 @@ function openDialog() {
 }
 
 function closeDialog() {
+  if (installingId.value) return
   open.value = false
 }
+
+watch(() => selectedGame.value?.gameId, () => {
+  for (const id of Object.keys(configValues)) delete configValues[id]
+  configAttempted.value = {}
+  error.value = null
+  success.value = null
+  for (const entry of communityEntries.value) seedConfigValues(entry)
+})
 
 /**
  * The maintainers' kill switch, keyed by capability id. It arrives inside
@@ -258,8 +269,13 @@ async function install(entry: CommunityCatalogEntry) {
     // recipes extract archives and write files, and the compatibility
     // gate reads the game exe. Without a resolved target both are
     // silently skipped, so refuse instead of pretending it worked.
-    const target = await resolveInstallTarget(readSelectedAppId())
+    const selectedId = readSelectedAppId()
+    const target = await resolveInstallTarget(selectedId)
     if (!target) {
+      error.value = copy.value.noGameSelected
+      return
+    }
+    if (readSelectedAppId() !== selectedId) {
       error.value = copy.value.noGameSelected
       return
     }
@@ -292,11 +308,7 @@ async function install(entry: CommunityCatalogEntry) {
 }
 
 function readSelectedAppId(): string | null {
-  try {
-    return window.localStorage.getItem('moddin-selected-appId')
-  } catch {
-    return null
-  }
+  return selectedGame.value?.gameId ?? null
 }
 
 function ttlLabel(seconds: number) {
@@ -347,6 +359,7 @@ onMounted(async () => {
       size="lg"
       :title="copy.title"
       :description="copy.subtitle"
+      :busy="installingId !== null"
       @close="closeDialog"
     >
       <div class="community-toolbar">

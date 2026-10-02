@@ -36,14 +36,14 @@ Os três commands vivem em `src-tauri/src/capability_authoring.rs` e usam exatam
 
 Se você tem o **Codex**, o **Claude Code** ou o **Cursor Agent** instalado, o passo 1 do diálogo mostra um cartão "Sua IA instalada pode fazer isso por você". Um clique em **Fazer com {agent}** faz o Moddin:
 
-1. Executar a CLI em modo headless (`run_ai_agent_prompt` em `src-tauri/src/ai_agent_runner.rs`) com o prompt do fluxo — o agente usa as ferramentas MCP do Moddin (`list_supported_games`, `get_capability_template`, `validate_capability_yaml`, `preview_capability_plan`) para se orientar no catálogo real.
+1. Pedir confirmação do envio ao provedor e executar a CLI em modo headless restrito (`run_ai_agent_prompt`), usando o contexto incluído no próprio prompt.
 2. Capturar a resposta final, extrair o bloco YAML e **pular direto para a tela de revisão** — você confere o plano dry-run e clica em **Salvar mod**.
 
 Nada é salvo sem essa confirmação. Se o agente não devolver YAML (por exemplo, no modo Diagnóstico), a resposta em texto aparece no diálogo para você ler.
 
 Detalhes de implementação:
 
-- **Codex**: o CLI só lê `$CODEX_HOME/config.toml` (`[mcp_servers.moddin]`) — o setup do painel **IA local** espelha a entry tanto no `mcp.json` quanto no `config.toml`, com backup e escrita atômica.
+- **MCP manual**: o setup do painel **IA local** espelha a entry no `mcp.json` e no `config.toml` do Codex, com backup e escrita atômica. O modo headless integrado ignora essa configuração pessoal.
 - A execução usa `--ephemeral`, um diretório de trabalho próprio (`%LOCALAPPDATA%\Moddin\agent-runs\`), timeout de 4 minutos e uma run por vez.
 - Sem nenhuma IA instalada, o cartão simplesmente não aparece — o fluxo de copiar/colar continua funcionando.
 
@@ -196,3 +196,24 @@ Para adicionar uma nova IA ao painel (Warp, Continue.dev, Cline, etc.):
 2. Adicione o `LAYOUTS` com o caminho da config e o detector de binário.
 3. Adicione o `display_name`.
 4. Adicione o `AgentId` em `src/features/local-ai/types.ts` e o card correspondente no painel se a UX pedir um layout diferente.
+
+
+## Execução restrita no beta.6
+
+Antes de iniciar um CLI, o Moddin pede confirmação para enviar o pedido,
+os dados do jogo e os erros incluídos no prompt ao provedor, usando a conta
+do usuário. A execução pode consumir cota. O botão Cancelar encerra o processo
+e seus descendentes; o diálogo permanece aberto durante a execução.
+
+O modo integrado recebe o contexto no próprio prompt. Codex ignora configurações
+pessoais, usa sandbox somente de leitura e desativa shell e execução unificada.
+Claude não recebe ferramentas nem servidores MCP. Cursor usa modo de perguntas,
+sandbox habilitado e regras locais que negam shell, leitura, escrita, web e MCP.
+Nenhum desses caminhos usa flags de bypass de permissões. CLIs antigos que não
+aceitem essas opções falham sem repetir a execução com permissões amplas.
+
+A conexão MCP do painel IA local continua disponível para uso manual nos clientes.
+O instalador inclui `moddin-agent/data/src/catalog/games` e
+`moddin-agent/data/src-tauri/capabilities`; `MODDIN_PROJECT_ROOT` aponta para esse
+snapshot instalado. O build testa o MCP com esses dados, sem recorrer ao checkout.
+A resposta do modo integrado passa pela validação e pela revisão antes de salvar.

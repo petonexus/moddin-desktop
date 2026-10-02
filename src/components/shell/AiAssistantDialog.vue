@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../ui/AppIcon.vue'
 import BaseDialog from '../ui/BaseDialog.vue'
 import EmptyState from '../ui/EmptyState.vue'
+import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import { useAiAssistant } from '../../composables/useAiAssistant'
 import { openAiAssistantLink } from '../../features/ai-assistant/service'
 import type { AgentKind } from '../../features/ai-assistant/service'
@@ -42,8 +43,17 @@ const {
   installSelectedRecommendations,
   ensureAgentClis,
   runWithAgent,
+  cancelAgentRun,
   dismissAgentRun,
 } = useAiAssistant()
+
+const mutationBusy = computed(() => agentBusy.value || (busy.value && (step.value === 'preview' || step.value === 'installing')))
+const pendingAgent = ref<AgentKind | null>(null)
+async function confirmAgentRun() {
+  const agent = pendingAgent.value
+  pendingAgent.value = null
+  if (agent) await runWithAgent(agent, true)
+}
 
 const modeMeta = computed(() => {
   switch (mode.value) {
@@ -135,6 +145,7 @@ function goToPrompt() {
       :eyebrow="t('aiAssistantEyebrow')"
       :title="t('aiAssistantTitle')"
       :description="t(modeMeta.key)"
+      :busy="mutationBusy"
       @close="close"
     >
       <div class="ai-steps">
@@ -144,7 +155,7 @@ function goToPrompt() {
             type="button"
             class="ai-cta"
             :class="{ 'is-loading': busy }"
-            :disabled="busy"
+            :disabled="busy || agentBusy"
             @click="regeneratePrompt"
           >
             <AppIcon :name="modeMeta.icon" :size="24" />
@@ -162,6 +173,7 @@ function goToPrompt() {
               role="tab"
               :aria-selected="mode === chip.mode"
               :class="['ai-chip', { 'is-active': mode === chip.mode }]"
+              :disabled="agentBusy || busy"
               @click="setMode(chip.mode)"
             >
               <AppIcon :name="chip.icon" :size="13" />
@@ -183,7 +195,7 @@ function goToPrompt() {
                 class="btn btn-primary btn-sm"
                 :class="{ 'is-loading': agentBusy }"
                 :disabled="agentBusy || busy"
-                @click="runWithAgent(cli.agent)"
+                @click="pendingAgent = cli.agent"
               >
                 {{ t('aiAgentRun', { agent: agentDisplayNames[cli.agent] }) }}
               </button>
@@ -191,6 +203,7 @@ function goToPrompt() {
             <p v-if="agentBusy" class="ai-agent-status">
               <span class="spinner" aria-hidden="true" />
               {{ t('aiAgentRunning', { seconds: agentElapsed }) }}
+              <button class="btn btn-sm" type="button" @click="cancelAgentRun">{{ t('actionCancel') }}</button>
             </p>
             <div v-if="agentRun" class="ai-agent-output">
               <div class="ai-agent-output-head">
@@ -208,6 +221,7 @@ function goToPrompt() {
             <span>{{ t('aiAssistantIntentLabel') }}</span>
             <textarea
               v-model="intent"
+              :disabled="agentBusy"
               class="textarea"
               rows="3"
               :placeholder="t('aiAssistantIntentPlaceholder')"
@@ -225,6 +239,7 @@ function goToPrompt() {
                   role="tab"
                   :aria-selected="verbosity === 'basic'"
                   :class="['ai-chip', { 'is-active': verbosity === 'basic' }]"
+                  :disabled="agentBusy || busy"
                   @click="setVerbosity('basic')"
                 >
                   {{ t('aiAssistantVerbosityBasic') }}
@@ -234,6 +249,7 @@ function goToPrompt() {
                   role="tab"
                   :aria-selected="verbosity === 'advanced'"
                   :class="['ai-chip', { 'is-active': verbosity === 'advanced' }]"
+                  :disabled="agentBusy || busy"
                   @click="setVerbosity('advanced')"
                 >
                   {{ t('aiAssistantVerbosityAdvanced') }}
@@ -359,7 +375,7 @@ function goToPrompt() {
                   class="btn btn-danger btn-sm"
                   type="button"
                   :class="{ 'is-loading': busy }"
-                  :disabled="busy"
+                  :disabled="busy || agentBusy"
                   @click="save(true)"
                 >
                   {{ t('aiAssistantOverwrite') }}
@@ -482,14 +498,14 @@ function goToPrompt() {
 
         <!-- preview footer -->
         <template v-else-if="step === 'preview'">
-          <button class="btn btn-ghost" type="button" @click="goToPaste">
+          <button class="btn btn-ghost" type="button" :disabled="mutationBusy" @click="goToPaste">
             <AppIcon name="undo" :size="14" /> {{ t('aiAssistantBack') }}
           </button>
           <button
             class="btn btn-primary"
             :class="{ 'is-loading': busy }"
             type="button"
-            :disabled="busy"
+            :disabled="busy || agentBusy"
             @click="save()"
           >
             {{ busy ? t('aiAssistantSaving') : t('aiAssistantSave') }}
@@ -504,7 +520,7 @@ function goToPrompt() {
           <button
             class="btn btn-primary"
             type="button"
-            :disabled="selectedCount === 0"
+            :disabled="busy || selectedCount === 0"
             @click="installSelectedRecommendations"
           >
             <AppIcon name="play" :size="14" />
@@ -514,12 +530,22 @@ function goToPrompt() {
 
         <!-- saved footer -->
         <template v-else-if="step === 'saved'">
-          <button class="btn btn-primary" type="button" @click="close">
+          <button class="btn btn-primary" type="button" :disabled="mutationBusy" @click="close">
             {{ t('aiAssistantDone') }}
           </button>
         </template>
       </template>
     </BaseDialog>
+    <ConfirmDialog
+      v-if="pendingAgent"
+      :title="t('aiAgentConsentTitle', { agent: agentDisplayNames[pendingAgent] })"
+      :description="t('aiAgentConsentDescription')"
+      :confirm-label="t('aiAgentConsentSend')"
+      :footnote="t('aiAgentConsentReview')"
+      tone="default"
+      @close="pendingAgent = null"
+      @confirm="confirmAgentRun"
+    />
   </Teleport>
 </template>
 

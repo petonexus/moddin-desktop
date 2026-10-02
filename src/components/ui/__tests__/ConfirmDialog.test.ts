@@ -84,6 +84,17 @@ describe('ConfirmDialog', () => {
     const confirm = wrapper.find('.btn-danger-solid')
     expect(confirm.attributes('autofocus')).toBeUndefined()
     expect(document.activeElement).not.toBe(confirm.element)
+    expect(document.activeElement).toBe(wrapper.find('.dialog-footer .btn').element)
+  })
+
+  it('blocks repeat confirmation and cancellation while an action is busy', async () => {
+    const wrapper = render({ busy: true })
+    const buttons = wrapper.findAll('.dialog-footer button')
+    expect(buttons.every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    await buttons[1].trigger('click')
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+    expect(wrapper.emitted('close')).toBeUndefined()
   })
 
   it('emits confirm only from the confirm button', async () => {

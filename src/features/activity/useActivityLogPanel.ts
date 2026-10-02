@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { clearActionLogs, listActionLogs } from './service'
 import type { ActionLogEntry, ActionLogLevel } from './types'
 
-export function useActivityLogPanel() {
+export function useActivityLogPanel(options: { actionLabel?: (entry: ActionLogEntry) => string } = {}) {
   const open = ref(false)
   const loading = ref(false)
   const clearing = ref(false)
@@ -30,7 +30,7 @@ export function useActivityLogPanel() {
       // The command name is searched as well as the row's other fields, so
       // someone who remembers `install_optiscaler` finds the row even
       // though the row now says "Instalar o OptiScaler".
-      return [entry.action.text, entry.gameId, entry.message, entry.transactionId]
+      return [entry.action.text, options.actionLabel?.(entry), entry.gameId, entry.message, entry.transactionId]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
     })
@@ -44,6 +44,7 @@ export function useActivityLogPanel() {
   }
 
   async function refresh() {
+    if (loading.value || clearing.value) return
     loading.value = true
     error.value = null
     try {
@@ -60,16 +61,18 @@ export function useActivityLogPanel() {
     await refresh()
   }
 
-  async function clearLogs(confirmMessage: string) {
-    if (!window.confirm(confirmMessage)) return
+  async function clearLogs() {
+    if (loading.value || clearing.value) return false
     clearing.value = true
     error.value = null
     try {
       await clearActionLogs()
       logs.value = []
       expanded.value = new Set()
+      return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err)
+      return false
     } finally {
       clearing.value = false
     }

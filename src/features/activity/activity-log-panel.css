@@ -1,6 +1,7 @@
 .activity-toolbar { display: flex; flex-wrap: wrap; gap: var(--moddin-space-2); }
 .activity-toolbar .input { flex: 1; min-width: 200px; }
 .activity-toolbar .select { width: auto; min-width: 140px; }
+.activity-results { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
 
 .activity-list { display: grid; gap: var(--moddin-space-2); }
 
@@ -14,7 +15,7 @@
 }
 
 .activity-entry-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--moddin-space-2); }
-.activity-entry-top strong { font-size: var(--moddin-text-md); }
+.activity-entry-top strong { font-size: var(--moddin-text-md); overflow-wrap: anywhere; }
 .activity-entry-top time { margin-left: auto; color: var(--moddin-text-faint); font-size: var(--moddin-text-xs); }
 .activity-entry > p { color: var(--moddin-text-soft); font-size: var(--moddin-text-md); overflow-wrap: anywhere; }
 
@@ -23,3 +24,11 @@
 .activity-details dl > div { display: grid; grid-template-columns: minmax(100px, 160px) minmax(0, 1fr); gap: var(--moddin-space-3); }
 .activity-details dt { color: var(--moddin-text-muted); font-size: var(--moddin-text-xs); }
 .activity-details dd { margin: 0; color: var(--moddin-text-soft); font-family: var(--moddin-mono); font-size: var(--moddin-text-xs); overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .activity-toolbar .input { min-width: 0; flex-basis: 100%; }
+  .activity-toolbar .select { flex: 1; min-width: 0; }
+  .activity-entry { padding: var(--moddin-space-3); }
+  .activity-entry-top time { flex-basis: 100%; margin-left: 0; }
+  .activity-details dl > div { grid-template-columns: minmax(0, 1fr); gap: var(--moddin-space-1); }
+}

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '../../components/ui/AppIcon.vue'
 import BaseDialog from '../../components/ui/BaseDialog.vue'
+import ConfirmDialog from '../../components/ui/ConfirmDialog.vue'
 import ErrorCallout from '../../components/ui/ErrorCallout.vue'
 import EmptyState from '../../components/ui/EmptyState.vue'
 import { useFriendlyError, type FriendlyErrorRule } from '../../composables/useFriendlyError'
@@ -11,7 +12,7 @@ import { dateLocaleFor } from '../../i18n/locale'
 import { activityCopyForLocale } from './copy'
 import { useActivityLogPanel } from './useActivityLogPanel'
 
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const copy = computed(() => activityCopyForLocale(locale.value))
 const { text } = useBackendText()
 
@@ -30,7 +31,17 @@ const {
   openPanel,
   closePanel,
   clearLogs: clearLogsAction,
-} = useActivityLogPanel()
+} = useActivityLogPanel({ actionLabel: (entry) => text(entry.action) })
+const pendingClear = ref(false)
+const hasFilters = computed(() => Boolean(search.value.trim()) || level.value !== 'all')
+const resultsLabel = computed(() => copy.value.results
+  .replace('{count}', String(filteredLogs.value.length))
+  .replace('{total}', String(logs.value.length)))
+
+function resetFilters() {
+  search.value = ''
+  level.value = 'all'
+}
 
 function formatDate(timestamp: number) {
   return new Intl.DateTimeFormat(dateLocaleFor(locale.value), {
@@ -68,12 +79,13 @@ const errorRules = computed<FriendlyErrorRule[]>(() => {
 const friendlyError = useFriendlyError({ error, rules: () => errorRules.value })
 
 async function clearLogs() {
-  await clearLogsAction(copy.value.confirmClear)
+  await clearLogsAction()
+  pendingClear.value = false
 }
 </script>
 
 <template>
-  <button class="nav-item" type="button" @click="openPanel">
+  <button class="nav-item" type="button" aria-haspopup="dialog" :aria-expanded="open" @click="openPanel">
     <AppIcon name="activity" />
     <span>{{ copy.button }}</span>
   </button>
@@ -84,6 +96,7 @@ async function clearLogs() {
       size="lg"
       :title="copy.title"
       :description="copy.subtitle"
+      :busy="clearing"
       @close="closePanel"
     >
       <div class="activity-toolbar">
@@ -109,26 +122,32 @@ async function clearLogs() {
           <option value="warning">{{ copy.warning }}</option>
           <option value="info">{{ copy.info }}</option>
         </select>
-        <button class="btn btn-sm" type="button" :disabled="loading" @click="refresh">
-          <AppIcon name="refresh" :size="14" />
-          {{ copy.refresh }}
+        <button class="btn btn-sm" :class="{ 'is-loading': loading }" type="button" :disabled="loading || clearing" :aria-busy="loading" @click="refresh">
+          <AppIcon v-if="!loading" name="refresh" :size="14" />
+          {{ loading ? copy.refreshing : copy.refresh }}
         </button>
+        <button v-if="hasFilters" class="btn btn-sm activity-reset" type="button" @click="resetFilters">{{ copy.resetFilters }}</button>
       </div>
 
+      <p class="activity-results" role="status" aria-live="polite">{{ loading ? copy.loading : resultsLabel }}</p>
+
       <ErrorCallout :error="friendlyError" />
-      <EmptyState v-if="loading && logs.length === 0" busy />
+      <EmptyState v-if="loading && logs.length === 0" busy :description="copy.loading" />
       <EmptyState
         v-else-if="filteredLogs.length === 0"
         icon="activity"
-        :description="copy.empty"
-      />
+        :title="logs.length ? copy.filteredEmptyTitle : undefined"
+        :description="logs.length ? copy.filteredEmptyHint : copy.empty"
+      >
+        <button v-if="logs.length && hasFilters" class="btn btn-primary btn-sm activity-reset" type="button" @click="resetFilters">{{ copy.resetFilters }}</button>
+      </EmptyState>
 
       <div v-else class="activity-list" :aria-busy="loading || clearing">
         <article v-for="entry in filteredLogs" :key="entry.id" class="activity-entry" :class="`level-${entry.level}`">
           <div class="activity-entry-top">
             <span class="badge" :class="levelBadge(entry.level)">{{ copy[entry.level] }}</span>
             <strong>{{ text(entry.action) }}</strong>
-            <time>{{ formatDate(entry.timestamp) }}</time>
+            <time :datetime="new Date(entry.timestamp).toISOString()">{{ formatDate(entry.timestamp) }}</time>
           </div>
           <p>{{ entry.message }}</p>
 
@@ -150,9 +169,19 @@ async function clearLogs() {
 
       <template #footer>
         <span class="footer-hint">{{ copy.storage }}</span>
-        <button class="btn btn-danger btn-sm" type="button" :disabled="clearing || logs.length === 0" @click="clearLogs">{{ copy.clear }}</button>
+        <button class="btn btn-danger btn-sm" :class="{ 'is-loading': clearing }" type="button" :disabled="loading || clearing || logs.length === 0" :aria-busy="clearing" @click="pendingClear = true">{{ clearing ? copy.clearing : copy.clear }}</button>
       </template>
     </BaseDialog>
+    <ConfirmDialog
+      v-if="pendingClear"
+      :title="copy.clearConfirmTitle"
+      :description="copy.confirmClear"
+      :confirm-label="copy.clear"
+      :cancel-label="t('cancel')"
+      :busy="clearing"
+      @close="pendingClear = false"
+      @confirm="clearLogs"
+    />
   </Teleport>
 </template>
 

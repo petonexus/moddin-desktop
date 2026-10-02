@@ -20,7 +20,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <button class="ai-menu-pill" type="button" @click="emit('ask')">
+  <button class="ai-menu-pill" type="button" aria-haspopup="dialog" @click="emit('ask')">
     <AppIcon name="ai" :size="14" />
     <span>{{ t('aiTopbarAsk') }}</span>
   </button>
@@ -29,6 +29,7 @@ const { t } = useI18n()
 <style scoped>
 .ai-menu-pill {
   display: inline-flex;
+  min-height: 36px;
   align-items: center;
   gap: var(--moddin-space-2);
   background: transparent;
